@@ -104,6 +104,8 @@ const ja: Record<string, string> = {
   'Close shell': 'シェルを閉じる',
   'New shell': '新しいシェル',
   'No shell open.': '開いているシェルはありません。',
+  Paste: 'ペースト',
+  'Paste the text to send to the shell:': 'シェルに送るテキストを貼り付けてください:',
 
   // ---- Server texts: timeline notices
   'Context compacted': 'コンテキストを圧縮しました',

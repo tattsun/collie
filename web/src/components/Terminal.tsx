@@ -140,6 +140,22 @@ function TermPane({ info }: { info: TermInfo }) {
     termRef.current?.focus()
   }
 
+  // Touch browsers offer no paste menu on the terminal's hidden input, so
+  // read the clipboard here (iOS shows its own Paste bubble). Without
+  // clipboard access (plain HTTP, denied, empty), ask for the text in a
+  // prompt, where the system paste menu works.
+  const paste = async () => {
+    let text = ''
+    try {
+      text = await navigator.clipboard.readText()
+    } catch {
+      /* fall back to the prompt */
+    }
+    if (!text) text = prompt(t('Paste the text to send to the shell:')) ?? ''
+    if (text) termRef.current?.paste(text)
+    termRef.current?.focus()
+  }
+
   return (
     <div class="term-pane">
       {state === 'loading' && (
@@ -151,6 +167,10 @@ function TermPane({ info }: { info: TermInfo }) {
       <div class="term-host" ref={host} />
       {isTouch && (
         <div class="keybar">
+          {/* click (not pointerdown): clipboard reads need a completed tap */}
+          <button class="key" onPointerDown={(e) => e.preventDefault()} onClick={paste}>
+            {t('Paste')}
+          </button>
           <button class={cls('key', ctrl && 'on')} onPointerDown={(e) => { e.preventDefault(); setCtrl(!ctrl) }}>
             Ctrl
           </button>

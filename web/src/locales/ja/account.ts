@@ -50,8 +50,8 @@ const ja: Record<string, string> = {
   'Open any of your isolated projects → Terminal, run {cmd} and follow the link. The login is kept for all of your projects.':
     '自分の隔離プロジェクトのいずれかで「ターミナル」を開き、{cmd} を実行して、表示されるリンクの指示に従ってください。ログイン状態はすべてのプロジェクトで共通です。',
   'My environment': '自分の環境変数',
-  'KEY=VALUE lines exported in all of your containers (e.g. {var} for pushing, which also lets you clone private GitHub repositories). Applies when your containers next start.':
-    '自分のすべてのコンテナで export される KEY=VALUE 形式の行です（例: push 用の {var}。非公開の GitHub リポジトリの clone にも使えます）。コンテナの次回起動時に反映されます。',
+  'KEY=VALUE lines exported in all of your containers (e.g. {var} for pushing, which also lets you clone private GitHub repositories). Applies to agents and shells started from now on.':
+    '自分のすべてのコンテナで export される KEY=VALUE 形式の行です（例: push 用の {var}。非公開の GitHub リポジトリの clone にも使えます）。これから起動するエージェントとシェルに反映されます。',
   'Isolation is not available on this server.': 'このサーバでは隔離実行を使えません。',
 
   // ---- sign-in & invitations (Auth.tsx)
@@ -119,7 +119,7 @@ const ja: Record<string, string> = {
   Kill: '強制停止',
   'KEY=VALUE lines exported in every user’s containers. Personal and project environments override these.':
     'すべてのユーザーのコンテナで export される KEY=VALUE 形式の行です。個人やプロジェクトの環境変数があれば、そちらが優先されます。',
-  'Saved — containers pick it up on their next start': '保存しました。コンテナの次回起動時に反映されます',
+  'Saved — applies to agents and shells started from now on': '保存しました。これから起動するエージェントとシェルに反映されます',
 
   // ---- groups (Groups.tsx)
   owner: 'オーナー',

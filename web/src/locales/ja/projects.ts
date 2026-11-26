@@ -64,7 +64,7 @@ const ja: Record<string, string> = {
     'このプロジェクトのコンテナで export される KEY=VALUE 形式の行です（全メンバー共通）。例: このリポジトリ専用の {code}。',
   'KEY=VALUE lines exported in this project’s containers — e.g. {code} scoped to this repository.':
     'このプロジェクトのコンテナで export される KEY=VALUE 形式の行です。例: このリポジトリ専用の {code}。',
-  'Saved — applies when the containers next start': '保存しました。次にコンテナを起動したときに反映されます',
+  'Saved — applies to agents and shells started from now on': '保存しました。これから起動するエージェントとシェルに反映されます',
   'Skills & MCP': 'skill・MCP',
   'Agents get the global profile (Admin → Global skills & MCP) plus your own ({link}), and whatever the repository itself contains ({dir}, {mcp}, {agents}).':
     'エージェントには、グローバルプロファイル（管理 → グローバル skill・MCP）と自分のプロファイル（{link}）、さらにリポジトリ自体に含まれる設定（{dir}、{mcp}、{agents}）が適用されます。',

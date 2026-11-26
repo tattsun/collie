@@ -192,7 +192,7 @@ export function AdminPage() {
         <section class="card col gap">
           <h3>{t('Global environment')}</h3>
           <p class="dim small">{t('KEY=VALUE lines exported in every user’s containers. Personal and project environments override these.')}</p>
-          <EnvEditor url="/api/shared/env" note={t('Saved — containers pick it up on their next start')} />
+          <EnvEditor url="/api/shared/env" note={t('Saved — applies to agents and shells started from now on')} />
         </section>
       )}
       {showImage && <ImageLog onClose={() => setShowImage(false)} />}

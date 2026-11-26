@@ -245,14 +245,21 @@ func (m *Manager) runArgs(sp Spec, extra []string) []string {
 	if pids > 0 {
 		args = append(args, "--pids-limit", strconv.Itoa(pids))
 	}
-	// Later env files override earlier ones: global < user < project.
-	for _, f := range []string{m.SharedEnvPath(), m.UserEnvPath(uid), m.ProjectEnvPath(p.ID)} {
-		if fileNonEmpty(f) {
-			args = append(args, "--env-file", f)
-		}
-	}
+	// No env files here: Exec passes them to every process instead.
 	args = append(args, m.tag, "sleep", "infinity")
 	return args
+}
+
+// envFiles lists the env files for the user's container for the project.
+// Later files override earlier ones: global < user < project.
+func (m *Manager) envFiles(projectID, userID string) []string {
+	var out []string
+	for _, f := range []string{m.SharedEnvPath(), m.UserEnvPath(userID), m.ProjectEnvPath(projectID)} {
+		if fileNonEmpty(f) {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 func fileNonEmpty(p string) bool {
@@ -265,13 +272,6 @@ func configHash(args []string) string {
 	for _, a := range args {
 		h.Write([]byte(a))
 		h.Write([]byte{0})
-	}
-	// env files are read at creation time; include their contents
-	for i, a := range args {
-		if a == "--env-file" && i+1 < len(args) {
-			b, _ := os.ReadFile(args[i+1])
-			h.Write(b)
-		}
 	}
 	return hex.EncodeToString(h.Sum(nil))[:16]
 }
@@ -408,6 +408,13 @@ func (m *Manager) repairOwnership(dir string) {
 func (m *Manager) Exec(projectID, userID, dir, id string, tty bool, env []string, command []string) ([]string, func(sig string)) {
 	argv := append([]string{m.cfg.Podman}, m.global...)
 	argv = append(argv, "exec", "-i", "-w", dir)
+	// The env files are read at every exec rather than baked into the
+	// container, so saved variables (a new Claude token, say) reach the next
+	// agent or shell even while an open terminal keeps the container from
+	// being re-created. Explicit -e values below take precedence.
+	for _, f := range m.envFiles(projectID, userID) {
+		argv = append(argv, "--env-file", f)
+	}
 	if tty {
 		argv = append(argv, "-t", "-e", "TERM=xterm-256color", "-e", "COLORTERM=truecolor")
 	}

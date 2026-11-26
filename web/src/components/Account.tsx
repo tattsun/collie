@@ -251,7 +251,7 @@ export function AccountPage() {
           <section class="card col gap">
             <h3>{t('My environment')}</h3>
             <p class="dim small">
-              {rich(t('KEY=VALUE lines exported in all of your containers (e.g. {var} for pushing, which also lets you clone private GitHub repositories). Applies when your containers next start.'), { var: <code>GH_TOKEN</code> })}
+              {rich(t('KEY=VALUE lines exported in all of your containers (e.g. {var} for pushing, which also lets you clone private GitHub repositories). Applies to agents and shells started from now on.'), { var: <code>GH_TOKEN</code> })}
             </p>
             <EnvEditor url="/api/me/env" placeholder={'GH_TOKEN=github_pat_…'} />
           </section>

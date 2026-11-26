@@ -199,3 +199,43 @@ func TestProfileEditorPaths(t *testing.T) {
 		t.Error("write through symlink accepted")
 	}
 }
+
+// Env files are passed at exec time (so a saved token reaches the next
+// agent without re-creating the container), in override order and before
+// explicit -e values.
+func TestExecPassesEnvFiles(t *testing.T) {
+	m := newTestManager(t)
+	m.cfg.Podman = "podman"
+	write := func(p, s string) {
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(s), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(m.SharedEnvPath(), "A=shared\n")
+	write(m.UserEnvPath("u1"), "CLAUDE_CODE_OAUTH_TOKEN=tok\n")
+	write(m.ProjectEnvPath("p1"), "") // empty files are skipped
+
+	argv, _ := m.Exec("p1", "u1", "/work", "id1", false, []string{"GIT_TERMINAL_PROMPT=0"}, []string{"true"})
+	var files []string
+	firstE := -1
+	for i, a := range argv {
+		if a == "--env-file" {
+			files = append(files, argv[i+1])
+		}
+		if a == "-e" && firstE < 0 {
+			firstE = i
+		}
+	}
+	if want := []string{m.SharedEnvPath(), m.UserEnvPath("u1")}; !slices.Equal(files, want) {
+		t.Fatalf("env files = %v, want %v", files, want)
+	}
+	if last := slices.Index(argv, m.UserEnvPath("u1")); firstE < last {
+		t.Fatalf("-e must come after the env files: %v", argv)
+	}
+	if !slices.Contains(argv, Name("p1", "u1")) {
+		t.Fatalf("container name missing: %v", argv)
+	}
+}

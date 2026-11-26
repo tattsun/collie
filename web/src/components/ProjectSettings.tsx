@@ -215,7 +215,7 @@ export function ProjectSettings({ p }: { p: Project }) {
               { code: <code>GH_TOKEN</code> },
             )}
           </p>
-          <EnvEditor url={`/api/projects/${p.id}/env`} placeholder={'GH_TOKEN=github_pat_…'} note={t('Saved — applies when the containers next start')} />
+          <EnvEditor url={`/api/projects/${p.id}/env`} placeholder={'GH_TOKEN=github_pat_…'} note={t('Saved — applies to agents and shells started from now on')} />
         </section>
       )}
 

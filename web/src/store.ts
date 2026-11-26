@@ -1,4 +1,5 @@
 import { signal, computed, batch } from '@preact/signals'
+import { t, ts } from './i18n'
 import type { Caps, GroupInfo, Item, ModeInfo, Project, SandboxStatus, Session, TermInfo, UserInfo } from './types'
 
 // ---------------------------------------------------------------- state
@@ -92,7 +93,7 @@ export function toast(text: string, kind: Toast['kind'] = 'info') {
   setTimeout(() => (toasts.value = toasts.value.filter((t) => t.id !== id)), kind === 'error' ? 6000 : 3000)
 }
 export function toastError(e: unknown) {
-  toast(e instanceof Error ? e.message : String(e), 'error')
+  toast(ts(e instanceof Error ? e.message : String(e)), 'error')
 }
 
 // ---------------------------------------------------------------- timelines
@@ -357,7 +358,7 @@ function onMessage(m: any) {
       queue(m.sid, { t: 'delta', id: m.id, f: m.f, d: m.d })
       break
     case 'suberr':
-      toast(m.error, 'error')
+      toast(ts(m.error), 'error')
       break
   }
 }
@@ -370,7 +371,7 @@ export async function setNotify(on: boolean) {
   if (on && 'Notification' in window && Notification.permission !== 'granted') {
     const p = await Notification.requestPermission()
     if (p !== 'granted') {
-      toast('Notifications need HTTPS (e.g. tailscale serve) and permission', 'error')
+      toast(t('Notifications need HTTPS (e.g. tailscale serve) and permission'), 'error')
       on = false
     }
   }
@@ -383,9 +384,9 @@ function maybeNotify(prev: Session | undefined, s: Session) {
   const viewing = route.value.name === 'session' && route.value.id === s.id && !document.hidden
   if (viewing) return
   let body = ''
-  if (s.status === 'waiting') body = 'Needs your approval'
-  else if (s.status === 'idle' && (prev.status === 'running' || prev.status === 'waiting')) body = s.preview || 'Finished'
-  else if (s.status === 'error') body = 'Stopped with an error'
+  if (s.status === 'waiting') body = t('Needs your approval')
+  else if (s.status === 'idle' && (prev.status === 'running' || prev.status === 'waiting')) body = s.preview || t('Finished')
+  else if (s.status === 'error') body = t('Stopped with an error')
   if (!body) return
   if (notifyEnabled.value && 'Notification' in window && Notification.permission === 'granted') {
     const opts: NotificationOptions = { body, tag: s.id, icon: '/icon-192.png', data: { url: `/#/s/${s.id}` } }

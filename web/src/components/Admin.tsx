@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'preact/hooks'
 import { api } from '../api'
+import { t } from '../i18n'
 import { go, me, route, toast, toastError } from '../store'
 import { ago, cls, until } from '../util'
 import { LinkBox } from './Account'
@@ -23,7 +24,7 @@ export function AdminPage() {
   useEffect(() => {
     load()
   }, [tab])
-  if (!me.value?.admin) return <div class="page center-page dim">Admins only.</div>
+  if (!me.value?.admin) return <div class="page center-page dim">{t('Admins only.')}</div>
   const run = (key: string, fn: () => Promise<unknown>) => async () => {
     setBusy(key)
     try {
@@ -37,7 +38,7 @@ export function AdminPage() {
   }
   const invite = (admin: boolean) =>
     run('inv', async () => {
-      const note = prompt(admin ? 'Who is this admin invite for? (note)' : 'Who is this invite for? (note)') ?? ''
+      const note = prompt(admin ? t('Who is this admin invite for? (note)') : t('Who is this invite for? (note)')) ?? ''
       const r = await api<{ url: string }>('POST', '/api/admin/invites', { admin, note })
       setLink(r.url)
     })
@@ -45,21 +46,21 @@ export function AdminPage() {
   return (
     <div class="page page-pad admin">
       <div class="page-head">
-        <button class="icon-btn back" onClick={() => go('#/')} aria-label="Back">
+        <button class="icon-btn back" onClick={() => go('#/')} aria-label={t('Back')}>
           <IBack size={20} />
         </button>
-        <h1>Admin</h1>
+        <h1>{t('Admin')}</h1>
         <span class="grow" />
         <button class="btn small" onClick={load}>
-          <IRefresh size={14} /> Refresh
+          <IRefresh size={14} /> {t('Refresh')}
         </button>
       </div>
       <nav class="tabs flat">
         {[
-          ['users', 'Users'],
-          ['containers', 'Containers'],
-          ['profile', 'Global skills & MCP'],
-          ['env', 'Global environment'],
+          ['users', t('Users')],
+          ['containers', t('Containers')],
+          ['profile', t('Global skills & MCP')],
+          ['env', t('Global environment')],
         ].map(([k, label]) => (
           <a key={k} href={`#/admin/${k}`} class={cls('tab', tab === k && 'on')}>
             {label}
@@ -72,12 +73,12 @@ export function AdminPage() {
         <div class="col gap-l">
           <section class="card col gap">
             <div class="row gap wrap">
-              <h3 class="grow">Users</h3>
+              <h3 class="grow">{t('Users')}</h3>
               <button class="btn primary small" onClick={invite(false)} disabled={!!busy}>
-                <IPlus size={14} /> Invite member
+                <IPlus size={14} /> {t('Invite member')}
               </button>
               <button class="btn small" onClick={invite(true)} disabled={!!busy}>
-                <IPlus size={14} /> Invite admin
+                <IPlus size={14} /> {t('Invite admin')}
               </button>
             </div>
             {link && <LinkBox url={link} onClose={() => setLink('')} />}
@@ -86,11 +87,12 @@ export function AdminPage() {
                 <div key={u.id} class={cls('row gap list-row', u.disabled && 'muted')}>
                   <span class="grow">
                     <b>{u.displayName}</b> <span class="mono dim small">{u.name}</span>
-                    {u.admin && <span class="chip">admin</span>}
-                    {u.disabled && <span class="chip">disabled</span>}
+                    {u.admin && <span class="chip">{t('admin')}</span>}
+                    {u.disabled && <span class="chip">{t('disabled')}</span>}
                     <span class="dim small">
                       {' '}
-                      · {u.passkeys} passkey(s){u.lastSeen ? ` · seen ${ago(u.lastSeen)}` : ''}
+                      · {t('{n} passkey(s)', { n: u.passkeys })}
+                      {u.lastSeen ? ' · ' + t('seen {time}', { time: ago(u.lastSeen) }) : ''}
                     </span>
                   </span>
                   <select
@@ -107,15 +109,15 @@ export function AdminPage() {
                           const r = await api<{ url: string }>('POST', `/api/admin/users/${u.id}/link`)
                           setLink(r.url)
                         })()
-                      if (v === 'delete' && confirm(`Delete ${u.name}?\n\nTheir personal projects (registrations, sessions, containers) are removed; files on disk stay.`))
+                      if (v === 'delete' && confirm(t('Delete {name}?\n\nTheir personal projects (registrations, sessions, containers) are removed; files on disk stay.', { name: u.name })))
                         run('u', () => api('DELETE', `/api/admin/users/${u.id}`))()
                     }}
                   >
-                    <option value="">Actions…</option>
-                    <option value="admin">{u.admin ? 'Remove admin' : 'Make admin'}</option>
-                    <option value="link">Passkey recovery link</option>
-                    <option value="disable">{u.disabled ? 'Enable' : 'Disable'}</option>
-                    {u.id !== me.value?.id && <option value="delete">Delete…</option>}
+                    <option value="">{t('Actions…')}</option>
+                    <option value="admin">{u.admin ? t('Remove admin') : t('Make admin')}</option>
+                    <option value="link">{t('Passkey recovery link')}</option>
+                    <option value="disable">{u.disabled ? t('Enable') : t('Disable')}</option>
+                    {u.id !== me.value?.id && <option value="delete">{t('Delete…')}</option>}
                   </select>
                 </div>
               ))}
@@ -123,14 +125,14 @@ export function AdminPage() {
           </section>
           {d.invites.length > 0 && (
             <section class="card col gap">
-              <h3>Open invitations & links</h3>
+              <h3>{t('Open invitations & links')}</h3>
               {d.invites.map((i) => (
                 <div key={i.hash} class="row gap list-row">
                   <span class="grow small">
-                    {i.userId ? 'Device / recovery link' : i.admin ? 'Admin invite' : 'Member invite'}
-                    {i.note && ` · ${i.note}`} <span class="dim">· expires in {until(i.expiresAt)}</span>
+                    {i.userId ? t('Device / recovery link') : i.admin ? t('Admin invite') : t('Member invite')}
+                    {i.note && ` · ${i.note}`} <span class="dim">· {t('expires in {time}', { time: until(i.expiresAt) })}</span>
                   </span>
-                  <button class="icon-btn" aria-label="Revoke" onClick={run('rv', () => api('DELETE', `/api/admin/invites/${i.hash}`))}>
+                  <button class="icon-btn" aria-label={t('Revoke')} onClick={run('rv', () => api('DELETE', `/api/admin/invites/${i.hash}`))}>
                     <ITrash size={14} />
                   </button>
                 </div>
@@ -143,13 +145,13 @@ export function AdminPage() {
       {d && tab === 'containers' && (
         <section class="card col gap">
           <div class="row gap">
-            <h3 class="grow">Containers</h3>
+            <h3 class="grow">{t('Containers')}</h3>
             <button class="btn small" onClick={() => setShowImage(true)}>
-              Agent image…
+              {t('Agent image…')}
             </button>
           </div>
-          <p class="dim small">Every (project, user) pair has its own container. Admins see usage, not content.</p>
-          {d.containers.length === 0 && <div class="dim small">No containers.</div>}
+          <p class="dim small">{t('Every (project, user) pair has its own container. Admins see usage, not content.')}</p>
+          {d.containers.length === 0 && <div class="dim small">{t('No containers.')}</div>}
           {d.containers.map((c) => (
             <div key={c.projectId + c.userId} class="row gap list-row">
               <span class={cls('dot', c.running ? 'running' : 'stopped')} />
@@ -158,7 +160,8 @@ export function AdminPage() {
                 {c.running && (
                   <span class="dim mono">
                     {' '}
-                    · {c.mem} · {c.cpu} · {c.pids} procs{c.limitsEnforced === false ? ' · limits NOT enforced' : ''}
+                    · {c.mem} · {c.cpu} · {t('{n} procs', { n: c.pids })}
+                    {c.limitsEnforced === false ? ' · ' + t('limits NOT enforced') : ''}
                   </span>
                 )}
               </span>
@@ -167,11 +170,11 @@ export function AdminPage() {
                   class="btn small danger"
                   disabled={!!busy}
                   onClick={() =>
-                    confirm(`Kill ${c.user}'s container for ${c.project}?`) &&
-                    run('k', async () => (await api('POST', '/api/admin/containers/kill', { projectId: c.projectId, userId: c.userId }), toast('Killed')))()
+                    confirm(t("Kill {user}'s container for {project}?", { user: c.user, project: c.project })) &&
+                    run('k', async () => (await api('POST', '/api/admin/containers/kill', { projectId: c.projectId, userId: c.userId }), toast(t('Killed'))))()
                   }
                 >
-                  Kill
+                  {t('Kill')}
                 </button>
               )}
             </div>
@@ -186,9 +189,9 @@ export function AdminPage() {
       )}
       {tab === 'env' && (
         <section class="card col gap">
-          <h3>Global environment</h3>
-          <p class="dim small">KEY=VALUE lines exported in every user’s containers. Personal and project environments override these.</p>
-          <EnvEditor url="/api/shared/env" note="Saved — containers pick it up on their next start" />
+          <h3>{t('Global environment')}</h3>
+          <p class="dim small">{t('KEY=VALUE lines exported in every user’s containers. Personal and project environments override these.')}</p>
+          <EnvEditor url="/api/shared/env" note={t('Saved — containers pick it up on their next start')} />
         </section>
       )}
       {showImage && <ImageLog onClose={() => setShowImage(false)} />}

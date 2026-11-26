@@ -1,3 +1,4 @@
+import { t } from './i18n'
 import { api, ApiError } from './api'
 import { applyState, authed, connect, toast } from './store'
 import { fetchAuthStatus, inviteCode } from './authflow'
@@ -30,7 +31,7 @@ export async function boot() {
       authed.value = false
       return
     }
-    toast('Cannot reach the server — retrying…', 'error')
+    toast(t('Cannot reach the server — retrying…'), 'error')
     setTimeout(boot, 3000)
   }
 }

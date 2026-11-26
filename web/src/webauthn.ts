@@ -1,3 +1,4 @@
+import { t } from './i18n'
 // Passkeys: convert the server's WebAuthn options (base64url JSON) to the
 // browser API and the browser's credential back to JSON.
 
@@ -26,7 +27,7 @@ export async function createPasskey(options: any): Promise<any> {
   pk.user = { ...pk.user, id: decode(pk.user.id) }
   pk.excludeCredentials = (pk.excludeCredentials || []).map((c: any) => ({ ...c, id: decode(c.id) }))
   const cred = (await navigator.credentials.create({ publicKey: pk })) as PublicKeyCredential | null
-  if (!cred) throw new Error('Passkey creation was cancelled')
+  if (!cred) throw new Error(t('Passkey creation was cancelled'))
   const r = cred.response as AuthenticatorAttestationResponse
   return {
     id: cred.id,
@@ -47,7 +48,7 @@ export async function getPasskey(options: any): Promise<any> {
   pk.challenge = decode(pk.challenge)
   pk.allowCredentials = (pk.allowCredentials || []).map((c: any) => ({ ...c, id: decode(c.id) }))
   const cred = (await navigator.credentials.get({ publicKey: pk, mediation: options.mediation })) as PublicKeyCredential | null
-  if (!cred) throw new Error('Sign-in was cancelled')
+  if (!cred) throw new Error(t('Sign-in was cancelled'))
   const r = cred.response as AuthenticatorAssertionResponse
   return {
     id: cred.id,
@@ -67,9 +68,9 @@ export async function getPasskey(options: any): Promise<any> {
 /** Human message for WebAuthn DOMExceptions. */
 export function passkeyError(e: unknown): string {
   if (e instanceof DOMException) {
-    if (e.name === 'NotAllowedError') return 'Cancelled or timed out.'
-    if (e.name === 'InvalidStateError') return 'This device already has a passkey for this account.'
-    if (e.name === 'SecurityError') return 'Passkeys need the HTTPS address of Collie.'
+    if (e.name === 'NotAllowedError') return t('Cancelled or timed out.')
+    if (e.name === 'InvalidStateError') return t('This device already has a passkey for this account.')
+    if (e.name === 'SecurityError') return t('Passkeys need the HTTPS address of Collie.')
   }
   return e instanceof Error ? e.message : String(e)
 }

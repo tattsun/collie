@@ -3,6 +3,7 @@ import type { TermInfo } from '../types'
 import { api } from '../api'
 import { terms, toastError } from '../store'
 import { cls, isTouch } from '../util'
+import { t } from '../i18n'
 import { IPlus, IX, Spinner } from './icons'
 
 type XTerm = import('@xterm/xterm').Terminal
@@ -146,7 +147,7 @@ function TermPane({ info }: { info: TermInfo }) {
           <Spinner />
         </div>
       )}
-      {state === 'closed' && <div class="term-overlay dim">Shell exited.</div>}
+      {state === 'closed' && <div class="term-overlay dim">{t('Shell exited.')}</div>}
       <div class="term-host" ref={host} />
       {isTouch && (
         <div class="keybar">
@@ -195,22 +196,22 @@ export function TerminalView({ owner, projectId, sessionId }: { owner: string; p
   return (
     <div class="terminal-view">
       <div class="term-tabs">
-        {mine.map((t, i) => (
-          <div key={t.id} class={cls('term-tab', cur?.id === t.id && 'on')}>
-            <button onClick={() => setActive(t.id)}>Shell {i + 1}</button>
-            <button class="x" aria-label="Close shell" onClick={() => api('DELETE', `/api/terms/${t.id}`).catch(toastError)}>
+        {mine.map((tm, i) => (
+          <div key={tm.id} class={cls('term-tab', cur?.id === tm.id && 'on')}>
+            <button onClick={() => setActive(tm.id)}>{t('Shell {n}', { n: i + 1 })}</button>
+            <button class="x" aria-label={t('Close shell')} onClick={() => api('DELETE', `/api/terms/${tm.id}`).catch(toastError)}>
               <IX size={11} />
             </button>
           </div>
         ))}
-        <button class="term-add" onClick={create} disabled={creating} aria-label="New shell">
+        <button class="term-add" onClick={create} disabled={creating} aria-label={t('New shell')}>
           {creating ? <Spinner size={12} /> : <IPlus size={14} />}
         </button>
       </div>
       {cur ? (
         <TermPane key={cur.id} info={cur} />
       ) : (
-        <div class="center dim pad">{creating ? <Spinner /> : 'No shell open.'}</div>
+        <div class="center dim pad">{creating ? <Spinner /> : t('No shell open.')}</div>
       )}
     </div>
   )

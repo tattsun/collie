@@ -8,6 +8,7 @@ import { IBell, IBox, IFolder, IPlus, IBranch, IUsers, Spinner } from './icons'
 import { AgentBadge, Menu, StatusDot } from './ui'
 import { signOut } from '../authflow'
 import { ImageIndicator } from './ProjectSettings'
+import { t, ts } from '../i18n'
 
 export const listTab = signal<'sessions' | 'projects'>((localStorage.getItem('collie.tab') as any) || 'sessions')
 export const projectFilter = signal<string>(localStorage.getItem('collie.filter') || '')
@@ -40,7 +41,7 @@ const SessionRow = memo(function SessionRow({ s, active, project }: { s: Session
           )}
         </div>
         {s.status === 'waiting' ? (
-          <div class="srow-preview warn">Needs your input</div>
+          <div class="srow-preview warn">{t('Needs your input')}</div>
         ) : s.preview ? (
           <div class="srow-preview">{s.preview}</div>
         ) : null}
@@ -78,7 +79,7 @@ function SessionList() {
             localStorage.setItem('collie.filter', projectFilter.value)
           }}
         >
-          <option value="">All projects</option>
+          <option value="">{t('All projects')}</option>
           {projects.value.map((p) => (
             <option key={p.id} value={p.id}>
               {p.name}
@@ -86,25 +87,25 @@ function SessionList() {
           ))}
         </select>
       )}
-      {needs.length > 0 && <div class="group-h warn">Needs you · {needs.length}</div>}
+      {needs.length > 0 && <div class="group-h warn">{t('Needs you · {n}', { n: needs.length })}</div>}
       {needs.map((s) => (
         <SessionRow key={s.id} s={s} active={s.id === activeId} project={pmap.get(s.projectId)?.name} />
       ))}
-      {needs.length > 0 && rest.length > 0 && <div class="group-h">Sessions</div>}
+      {needs.length > 0 && rest.length > 0 && <div class="group-h">{t('Sessions')}</div>}
       {rest.map((s) => (
         <SessionRow key={s.id} s={s} active={s.id === activeId} project={pmap.get(s.projectId)?.name} />
       ))}
       {needs.length + rest.length === 0 && (
         <div class="empty dim">
-          {projects.value.length === 0 ? 'Create a project to get started.' : 'No sessions yet.'}
+          {projects.value.length === 0 ? t('Create a project to get started.') : t('No sessions yet.')}
           <button class="btn primary" onClick={() => go(projects.value.length ? '#/new' : '#/projects?new=1')}>
-            <IPlus size={15} /> {projects.value.length ? 'New session' : 'New project'}
+            <IPlus size={15} /> {projects.value.length ? t('New session') : t('New project')}
           </button>
         </div>
       )}
       {archivedCount > 0 && (
         <button class="btn ghost small archived-toggle" onClick={() => (showArchived.value = !showArchived.value)}>
-          {showArchived.value ? 'Hide' : 'Show'} archived ({archivedCount})
+          {showArchived.value ? t('Hide archived ({n})', { n: archivedCount }) : t('Show archived ({n})', { n: archivedCount })}
         </button>
       )}
     </div>
@@ -114,16 +115,17 @@ function SessionList() {
 function ProjectList() {
   const r = route.value
   const sections = useMemo(() => {
+    // Labels are translated at render time (this memo doesn't depend on the language).
     const out: { key: string; label: string; items: typeof projects.value }[] = []
     const mine = projects.value.filter((p) => !p.ownerGroup)
-    if (mine.length) out.push({ key: 'me', label: 'Personal', items: mine })
+    if (mine.length) out.push({ key: 'me', label: '', items: mine })
     const byGroup = new Map<string, typeof projects.value>()
     for (const p of projects.value) {
       if (!p.ownerGroup) continue
       if (!byGroup.has(p.ownerGroup)) byGroup.set(p.ownerGroup, [])
       byGroup.get(p.ownerGroup)!.push(p)
     }
-    for (const [gid, items] of byGroup) out.push({ key: gid, label: groupById.value.get(gid)?.name || 'Group', items })
+    for (const [gid, items] of byGroup) out.push({ key: gid, label: groupById.value.get(gid)?.name || '', items })
     return out
   }, [projects.value, groupById.value])
   const counts = useMemo(() => {
@@ -143,7 +145,7 @@ function ProjectList() {
         <div key={sec.key} class="slist">
           {sections.length > 1 && (
             <div class="group-h">
-              {sec.key !== 'me' && <IUsers size={11} />} {sec.label}
+              {sec.key !== 'me' && <IUsers size={11} />} {sec.key === 'me' ? t('Personal') : sec.label || t('Group')}
             </div>
           )}
           {sec.items.map((p) => {
@@ -155,9 +157,9 @@ function ProjectList() {
               <div class="srow-top">
                 <span class="srow-title">{p.name}</span>
                 {p.status === 'cloning' && <Spinner size={12} />}
-                {c && <span class="srow-time">{c.busy ? `${c.busy} active · ` : ''}{c.n}</span>}
+                {c && <span class="srow-time">{c.busy ? t('{busy} active · {n}', { busy: c.busy, n: c.n }) : c.n}</span>}
               </div>
-              <div class="srow-preview mono">{p.status === 'error' ? p.error : home(p.path)}</div>
+              <div class="srow-preview mono">{p.status === 'error' ? ts(p.error || '') : home(p.path)}</div>
             </div>
           </a>
         )
@@ -165,7 +167,7 @@ function ProjectList() {
         </div>
       ))}
       <button class="btn ghost new-proj" onClick={() => go('#/projects?new=1')}>
-        <IPlus size={15} /> New project
+        <IPlus size={15} /> {t('New project')}
       </button>
     </div>
   )
@@ -185,39 +187,39 @@ export function Sidebar() {
           <img src="/icon.svg" width={22} height={22} alt="" />
           <span>Collie</span>
         </a>
-        <span class={cls('conn', conn.value)} title={conn.value} />
+        <span class={cls('conn', conn.value)} title={conn.value === 'online' ? t('online') : conn.value === 'offline' ? t('offline') : t('connecting')} />
         <span class="grow" />
         <button class="btn primary small" onClick={() => go('#/new')} disabled={projects.value.length === 0}>
-          <IPlus size={15} /> New
+          <IPlus size={15} /> {t('New')}
         </button>
       </header>
       <div class="side-tabs">
         <button class={cls('side-tab', tab === 'sessions' && 'on')} onClick={() => setTab('sessions')}>
-          Sessions{n > 0 && <span class="badge">{n}</span>}
+          {t('Sessions')}{n > 0 && <span class="badge">{n}</span>}
         </button>
         <button class={cls('side-tab', tab === 'projects' && 'on')} onClick={() => setTab('projects')}>
-          Projects
+          {t('Projects')}
         </button>
       </div>
       <div class="side-scroll">{tab === 'sessions' ? <SessionList /> : <ProjectList />}</div>
       <footer class="side-foot">
         <Menu
           up
-          label="Account menu"
+          label={t('Account menu')}
           trigger={
             <span class="avatar" title={me.value?.displayName}>
               {(me.value?.displayName || '?').slice(0, 1).toUpperCase()}
             </span>
           }
           items={[
-            { label: `${me.value?.displayName || ''} — account`, onClick: () => go('#/account') },
-            { label: 'Groups', onClick: () => go('#/groups') },
-            ...(me.value?.admin ? [{ label: 'Admin', onClick: () => go('#/admin') }] : []),
-            { label: 'Sign out', onClick: signOut, danger: true },
+            { label: t('{name} — account', { name: me.value?.displayName || '' }), onClick: () => go('#/account') },
+            { label: t('Groups'), onClick: () => go('#/groups') },
+            ...(me.value?.admin ? [{ label: t('Admin'), onClick: () => go('#/admin') }] : []),
+            { label: t('Sign out'), onClick: signOut, danger: true },
           ]}
         />
-        <button class={cls('foot-btn', notifyEnabled.value && 'on')} onClick={() => setNotify(!notifyEnabled.value)} title="Notifications">
-          <IBell size={14} /> {notifyEnabled.value ? 'Notifications on' : 'Notifications off'}
+        <button class={cls('foot-btn', notifyEnabled.value && 'on')} onClick={() => setNotify(!notifyEnabled.value)} title={t('Notifications')}>
+          <IBell size={14} /> {notifyEnabled.value ? t('Notifications on') : t('Notifications off')}
         </button>
         <ImageIndicator />
         <span class="grow" />

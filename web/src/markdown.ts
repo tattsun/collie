@@ -1,3 +1,4 @@
+import { t as tr } from './i18n'
 import { Marked, type Tokens } from 'marked'
 
 const esc = (s: string) =>
@@ -30,7 +31,7 @@ md.use({
     },
     code(t: Tokens.Code) {
       const lang = (t.lang || '').split(/\s/)[0]
-      return `<div class="code"><div class="code-bar"><span>${esc(lang)}</span><button class="copy" data-copy>Copy</button></div><pre><code>${esc(t.text)}</code></pre></div>`
+      return `<div class="code"><div class="code-bar"><span>${esc(lang)}</span><button class="copy" data-copy>${tr('Copy')}</button></div><pre><code>${esc(t.text)}</code></pre></div>`
     },
   },
 })

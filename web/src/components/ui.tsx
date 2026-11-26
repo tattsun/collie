@@ -1,4 +1,6 @@
+import { Fragment } from 'preact'
 import type { ComponentChildren, JSX } from 'preact'
+import { t } from '../i18n'
 import { useEffect, useRef, useState } from 'preact/hooks'
 import { toasts } from '../store'
 import type { Agent, Status } from '../types'
@@ -69,7 +71,7 @@ export function Modal({ title, onClose, children, wide }: { title: string; onClo
       <div class={cls('modal', wide && 'wide')} role="dialog" aria-label={title}>
         <div class="modal-head">
           <h2>{title}</h2>
-          <button class="icon-btn" onClick={onClose} aria-label="Close">
+          <button class="icon-btn" onClick={onClose} aria-label={t('Close')}>
             <IX size={18} />
           </button>
         </div>
@@ -101,14 +103,14 @@ const statusLabel: Record<string, string> = {
 }
 
 export function StatusDot({ status, unread }: { status: Status; unread?: boolean }) {
-  return <span class={cls('dot', status, unread && 'unread')} title={statusLabel[status] || status} />
+  return <span class={cls('dot', status, unread && 'unread')} title={statusLabel[status] ? t(statusLabel[status]) : status} />
 }
 
 export function StatusPill({ status }: { status: Status }) {
   return (
     <span class={cls('pill', status)}>
       <span class={cls('dot', status)} />
-      {statusLabel[status] || status}
+      {statusLabel[status] ? t(statusLabel[status]) : status}
     </span>
   )
 }
@@ -149,4 +151,9 @@ export function Toggle({ checked, onChange, label, hint, disabled }: { checked: 
       </span>
     </label>
   )
+}
+
+/** Fill a translated sentence's {key} placeholders with elements (code, links…). */
+export function rich(s: string, parts: Record<string, ComponentChildren>) {
+  return s.split(/\{(\w+)\}/).map((x, i) => <Fragment key={i}>{i % 2 ? parts[x] : x}</Fragment>)
 }

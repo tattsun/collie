@@ -1,8 +1,14 @@
 import { useState } from 'preact/hooks'
 import { api } from '../api'
+import { t } from '../i18n'
 import { go, groupById, groups, me, projects, route, toastError, userName, users } from '../store'
 import { cls } from '../util'
 import { IBack, IPlus, ITrash, IUsers, Spinner } from './icons'
+
+/** Display label of a group role (the value sent to the API stays 'member'/'owner'). */
+function roleLabel(role: string) {
+  return role === 'owner' ? t('owner') : role === 'member' ? t('member') : role
+}
 
 export function GroupsPage() {
   const r = route.value
@@ -25,16 +31,16 @@ export function GroupsPage() {
   return (
     <div class="page page-pad narrow">
       <div class="page-head">
-        <button class="icon-btn back" onClick={() => go('#/')} aria-label="Back">
+        <button class="icon-btn back" onClick={() => go('#/')} aria-label={t('Back')}>
           <IBack size={20} />
         </button>
-        <h1>Groups</h1>
+        <h1>{t('Groups')}</h1>
       </div>
-      <p class="dim small">Members of a group share its projects and the sessions started in them (unless made private). Each member’s agents still run with their own accounts.</p>
+      <p class="dim small">{t('Members of a group share its projects and the sessions started in them (unless made private). Each member’s agents still run with their own accounts.')}</p>
       <form class="row gap form-inline" onSubmit={create}>
-        <input class="input mono" value={name} placeholder="new group name (a-z, 0-9, -)" onInput={(e) => setName((e.target as HTMLInputElement).value)} />
+        <input class="input mono" value={name} placeholder={t('new group name (a-z, 0-9, -)')} onInput={(e) => setName((e.target as HTMLInputElement).value)} />
         <button class="btn primary" disabled={!name.trim() || busy}>
-          {busy ? <Spinner size={12} /> : <IPlus size={14} />} Create
+          {busy ? <Spinner size={12} /> : <IPlus size={14} />} {t('Create')}
         </button>
       </form>
       <div class="plist">
@@ -44,12 +50,13 @@ export function GroupsPage() {
             <div class="grow">
               <div class="b">{g.name}</div>
               <div class="dim small">
-                {Object.keys(g.members).length} member(s){g.myRole ? ` · you are ${g.myRole}` : ' · (admin view)'}
+                {t('{n} member(s)', { n: Object.keys(g.members).length })}
+                {g.myRole ? ' · ' + t('you are {role}', { role: roleLabel(g.myRole) }) : ' · ' + t('(admin view)')}
               </div>
             </div>
           </a>
         ))}
-        {groups.value.length === 0 && <div class="dim pad">You are not in any group yet.</div>}
+        {groups.value.length === 0 && <div class="dim pad">{t('You are not in any group yet.')}</div>}
       </div>
     </div>
   )
@@ -62,9 +69,9 @@ function GroupDetail({ id }: { id: string }) {
   if (!g) {
     return (
       <div class="page center-page dim">
-        <p>Group not found.</p>
+        <p>{t('Group not found.')}</p>
         <button class="btn" onClick={() => go('#/groups')}>
-          Groups
+          {t('Groups')}
         </button>
       </div>
     )
@@ -85,36 +92,36 @@ function GroupDetail({ id }: { id: string }) {
   return (
     <div class="page page-pad narrow">
       <div class="page-head">
-        <button class="icon-btn back" onClick={() => go('#/groups')} aria-label="Back">
+        <button class="icon-btn back" onClick={() => go('#/groups')} aria-label={t('Back')}>
           <IBack size={20} />
         </button>
         <h1>{g.name}</h1>
         <span class="grow" />
         <button class="btn primary small" onClick={() => go(`#/projects?new=1&group=${id}`)}>
-          <IPlus size={14} /> Group project
+          <IPlus size={14} /> {t('Group project')}
         </button>
       </div>
       <section class="card col gap">
-        <h3>Members</h3>
+        <h3>{t('Members')}</h3>
         {Object.entries(g.members).map(([uid, role]) => (
           <div key={uid} class="row gap list-row">
             <span class="grow">
-              {userName(uid)} {uid === me.value?.id && <span class="chip">you</span>}
+              {userName(uid)} {uid === me.value?.id && <span class="chip">{t('you')}</span>}
             </span>
             {manage ? (
               <select class="select tiny" value={role} disabled={busy} onChange={(e) => run(() => api('POST', `/api/groups/${id}/members`, { user: uid, role: (e.target as HTMLSelectElement).value }))}>
-                <option value="member">member</option>
-                <option value="owner">owner</option>
+                <option value="member">{t('member')}</option>
+                <option value="owner">{t('owner')}</option>
               </select>
             ) : (
-              <span class="dim small">{role}</span>
+              <span class="dim small">{roleLabel(role)}</span>
             )}
             {(manage || uid === me.value?.id) && (
               <button
                 class="icon-btn"
-                aria-label={uid === me.value?.id ? 'Leave' : 'Remove'}
+                aria-label={uid === me.value?.id ? t('Leave') : t('Remove')}
                 disabled={busy}
-                onClick={() => confirm(uid === me.value?.id ? `Leave ${g.name}?` : `Remove ${userName(uid)} from ${g.name}?`) && run(() => api('DELETE', `/api/groups/${id}/members/${uid}`))}
+                onClick={() => confirm(uid === me.value?.id ? t('Leave {group}?', { group: g.name }) : t('Remove {user} from {group}?', { user: userName(uid), group: g.name })) && run(() => api('DELETE', `/api/groups/${id}/members/${uid}`))}
               >
                 <ITrash size={14} />
               </button>
@@ -124,7 +131,7 @@ function GroupDetail({ id }: { id: string }) {
         {manage && candidates.length > 0 && (
           <div class="row gap">
             <select class="select" value={add} onChange={(e) => setAdd((e.target as HTMLSelectElement).value)}>
-              <option value="">Add a member…</option>
+              <option value="">{t('Add a member…')}</option>
               {candidates.map((u) => (
                 <option key={u.id} value={u.id}>
                   {u.displayName} ({u.name})
@@ -132,14 +139,14 @@ function GroupDetail({ id }: { id: string }) {
               ))}
             </select>
             <button class="btn" disabled={!add || busy} onClick={() => run(async () => (await api('POST', `/api/groups/${id}/members`, { user: add, role: 'member' }), setAdd('')))}>
-              Add
+              {t('Add')}
             </button>
           </div>
         )}
       </section>
       <section class="card col gap">
-        <h3>Projects</h3>
-        {gprojects.length === 0 && <div class="dim small">No group projects yet.</div>}
+        <h3>{t('Projects')}</h3>
+        {gprojects.length === 0 && <div class="dim small">{t('No group projects yet.')}</div>}
         {gprojects.map((p) => (
           <a key={p.id} href={`#/p/${p.id}`} class={cls('list-row', 'link-row')}>
             {p.name}
@@ -148,8 +155,8 @@ function GroupDetail({ id }: { id: string }) {
       </section>
       {manage && (
         <div class="danger-zone">
-          <button class="btn ghost danger small" disabled={busy || gprojects.length > 0} title={gprojects.length ? 'Delete its projects first' : ''} onClick={() => confirm(`Delete group ${g.name}?`) && run(async () => (await api('DELETE', `/api/groups/${id}`), go('#/groups')))}>
-            <ITrash size={14} /> Delete group
+          <button class="btn ghost danger small" disabled={busy || gprojects.length > 0} title={gprojects.length ? t('Delete its projects first') : ''} onClick={() => confirm(t('Delete group {name}?', { name: g.name })) && run(async () => (await api('DELETE', `/api/groups/${id}`), go('#/groups')))}>
+            <ITrash size={14} /> {t('Delete group')}
           </button>
         </div>
       )}

@@ -8,6 +8,7 @@ import { ChangesView } from './Changes'
 import { AgentBadge, Segmented, StatusDot, Toggle } from './ui'
 import { IBack, IBox, IDiff, IFolder, IList, IPlus, ISettings, ITerminal, ITrash, Spinner } from './icons'
 import { ProjectSettings } from './ProjectSettings'
+import { t, ts } from '../i18n'
 
 const TerminalView = lazy(() => import('./Terminal').then((m) => ({ default: m.TerminalView })))
 
@@ -53,22 +54,22 @@ export function NewProjectForm({ onDone }: { onDone?: (p: Project) => void }) {
         value={kind}
         onChange={setKind}
         options={[
-          { value: 'empty', label: 'New folder' },
-          { value: 'clone', label: 'Clone repo' },
-          ...(admin ? [{ value: 'existing' as Kind, label: 'Existing folder' }] : []),
+          { value: 'empty', label: t('New folder') },
+          { value: 'clone', label: t('Clone repo') },
+          ...(admin ? [{ value: 'existing' as Kind, label: t('Existing folder') }] : []),
         ]}
       />
       {kind === 'clone' && (
         <label class="field">
-          <span class="field-l">Repository URL</span>
+          <span class="field-l">{t('Repository URL')}</span>
           <input class="input mono" value={url} placeholder="git@github.com:you/repo.git" autoCapitalize="off" autoCorrect="off" spellcheck={false} onInput={(e) => setUrl((e.target as HTMLInputElement).value)} />
-          <span class="field-h">{admin ? "Cloned with the server user's git credentials." : 'https:// only; private GitHub repositories use the GH_TOKEN in your account environment.'}</span>
+          <span class="field-h">{admin ? t("Cloned with the server user's git credentials.") : t('https:// only; private GitHub repositories use the GH_TOKEN in your account environment.')}</span>
         </label>
       )}
       {kind === 'existing' ? (
         <label class="field">
-          <span class="field-l">Path on the server</span>
-          <input class="input mono" value={path} list="dir-suggest" placeholder={`${home(root.value)}/my-app or /srv/code/app`} autoCapitalize="off" autoCorrect="off" spellcheck={false} onInput={(e) => setPath((e.target as HTMLInputElement).value)} />
+          <span class="field-l">{t('Path on the server')}</span>
+          <input class="input mono" value={path} list="dir-suggest" placeholder={t('{home}/my-app or /srv/code/app', { home: home(root.value) })} autoCapitalize="off" autoCorrect="off" spellcheck={false} onInput={(e) => setPath((e.target as HTMLInputElement).value)} />
           <datalist id="dir-suggest">
             {dirs.map((d) => (
               <option key={d} value={d} />
@@ -86,43 +87,43 @@ export function NewProjectForm({ onDone }: { onDone?: (p: Project) => void }) {
         </label>
       ) : (
         <label class="field">
-          <span class="field-l">Name {kind === 'clone' && <span class="dim">(optional)</span>}</span>
-          <input class="input" value={name} placeholder={kind === 'clone' ? 'derived from the URL' : 'my-app'} autoCapitalize="off" autoCorrect="off" spellcheck={false} onInput={(e) => setName((e.target as HTMLInputElement).value)} />
+          <span class="field-l">{t('Name')} {kind === 'clone' && <span class="dim">{t('(optional)')}</span>}</span>
+          <input class="input" value={name} placeholder={kind === 'clone' ? t('derived from the URL') : 'my-app'} autoCapitalize="off" autoCorrect="off" spellcheck={false} onInput={(e) => setName((e.target as HTMLInputElement).value)} />
           <span class="field-h mono">
             {home(base)}/{name || (kind === 'clone' ? '<repo>' : '<name>')}
           </span>
         </label>
       )}
-      {kind === 'empty' && <Toggle checked={git} onChange={setGit} label="Initialize a git repository" />}
+      {kind === 'empty' && <Toggle checked={git} onChange={setGit} label={t('Initialize a git repository')} />}
       {myGroups.length > 0 && (
         <label class="field">
-          <span class="field-l">Owner</span>
+          <span class="field-l">{t('Owner')}</span>
           <select class="select" value={group} onChange={(e) => setGroup((e.target as HTMLSelectElement).value)}>
-            <option value="">Me (personal)</option>
+            <option value="">{t('Me (personal)')}</option>
             {myGroups.map((g) => (
               <option key={g.id} value={g.id}>
-                Group: {g.name}
+                {t('Group: {name}', { name: g.name })}
               </option>
             ))}
           </select>
-          {group && <span class="field-h">Shared with every member of the group.</span>}
+          {group && <span class="field-h">{t('Shared with every member of the group.')}</span>}
         </label>
       )}
       {admin && <Toggle
         checked={isolated && sandbox.value.available}
         disabled={!sandbox.value.available}
         onChange={setIsolated}
-        label="Run agents in an isolated container (recommended)"
+        label={t('Run agents in an isolated container (recommended)')}
         hint={
           sandbox.value.available
-            ? 'Its own sandbox with resource limits, only this folder visible, no LAN/tailnet access.'
-            : 'Needs podman on the server.'
+            ? t('Its own sandbox with resource limits, only this folder visible, no LAN/tailnet access.')
+            : t('Needs podman on the server.')
         }
       />}
       <div class="modal-actions">
         <button class="btn primary" type="submit" disabled={busy}>
           {busy && <Spinner size={12} />}
-          {kind === 'clone' ? 'Clone' : kind === 'existing' ? 'Add project' : 'Create project'}
+          {kind === 'clone' ? t('Clone') : kind === 'existing' ? t('Add project') : t('Create project')}
         </button>
       </div>
     </form>
@@ -138,14 +139,14 @@ export function ProjectsPage() {
   return (
     <div class="page page-pad narrow">
       <div class="page-head">
-        <button class="icon-btn back" onClick={() => go('#/')} aria-label="Back">
+        <button class="icon-btn back" onClick={() => go('#/')} aria-label={t('Back')}>
           <IBack size={20} />
         </button>
-        <h1>Projects</h1>
+        <h1>{t('Projects')}</h1>
         <span class="grow" />
         {!showNew && (
           <button class="btn primary small" onClick={() => setShowNew(true)}>
-            <IPlus size={15} /> New project
+            <IPlus size={15} /> {t('New project')}
           </button>
         )}
       </div>
@@ -157,10 +158,10 @@ export function ProjectsPage() {
             <div class="grow">
               <div class="b">{p.name}</div>
               <div class="dim small mono">{home(p.path)}</div>
-              {p.status === 'error' && <div class="err small">{p.error}</div>}
+              {p.status === 'error' && <div class="err small">{ts(p.error || '')}</div>}
             </div>
             {p.runtime === 'container' && (
-              <span class="chip" title="Isolated container">
+              <span class="chip" title={t('Isolated container')}>
                 <IBox size={12} />
               </span>
             )}
@@ -180,15 +181,15 @@ export function ProjectPage({ id }: { id: string }) {
   if (!p) {
     return (
       <div class="page center-page dim">
-        <p>Project not found.</p>
+        <p>{t('Project not found.')}</p>
         <button class="btn" onClick={() => go('#/projects')}>
-          All projects
+          {t('All projects')}
         </button>
       </div>
     )
   }
   const remove = async () => {
-    if (!confirm(`Remove project “${p.name}” from Collie?\n\nIts ${list.length} session(s) are deleted. Files in ${p.path} are NOT touched.`)) return
+    if (!confirm(t('Remove project “{name}” from Collie?\n\nIts {n} session(s) are deleted. Files in {path} are NOT touched.', { name: p.name, n: list.length, path: p.path }))) return
     try {
       await api('DELETE', `/api/projects/${id}`)
       go('#/projects')
@@ -199,7 +200,7 @@ export function ProjectPage({ id }: { id: string }) {
   return (
     <div class="session">
       <header class="sess-head">
-        <button class="icon-btn back" onClick={() => go('#/projects')} aria-label="Back">
+        <button class="icon-btn back" onClick={() => go('#/projects')} aria-label={t('Back')}>
           <IBack size={20} />
         </button>
         <div class="sess-title-wrap">
@@ -208,43 +209,43 @@ export function ProjectPage({ id }: { id: string }) {
             <span class={cls('sub-item', p.runtime === 'container' && 'iso')}>
               {p.runtime === 'container' ? (
                 <>
-                  <IBox size={11} /> isolated
+                  <IBox size={11} /> {t('isolated')}
                 </>
               ) : (
-                'host'
+                t('host')
               )}
             </span>
             {ownerLabel(p) && <span class="sub-item">{ownerLabel(p)}</span>}
             <span class="sub-item mono">{home(p.path)}</span>
             {p.status === 'cloning' && (
               <span class="sub-item">
-                <Spinner size={10} /> cloning
+                <Spinner size={10} /> {t('cloning')}
               </span>
             )}
           </div>
         </div>
         <button class="btn primary small" onClick={() => go(`#/new?project=${id}`)} disabled={p.status === 'cloning'}>
-          <IPlus size={15} /> Session
+          <IPlus size={15} /> {t('Session')}
         </button>
       </header>
       <nav class="tabs">
         <a href={`#/p/${id}`} class={cls('tab', tab === 'sessions' && 'on')}>
-          <IList size={14} /> Sessions
+          <IList size={14} /> {t('Sessions')}
         </a>
         <a href={`#/p/${id}/changes`} class={cls('tab', tab === 'changes' && 'on')}>
-          <IDiff size={14} /> Changes
+          <IDiff size={14} /> {t('Changes')}
         </a>
         <a href={`#/p/${id}/term`} class={cls('tab', tab === 'term' && 'on')}>
-          <ITerminal size={14} /> Terminal
+          <ITerminal size={14} /> {t('Terminal')}
         </a>
         <a href={`#/p/${id}/settings`} class={cls('tab', tab === 'settings' && 'on')}>
-          <ISettings size={14} /> Settings
+          <ISettings size={14} /> {t('Settings')}
         </a>
       </nav>
       {tab === 'sessions' && (
         <div class="tab-body page-pad">
-          {p.status === 'error' && <div class="error-box">{p.error}</div>}
-          {list.length === 0 && <div class="dim pad">No sessions in this project yet.</div>}
+          {p.status === 'error' && <div class="error-box">{ts(p.error || '')}</div>}
+          {list.length === 0 && <div class="dim pad">{t('No sessions in this project yet.')}</div>}
           <div class="plist">
             {list.map((s) => (
               <a key={s.id} href={`#/s/${s.id}`} class={cls('card prow-card', s.archived && 'archived')}>
@@ -260,7 +261,7 @@ export function ProjectPage({ id }: { id: string }) {
           </div>
           <div class="danger-zone">
             <button class="btn ghost danger small" onClick={remove}>
-              <ITrash size={14} /> Remove project
+              <ITrash size={14} /> {t('Remove project')}
             </button>
           </div>
         </div>

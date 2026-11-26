@@ -1,3 +1,4 @@
+import { t } from './i18n'
 import { authed, conn, route } from './store'
 import { Sidebar } from './components/Sidebar'
 import { NewSession } from './components/NewSession'
@@ -49,7 +50,7 @@ export function App() {
         <PasskeyBanner />
         <Main />
       </main>
-      {conn.value === 'offline' && <div class="offline">Reconnecting…</div>}
+      {conn.value === 'offline' && <div class="offline">{t('Reconnecting…')}</div>}
       <Toasts />
     </div>
   )

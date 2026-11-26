@@ -6,6 +6,7 @@ import { cls, home, isTouch } from '../util'
 import { IBack, IBranch, IImage, IPlus, ISend, Spinner } from './icons'
 import { Segmented, Toggle } from './ui'
 import { Thumbs, pastedImages, useAttachments } from './attach'
+import { t, ts } from '../i18n'
 
 const pref = (k: string, d = '') => localStorage.getItem('collie.new.' + k) ?? d
 const setPref = (k: string, v: string) => localStorage.setItem('collie.new.' + k, v)
@@ -65,6 +66,7 @@ export function NewSession() {
   }, [])
 
   const project = projectById.value.get(projectId)
+  const ownerGroupName = project?.ownerGroup ? groupById.value.get(project.ownerGroup)?.name : ''
   const modeList = modes.value[agent] || []
   const effMode = modeList.some((m) => m.id === mode) ? mode : modeList[0]?.id || ''
   const models = agentCaps.value[agent]?.models?.length
@@ -116,10 +118,10 @@ export function NewSession() {
       <div class="page center-page">
         <div class="hero">
           <img src="/icon.svg" width={56} height={56} alt="" />
-          <h1>Welcome to Collie</h1>
-          <p class="dim">Create a project, then start Claude Code or Codex sessions on it from any device.</p>
+          <h1>{t('Welcome to Collie')}</h1>
+          <p class="dim">{t('Create a project, then start Claude Code or Codex sessions on it from any device.')}</p>
           <button class="btn primary big" onClick={() => go('#/projects?new=1')}>
-            <IPlus size={16} /> Create a project
+            <IPlus size={16} /> {t('Create a project')}
           </button>
         </div>
       </div>
@@ -128,11 +130,11 @@ export function NewSession() {
 
   return (
     <div class="page new-session">
-      <button class="icon-btn back new-back" onClick={() => go('#/')} aria-label="Back">
+      <button class="icon-btn back new-back" onClick={() => go('#/')} aria-label={t('Back')}>
         <IBack size={20} />
       </button>
       <div class="new-inner">
-        <h1 class="new-title">What should we work on?</h1>
+        <h1 class="new-title">{t('What should we work on?')}</h1>
         <div class="composer-box big" onDragOver={(e) => e.preventDefault()} onDrop={(e) => {
           e.preventDefault()
           if (e.dataTransfer?.files) add(e.dataTransfer.files)
@@ -142,7 +144,7 @@ export function NewSession() {
             ref={ta}
             rows={4}
             value={prompt}
-            placeholder={`Describe a task for ${agent === 'claude' ? 'Claude Code' : 'Codex'}…`}
+            placeholder={t('Describe a task for {agent}…', { agent: agent === 'claude' ? 'Claude Code' : 'Codex' })}
             onInput={(e) => setPrompt((e.target as HTMLTextAreaElement).value)}
             onPaste={(e) => {
               const f = pastedImages(e)
@@ -159,17 +161,17 @@ export function NewSession() {
             }}
           />
           <div class="composer-bar">
-            <button class="icon-btn" onClick={() => file.current?.click()} aria-label="Attach image">
+            <button class="icon-btn" onClick={() => file.current?.click()} aria-label={t('Attach image')}>
               <IImage size={18} />
             </button>
             <input ref={file} type="file" accept="image/*" multiple hidden onChange={(e) => {
-              const t = e.target as HTMLInputElement
-              if (t.files) add(t.files)
-              t.value = ''
+              const input = e.target as HTMLInputElement
+              if (input.files) add(input.files)
+              input.value = ''
             }} />
             <span class="grow" />
             <span class="dim small kbd-hint">{isTouch ? '' : 'Ctrl+Enter'}</span>
-            <button class="send" disabled={!canStart} onClick={start} aria-label="Start session">
+            <button class="send" disabled={!canStart} onClick={start} aria-label={t('Start session')}>
               {busy ? <Spinner size={14} /> : <ISend size={17} />}
             </button>
           </div>
@@ -177,21 +179,20 @@ export function NewSession() {
 
         <div class="new-opts">
           <label class="field">
-            <span class="field-l">Project</span>
+            <span class="field-l">{t('Project')}</span>
             <div class="row gap">
               <select class="select" value={projectId} onChange={(e) => setProjectId((e.target as HTMLSelectElement).value)}>
                 {projectGroups(plist).map(([label, items]) => (
                   <optgroup key={label} label={label}>
                     {items.map((p) => (
                       <option key={p.id} value={p.id} disabled={p.status === 'cloning'}>
-                        {p.name}
-                        {p.status === 'cloning' ? ' (cloning…)' : ''}
+                        {p.status === 'cloning' ? t('{name} (cloning…)', { name: p.name }) : p.name}
                       </option>
                     ))}
                   </optgroup>
                 ))}
               </select>
-              <button class="btn" onClick={() => go('#/projects?new=1')} title="New project">
+              <button class="btn" onClick={() => go('#/projects?new=1')} title={t('New project')}>
                 <IPlus size={15} />
               </button>
             </div>
@@ -202,14 +203,14 @@ export function NewSession() {
               <Toggle
                 checked={shared}
                 onChange={setShared}
-                label={`Share with ${groupById.value.get(project.ownerGroup)?.name || 'the group'}`}
-                hint="Members can follow and drive this session. It runs with your agent accounts."
+                label={ownerGroupName ? t('Share with {name}', { name: ownerGroupName }) : t('Share with the group')}
+                hint={t('Members can follow and drive this session. It runs with your agent accounts.')}
               />
             </div>
           )}
 
           <div class="field">
-            <span class="field-l">Agent</span>
+            <span class="field-l">{t('Agent')}</span>
             <Segmented<Agent>
               value={agent}
               onChange={setAgent}
@@ -218,15 +219,15 @@ export function NewSession() {
                 { value: 'codex', label: <span class="agent-opt codex">Codex</span>, disabled: agentsAvail.value.codex === false },
               ]}
             />
-            {agentsAvail.value[agent] === false && <span class="field-h err">`{agent}` was not found on the server's PATH.</span>}
+            {agentsAvail.value[agent] === false && <span class="field-h err">{t("`{agent}` was not found on the server's PATH.", { agent })}</span>}
           </div>
 
           <label class="field">
-            <span class="field-l">Permissions</span>
+            <span class="field-l">{t('Permissions')}</span>
             <select class="select" value={effMode} onChange={(e) => setMode((e.target as HTMLSelectElement).value)}>
               {modeList.map((m) => (
                 <option key={m.id} value={m.id}>
-                  {m.label}
+                  {ts(m.label)}
                 </option>
               ))}
             </select>
@@ -234,9 +235,9 @@ export function NewSession() {
 
           <div class="row gap wrap">
             <label class="field grow">
-              <span class="field-l">Model</span>
+              <span class="field-l">{t('Model')}</span>
               <select class="select" value={model || 'default'} onChange={(e) => setModel((e.target as HTMLSelectElement).value)}>
-                <option value="default">Default</option>
+                <option value="default">{t('Default')}</option>
                 {modelOptions
                   .filter((m) => m.id !== 'default')
                   .map((m) => (
@@ -247,9 +248,9 @@ export function NewSession() {
               </select>
             </label>
             <label class="field">
-              <span class="field-l">Effort</span>
+              <span class="field-l">{t('Effort')}</span>
               <select class="select" value={effort} onChange={(e) => setEffort((e.target as HTMLSelectElement).value)}>
-                <option value="">Default</option>
+                <option value="">{t('Default')}</option>
                 {EFFORTS[agent].map((x) => (
                   <option key={x} value={x}>
                     {x}
@@ -264,12 +265,12 @@ export function NewSession() {
               checked={worktree && !!project?.git}
               disabled={!project?.git}
               onChange={setWorktree}
-              label="Isolated worktree"
-              hint={project?.git ? 'Work on a new branch in its own checkout, so parallel sessions never collide.' : 'Requires a git repository.'}
+              label={t('Isolated worktree')}
+              hint={project?.git ? t('Work on a new branch in its own checkout, so parallel sessions never collide.') : t('Requires a git repository.')}
             />
             {worktree && project?.git && (
               <span class="field-h">
-                <IBranch size={12} /> collie/&lt;id&gt; from {project ? 'HEAD' : ''}
+                <IBranch size={12} /> {t('collie/<id> from {base}', { base: project ? 'HEAD' : '' })}
               </span>
             )}
           </div>
@@ -282,9 +283,9 @@ export function NewSession() {
 function projectGroups(list: Project[]): [string, Project[]][] {
   const mine = list.filter((p) => !p.ownerGroup)
   const out: [string, Project[]][] = []
-  if (mine.length) out.push(['Personal', mine])
+  if (mine.length) out.push([t('Personal'), mine])
   const byGroup = new Map<string, Project[]>()
   for (const p of list) if (p.ownerGroup) byGroup.set(p.ownerGroup, [...(byGroup.get(p.ownerGroup) || []), p])
-  for (const [gid, items] of byGroup) out.push([groupById.value.get(gid)?.name || 'Group', items])
+  for (const [gid, items] of byGroup) out.push([groupById.value.get(gid)?.name || t('Group'), items])
   return out
 }

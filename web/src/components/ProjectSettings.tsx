@@ -5,23 +5,26 @@ import { groupById, me, sandbox, sessions, toast, toastError } from '../store'
 import { EnvEditor } from './Editors'
 import { cls } from '../util'
 import { IAlert, IBox, IRefresh, Spinner } from './icons'
-import { Modal, Segmented } from './ui'
+import { Modal, Segmented, rich } from './ui'
+import { t, ts } from '../i18n'
+
+/** Substitute JSX parts for {key} placeholders in an already-translated string. */
 
 export function ImageLog({ onClose }: { onClose: () => void }) {
   const sb = sandbox.value
   return (
-    <Modal title="Agent image" onClose={onClose} wide>
+    <Modal title={t('Agent image')} onClose={onClose} wide>
       <div class="kv">
-        <span>Image</span>
+        <span>{t('Image')}</span>
         <span class="mono small">{sb.image}</span>
-        <span>Status</span>
-        <span>{sb.building ? 'Building…' : sb.error ? 'Build failed' : sb.ready ? 'Ready' : 'Not built yet'}</span>
+        <span>{t('Status')}</span>
+        <span>{sb.building ? t('Building…') : sb.error ? t('Build failed') : sb.ready ? t('Built') : t('Not built yet')}</span>
       </div>
-      {sb.error && <div class="error-box">{sb.error}</div>}
+      {sb.error && <div class="error-box">{ts(sb.error)}</div>}
       {sb.log && <pre class="out build-log">{sb.log}</pre>}
       <div class="modal-actions">
         <button class="btn" disabled={sb.building} onClick={() => api('POST', '/api/sandbox/build', { refresh: true }).catch(toastError)}>
-          <IRefresh size={14} /> Rebuild (update agents)
+          <IRefresh size={14} /> {t('Rebuild (update agents)')}
         </button>
       </div>
     </Modal>
@@ -37,7 +40,7 @@ export function ImageIndicator() {
     <>
       <button class={cls('foot-btn', sb.error ? 'err' : 'on')} onClick={() => setOpen(true)}>
         {sb.building ? <Spinner size={12} /> : <IAlert size={13} />}
-        {sb.building ? 'Building agent image…' : 'Image build failed'}
+        {sb.building ? t('Building agent image…') : t('Image build failed')}
       </button>
       {open && <ImageLog onClose={() => setOpen(false)} />}
     </>
@@ -63,18 +66,18 @@ export function ProjectSettings({ p }: { p: Project }) {
   }
   useEffect(() => {
     refresh()
-    const t = setInterval(refresh, 5000)
-    return () => clearInterval(t)
+    const timer = setInterval(refresh, 5000)
+    return () => clearInterval(timer)
   }, [p.id, isolated])
 
   const changed = runtime !== (isolated ? 'container' : 'host') || memory !== (p.memory || '') || cpus !== (p.cpus || '') || pids !== (p.pids ? String(p.pids) : '')
 
   const save = async () => {
-    if (active && !confirm('Agents in this project are working. Saving restarts them in the new environment. Continue?')) return
+    if (active && !confirm(t('Agents in this project are working. Saving restarts them in the new environment. Continue?'))) return
     setBusy('save')
     try {
       await api('PATCH', `/api/projects/${p.id}`, { runtime, memory, cpus, pids: pids ? Number(pids) : 0 })
-      toast('Saved — agents use the new settings on their next message')
+      toast(t('Saved — agents use the new settings on their next message'))
     } catch (e) {
       toastError(e)
     } finally {
@@ -82,11 +85,11 @@ export function ProjectSettings({ p }: { p: Project }) {
     }
   }
   const stop = async (kill: boolean) => {
-    if (kill && !confirm(`Kill everything running in “${p.name}” right now (all members)?\n\nAgents and shells are terminated immediately. Conversations can be resumed afterwards.`)) return
+    if (kill && !confirm(t('Kill everything running in “{name}” right now (all members)?\n\nAgents and shells are terminated immediately. Conversations can be resumed afterwards.', { name: p.name }))) return
     setBusy(kill ? 'kill' : 'stop')
     try {
       await api('POST', `/api/projects/${p.id}/stop`, { kill })
-      toast(kill ? 'Killed' : 'Stopped')
+      toast(kill ? t('Killed') : t('Stopped'))
       refresh()
     } catch (e) {
       toastError(e)
@@ -100,7 +103,7 @@ export function ProjectSettings({ p }: { p: Project }) {
     <div class="page-pad narrow psettings">
       <section class="card">
         <h3>
-          <IBox size={16} /> Where agents run
+          <IBox size={16} /> {t('Where agents run')}
         </h3>
         {admin ? (
           <>
@@ -108,75 +111,75 @@ export function ProjectSettings({ p }: { p: Project }) {
               value={runtime}
               onChange={setRuntime}
               options={[
-                { value: 'container', label: 'Isolated container', disabled: !sb.available },
-                { value: 'host', label: 'Directly on the server' },
+                { value: 'container', label: t('Isolated container'), disabled: !sb.available },
+                { value: 'host', label: t('Directly on the server') },
               ]}
             />
             <p class="dim small">
               {runtime === 'container'
-                ? 'Each member’s agents and terminals run in their own rootless container for this project: only this folder is visible, with resource limits and no access to your LAN or tailnet.'
-                : 'Agents run as the server user with full access to its files and network. Use only for projects you trust.'}
+                ? t('Each member’s agents and terminals run in their own rootless container for this project: only this folder is visible, with resource limits and no access to your LAN or tailnet.')
+                : t('Agents run as the server user with full access to its files and network. Use only for projects you trust.')}
             </p>
             {sb.available && runtime === 'container' && !sb.limits && (
               <p class="warn small">
-                <IAlert size={12} /> Resource limits are not enforced on this server: Collie is not running under a systemd user session (see deploy/install.sh).
+                <IAlert size={12} /> {t('Resource limits are not enforced on this server: Collie is not running under a systemd user session (see deploy/install.sh).')}
               </p>
             )}
             {runtime === 'container' && (
               <div class="limits">
                 <label class="field">
-                  <span class="field-l">Memory</span>
-                  <input class="input" value={memory} placeholder={`${sb.memory || 'none'} (default)`} onInput={(e) => setMemory((e.target as HTMLInputElement).value)} />
+                  <span class="field-l">{t('Memory')}</span>
+                  <input class="input" value={memory} placeholder={t('{value} (default)', { value: sb.memory || t('none') })} onInput={(e) => setMemory((e.target as HTMLInputElement).value)} />
                 </label>
                 <label class="field">
-                  <span class="field-l">CPUs</span>
-                  <input class="input" value={cpus} placeholder={`${sb.cpus || 'none'} (default)`} inputMode="decimal" onInput={(e) => setCpus((e.target as HTMLInputElement).value)} />
+                  <span class="field-l">{t('CPUs')}</span>
+                  <input class="input" value={cpus} placeholder={t('{value} (default)', { value: sb.cpus || t('none') })} inputMode="decimal" onInput={(e) => setCpus((e.target as HTMLInputElement).value)} />
                 </label>
                 <label class="field">
-                  <span class="field-l">Processes</span>
-                  <input class="input" value={pids} placeholder={`${sb.pids || 'none'} (default)`} inputMode="numeric" onInput={(e) => setPids((e.target as HTMLInputElement).value)} />
+                  <span class="field-l">{t('Processes')}</span>
+                  <input class="input" value={pids} placeholder={t('{value} (default)', { value: sb.pids || t('none') })} inputMode="numeric" onInput={(e) => setPids((e.target as HTMLInputElement).value)} />
                 </label>
               </div>
             )}
             <div class="modal-actions">
               <button class="btn primary" disabled={!changed || !!busy} onClick={save}>
-                {busy === 'save' && <Spinner size={12} />} Save
+                {busy === 'save' && <Spinner size={12} />} {t('Save')}
               </button>
             </div>
           </>
         ) : (
           <p class="dim small">
             {isolated
-              ? `Isolated: your agents run in your own container for this project (limits ${p.memory || sb.memory || '—'} memory, ${p.cpus || sb.cpus || '—'} CPUs).`
-              : 'Runs directly on the server.'}{' '}
-            Admins manage this setting.
+              ? t('Isolated: your agents run in your own container for this project (limits {memory} memory, {cpus} CPUs).', { memory: p.memory || sb.memory || '—', cpus: p.cpus || sb.cpus || '—' })
+              : t('Runs directly on the server.')}{' '}
+            {t('Admins manage this setting.')}
           </p>
         )}
       </section>
 
       {isolated && (
         <section class="card">
-          <h3>Containers</h3>
+          <h3>{t('Containers')}</h3>
           {!ctrs && <Spinner />}
-          {ctrs && ctrs.length === 0 && <p class="dim small">None yet — they start with the first agent or terminal.</p>}
+          {ctrs && ctrs.length === 0 && <p class="dim small">{t('None yet — they start with the first agent or terminal.')}</p>}
           {ctrs?.map((c) => (
             <div key={c.userId} class="row gap list-row">
               <span class={cls('dot', c.running ? 'running' : 'stopped')} />
               <span class="grow small">
-                {c.mine ? 'You' : c.userName}
-                {c.running ? <span class="dim mono"> · {c.mem} · {c.cpu} · {c.pids} procs</span> : <span class="dim"> · stopped</span>}
+                {c.mine ? t('You') : c.userName}
+                {c.running ? <span class="dim mono"> · {c.mem} · {c.cpu} · {t('{n} procs', { n: c.pids })}</span> : <span class="dim"> · {t('stopped')}</span>}
               </span>
             </div>
           ))}
-          {limitsUnenforced && <p class="warn small">Limits are configured but not enforced on this host.</p>}
+          {limitsUnenforced && <p class="warn small">{t('Limits are configured but not enforced on this host.')}</p>}
           <div class="row gap wrap">
             <span class="dim small grow">
-              Image: {sb.building ? 'building…' : sb.error ? 'build failed' : sb.ready ? 'ready' : 'built on first use'}
+              {t('Image: {status}', { status: sb.building ? t('building…') : sb.error ? t('build failed') : sb.ready ? t('ready') : t('built on first use') })}
               {admin && (
                 <>
                   {' '}
                   <button class="link-btn" onClick={() => setShowLog(true)}>
-                    details
+                    {t('details')}
                   </button>
                 </>
               )}
@@ -184,32 +187,46 @@ export function ProjectSettings({ p }: { p: Project }) {
           </div>
           <div class="ask-actions">
             <button class="btn" disabled={!!busy} onClick={() => stop(false)}>
-              {busy === 'stop' && <Spinner size={12} />} Stop everything
+              {busy === 'stop' && <Spinner size={12} />} {t('Stop everything')}
             </button>
             <button class="btn danger" disabled={!!busy} onClick={() => stop(true)}>
-              {busy === 'kill' && <Spinner size={12} />} Kill now
+              {busy === 'kill' && <Spinner size={12} />} {t('Kill now')}
             </button>
           </div>
-          <p class="dim small">Containers also stop by themselves when nothing has used them for a while.</p>
+          <p class="dim small">{t('Containers also stop by themselves when nothing has used them for a while.')}</p>
         </section>
       )}
 
       {isolated && manager && (
         <section class="card">
-          <h3>Project secrets</h3>
+          <h3>{t('Project secrets')}</h3>
           <p class="dim small">
-            KEY=VALUE lines exported in this project’s containers{p.ownerGroup ? ' (for every member)' : ''} — e.g. <code>GH_TOKEN</code> scoped to this repository.
+            {rich(
+              p.ownerGroup
+                ? t('KEY=VALUE lines exported in this project’s containers (for every member) — e.g. {code} scoped to this repository.')
+                : t('KEY=VALUE lines exported in this project’s containers — e.g. {code} scoped to this repository.'),
+              { code: <code>GH_TOKEN</code> },
+            )}
           </p>
-          <EnvEditor url={`/api/projects/${p.id}/env`} placeholder={'GH_TOKEN=github_pat_…'} note="Saved — applies when the containers next start" />
+          <EnvEditor url={`/api/projects/${p.id}/env`} placeholder={'GH_TOKEN=github_pat_…'} note={t('Saved — applies when the containers next start')} />
         </section>
       )}
 
       {isolated && (
         <section class="card">
-          <h3>Skills & MCP</h3>
+          <h3>{t('Skills & MCP')}</h3>
           <p class="dim small">
-            Agents get the global profile{admin ? ' (Admin → Global skills & MCP)' : ''} plus your own (
-            <a href="#/account/profile">Account → My skills & MCP</a>), and whatever the repository itself contains (<code>.claude/</code>, <code>.mcp.json</code>, <code>AGENTS.md</code>).
+            {rich(
+              admin
+                ? t('Agents get the global profile (Admin → Global skills & MCP) plus your own ({link}), and whatever the repository itself contains ({dir}, {mcp}, {agents}).')
+                : t('Agents get the global profile plus your own ({link}), and whatever the repository itself contains ({dir}, {mcp}, {agents}).'),
+              {
+                link: <a href="#/account/profile">{t('Account → My skills & MCP')}</a>,
+                dir: <code>.claude/</code>,
+                mcp: <code>.mcp.json</code>,
+                agents: <code>AGENTS.md</code>,
+              },
+            )}
           </p>
         </section>
       )}

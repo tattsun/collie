@@ -1,4 +1,5 @@
 import { useState } from 'preact/hooks'
+import { t } from '../i18n'
 import { uploadImage } from '../api'
 import { toastError } from '../store'
 import { IX, Spinner } from './icons'
@@ -44,7 +45,7 @@ export function Thumbs({ atts, remove }: { atts: Attach[]; remove: (key: string)
               <Spinner size={14} />
             </span>
           )}
-          <button class="thumb-x" onClick={() => remove(a.key)} aria-label="Remove image">
+          <button class="thumb-x" onClick={() => remove(a.key)} aria-label={t('Remove image')}>
             <IX size={12} />
           </button>
         </div>

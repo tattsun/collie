@@ -1,3 +1,4 @@
+import { t } from './i18n'
 import { authed } from './store'
 
 export class ApiError extends Error {
@@ -15,7 +16,7 @@ export async function api<T = any>(method: string, path: string, body?: unknown)
   const r = await fetch(path, init)
   if (r.status === 401) {
     authed.value = false
-    throw new ApiError('Not signed in', 401)
+    throw new ApiError(t('Not signed in'), 401)
   }
   const data = await r.json().catch(() => ({}))
   if (!r.ok) throw new ApiError(data.error || r.statusText, r.status)

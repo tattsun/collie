@@ -3,6 +3,7 @@ import type { Caps, Session } from '../types'
 import { api } from '../api'
 import { modes, toastError } from '../store'
 import { cls, isTouch, shortMode } from '../util'
+import { t, ts } from '../i18n'
 import { IImage, ISend, IStop, IShield, Spinner } from './icons'
 import { Menu } from './ui'
 import { Thumbs, pastedImages, useAttachments } from './attach'
@@ -128,7 +129,7 @@ export function Composer({ session, caps }: { session: Session; caps: Caps }) {
           ref={ta}
           rows={1}
           value={text}
-          placeholder={session.status === 'waiting' ? 'Reply to decline with instructions…' : running ? 'Send a follow-up…' : 'Message ' + (session.agent === 'claude' ? 'Claude' : 'Codex') + '…'}
+          placeholder={session.status === 'waiting' ? t('Reply to decline with instructions…') : running ? t('Send a follow-up…') : t('Message {agent}…', { agent: session.agent === 'claude' ? 'Claude' : 'Codex' })}
           onInput={(e) => {
             setText((e.target as HTMLTextAreaElement).value)
             setPick(0)
@@ -143,7 +144,7 @@ export function Composer({ session, caps }: { session: Session; caps: Caps }) {
           }}
         />
         <div class="composer-bar">
-          <button class="icon-btn" onClick={() => file.current?.click()} aria-label="Attach image" title="Attach image">
+          <button class="icon-btn" onClick={() => file.current?.click()} aria-label={t('Attach image')} title={t('Attach image')}>
             <IImage size={18} />
           </button>
           <input ref={file} type="file" accept="image/*" multiple hidden onChange={(e) => {
@@ -158,16 +159,16 @@ export function Composer({ session, caps }: { session: Session; caps: Caps }) {
                 {modeLabel}
               </span>
             }
-            items={modeList.map((m) => ({ label: m.label, checked: m.id === session.mode, onClick: () => setMode(m.id) }))}
+            items={modeList.map((m) => ({ label: ts(m.label), checked: m.id === session.mode, onClick: () => setMode(m.id) }))}
             up
           />
           <span class="grow" />
           {running && !canSend ? (
-            <button class="send stop" onClick={interrupt} aria-label="Stop" title="Stop (Esc)">
+            <button class="send stop" onClick={interrupt} aria-label={t('Stop')} title={t('Stop (Esc)')}>
               <IStop size={14} />
             </button>
           ) : (
-            <button class="send" disabled={!canSend} onClick={submit} aria-label="Send" title="Send (Enter)">
+            <button class="send" disabled={!canSend} onClick={submit} aria-label={t('Send')} title={t('Send (Enter)')}>
               {sending ? <Spinner size={14} /> : <ISend size={17} />}
             </button>
           )}

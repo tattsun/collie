@@ -638,7 +638,7 @@ func (c *Claude) onResult(o map[string]any) {
 	c.sink.Put(it)
 	if isErr && strings.Contains(str(o, "result"), "Not logged in") {
 		c.sink.Put(&model.Item{ID: model.NewID(), Kind: model.KindNotice, TS: model.NowMs(), Done: true,
-			Text: "Claude Code is not logged in here. For isolated projects: run `claude setup-token` (e.g. in a project terminal) and add CLAUDE_CODE_OAUTH_TOKEN=… under Project → Settings → Shared environment."})
+			Text: "Claude Code is not logged in for you. Run `claude setup-token` in a project terminal and paste the token under Account → Agent accounts."})
 	}
 	c.sink.Meta(func(s *model.Session) {
 		s.CostUSD += delta

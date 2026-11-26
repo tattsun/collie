@@ -1,24 +1,41 @@
-export function ago(ms: number): string {
-  const s = Math.max(0, (Date.now() - ms) / 1000)
-  if (s < 45) return 'now'
-  if (s < 3600) return `${Math.round(s / 60)}m`
-  if (s < 86400) return `${Math.round(s / 3600)}h`
-  if (s < 86400 * 7) return `${Math.round(s / 86400)}d`
-  return new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+import { lang, t } from './i18n'
+
+const ja = () => lang.value === 'ja'
+
+/** Compact span ("5m", "3h", "2d" / "5分", "3時間", "2日"), or '' past a week. */
+function span(s: number): string {
+  if (s < 3600) return ja() ? `${Math.max(1, Math.round(s / 60))}分` : `${Math.max(1, Math.round(s / 60))}m`
+  if (s < 86400) return ja() ? `${Math.round(s / 3600)}時間` : `${Math.round(s / 3600)}h`
+  if (s < 86400 * 7) return ja() ? `${Math.round(s / 86400)}日` : `${Math.round(s / 86400)}d`
+  return ''
 }
 
-/** Time left until ms (future), e.g. "6d". */
+const date = (ms: number) => new Date(ms).toLocaleDateString(ja() ? 'ja-JP' : undefined, { month: 'short', day: 'numeric' })
+
+/** How long ago: "now" / "5m" (en), "たった今" / "5分前" (ja), or a date. */
+export function ago(ms: number): string {
+  const s = Math.max(0, (Date.now() - ms) / 1000)
+  if (s < 45) return ja() ? 'たった今' : 'now'
+  const v = span(s)
+  if (!v) return date(ms)
+  return ja() ? v + '前' : v
+}
+
+/** Time left until ms (future): "6d" / "6日". */
 export function until(ms: number): string {
-  return ago(Date.now() - (ms - Date.now()))
+  const s = Math.max(0, (ms - Date.now()) / 1000)
+  if (s < 45) return ja() ? '1分' : '1m'
+  return span(s) || date(ms)
 }
 
 export function duration(ms?: number): string {
   if (!ms) return ''
   const s = ms / 1000
-  if (s < 60) return `${s < 10 ? s.toFixed(1) : Math.round(s)}s`
+  const sec = s < 10 ? s.toFixed(1) : String(Math.round(s))
+  if (s < 60) return ja() ? `${sec}秒` : `${sec}s`
   const m = Math.floor(s / 60)
-  if (m < 60) return `${m}m ${Math.round(s % 60)}s`
-  return `${Math.floor(m / 60)}h ${m % 60}m`
+  if (m < 60) return ja() ? `${m}分${Math.round(s % 60)}秒` : `${m}m ${Math.round(s % 60)}s`
+  return ja() ? `${Math.floor(m / 60)}時間${m % 60}分` : `${Math.floor(m / 60)}h ${m % 60}m`
 }
 
 export function money(usd?: number): string {
@@ -93,4 +110,4 @@ const SHORT_MODE: Record<string, string> = {
   'read-only': 'Read only',
   full: 'Full access',
 }
-export const shortMode = (m: string) => SHORT_MODE[m] || m
+export const shortMode = (m: string) => (SHORT_MODE[m] ? t(SHORT_MODE[m]) : m)

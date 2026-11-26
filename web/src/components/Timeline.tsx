@@ -7,17 +7,18 @@ import { renderMarkdown } from '../markdown'
 import { parseDiff, snippetDiff, diffStats, type DiffLine } from '../diff'
 import { describeTool } from './tools'
 import { cls, copyText, duration, money } from '../util'
+import { t, ts } from '../i18n'
 import { ICheck, IX, IChevron, IBrain, IShield, IDown, IStop, Spinner } from './icons'
 
 // ---------------------------------------------------------------- shared bits
 
 function onMdClick(e: MouseEvent) {
-  const t = e.target as HTMLElement
-  if (t.dataset && 'copy' in t.dataset) {
-    const code = t.closest('.code')?.querySelector('code')?.textContent || ''
+  const el = e.target as HTMLElement
+  if (el.dataset && 'copy' in el.dataset) {
+    const code = el.closest('.code')?.querySelector('code')?.textContent || ''
     copyText(code).then((ok) => {
-      t.textContent = ok ? 'Copied' : 'Failed'
-      setTimeout(() => (t.textContent = 'Copy'), 1200)
+      el.textContent = ok ? t('Copied') : t('Failed')
+      setTimeout(() => (el.textContent = t('Copy')), 1200)
     })
   }
 }
@@ -36,7 +37,7 @@ export function DiffView({ lines, max = 1500 }: { lines: DiffLine[]; max?: numbe
           {l.t || ' '}
         </div>
       ))}
-      {lines.length > max && <div class="dl meta">… {lines.length - max} more lines</div>}
+      {lines.length > max && <div class="dl meta">{t('… {n} more lines', { n: lines.length - max })}</div>}
     </div>
   )
 }
@@ -100,7 +101,7 @@ function Thinking({ item }: { item: Item }) {
     if (item.done) return null
     return (
       <div class="thinking">
-        <IBrain size={14} /> <span class="shimmer">Thinking…</span>
+        <IBrain size={14} /> <span class="shimmer">{t('Thinking…')}</span>
       </div>
     )
   }
@@ -108,7 +109,7 @@ function Thinking({ item }: { item: Item }) {
     <div class={cls('thinking', open && 'open')}>
       <button class="row-btn" onClick={() => setOpen(!open)}>
         <IBrain size={14} />
-        <span class={cls(!item.done && 'shimmer')}>{item.done ? 'Thought' : 'Thinking…'}</span>
+        <span class={cls(!item.done && 'shimmer')}>{item.done ? t('Thought') : t('Thinking…')}</span>
         <IChevron size={12} class="chev" />
       </button>
       {open && <Markdown text={item.text} class="dim" />}
@@ -152,7 +153,7 @@ function ToolCall({ item, kids, cwd }: { item: Item; kids?: Item[]; cwd: string 
       <div class="tool todo">
         <div class="row-btn static">
           <Icon size={14} />
-          <span class="label">Plan</span>
+          <span class="label">{t('Plan')}</span>
         </div>
         <TodoList todos={tool.input.todos} />
       </div>
@@ -189,7 +190,7 @@ function ToolCall({ item, kids, cwd }: { item: Item; kids?: Item[]; cwd: string 
           )}
           {tool.output &&
             (isAgent ? <Markdown text={tool.output} /> : <Pre text={tool.output} class={tool.status === 'error' ? 'error' : ''} />)}
-          {!tool.output && tool.status === 'running' && <div class="dim small pad">Running…</div>}
+          {!tool.output && tool.status === 'running' && <div class="dim small pad">{t('Running…')}</div>}
         </div>
       )}
     </div>
@@ -240,8 +241,8 @@ function Approval({ item, sid, cwd }: { item: Item; sid: string; cwd: string }) 
     return (
       <div class={cls('ask-done', denied && 'denied')}>
         {denied ? <IX size={13} /> : <ICheck size={13} />}
-        <span class="label">{ask.state === 'cancelled' ? 'Cancelled' : ask.answer}</span>
-        <span class="detail mono">{plan ? 'Plan' : `${v.label} ${v.detail}`}</span>
+        <span class="label">{ask.state === 'cancelled' ? t('Cancelled') : ts(ask.answer || '')}</span>
+        <span class="detail mono">{plan ? t('Plan') : `${v.label} ${v.detail}`}</span>
       </div>
     )
   }
@@ -249,7 +250,7 @@ function Approval({ item, sid, cwd }: { item: Item; sid: string; cwd: string }) 
     <div class={cls('card ask', plan && 'plan')}>
       <div class="card-head">
         <IShield size={15} />
-        <span>{plan ? 'Plan ready' : 'Permission needed'}</span>
+        <span>{plan ? t('Plan ready') : t('Permission needed')}</span>
       </div>
       {!plan && (
         <div class="ask-tool">
@@ -258,7 +259,7 @@ function Approval({ item, sid, cwd }: { item: Item; sid: string; cwd: string }) 
           <span class={cls('detail', v.mono && 'mono')}>{v.detail}</span>
         </div>
       )}
-      {ask.title && !plan && ask.title !== v.detail && !v.detail.endsWith(ask.title) && <div class="ask-title">{ask.title}</div>}
+      {ask.title && !plan && ask.title !== v.detail && !v.detail.endsWith(ask.title) && <div class="ask-title">{ts(ask.title)}</div>}
       <div class="ask-body">
         <AskDetail ask={ask} cwd={cwd} />
       </div>
@@ -266,11 +267,11 @@ function Approval({ item, sid, cwd }: { item: Item; sid: string; cwd: string }) 
         {(ask.options || []).map((o) => (
           <button key={o.id} class={cls('btn', o.style)} disabled={!!busy} onClick={() => send({ option: o.id }, o.id)}>
             {busy === o.id ? <Spinner size={12} /> : null}
-            {o.label}
+            {ts(o.label)}
           </button>
         ))}
       </div>
-      <div class="hint">Or type a message below to decline with instructions.</div>
+      <div class="hint">{t('Or type a message below to decline with instructions.')}</div>
     </div>
   )
 }
@@ -286,8 +287,8 @@ function QuestionCard({ item, sid }: { item: Item; sid: string }) {
     return (
       <div class="ask-done">
         <ICheck size={13} />
-        <span class="label">{ask.state === 'cancelled' ? 'Cancelled' : 'Answered'}</span>
-        <span class="detail">{ask.answer}</span>
+        <span class="label">{ask.state === 'cancelled' ? t('Cancelled') : t('Answered')}</span>
+        <span class="detail">{ask.answer === 'Declined' ? ts(ask.answer) : ask.answer}</span>
       </div>
     )
   }
@@ -311,7 +312,7 @@ function QuestionCard({ item, sid }: { item: Item; sid: string }) {
     <div class="card ask question">
       <div class="card-head">
         <IChevron size={15} />
-        <span>{qs.length > 1 ? 'Questions' : 'Question'}</span>
+        <span>{qs.length > 1 ? t('Questions') : t('Question')}</span>
       </div>
       {qs.map((q) => (
         <div key={q.id} class="q">
@@ -333,7 +334,7 @@ function QuestionCard({ item, sid }: { item: Item; sid: string }) {
             <input
               class="input"
               type={(q.secret ? 'password' : 'text') as 'text'}
-              placeholder={q.options?.length ? 'Other…' : 'Your answer'}
+              placeholder={q.options?.length ? t('Other…') : t('Your answer')}
               value={other[q.id] || ''}
               onInput={(e) => {
                 const v = (e.target as HTMLInputElement).value
@@ -346,10 +347,10 @@ function QuestionCard({ item, sid }: { item: Item; sid: string }) {
       ))}
       <div class="ask-actions">
         <button class="btn primary" disabled={!complete || !!busy} onClick={() => send({ option: 'answer', answers: answers() }, 'ok')}>
-          {busy === 'ok' && <Spinner size={12} />}Submit
+          {busy === 'ok' && <Spinner size={12} />}{t('Submit')}
         </button>
         <button class="btn" disabled={!!busy} onClick={() => send({ option: 'deny' }, 'deny')}>
-          Skip
+          {t('Skip')}
         </button>
       </div>
     </div>
@@ -360,7 +361,7 @@ function Plan({ steps, text }: { steps: PlanStep[]; text?: string }) {
   return (
     <div class="tool todo">
       <div class="row-btn static">
-        <span class="label">Plan</span>
+        <span class="label">{t('Plan')}</span>
         {text && <span class="detail">{text}</span>}
       </div>
       <TodoList todos={steps} />
@@ -373,12 +374,12 @@ function ResultLine({ item }: { item: Item }) {
   const st = r.status || ''
   const interrupted = st === 'interrupted' || st === 'error_during_execution'
   const bad = (r.isError || (st && st !== 'success' && st !== 'completed')) && !interrupted
-  const parts = [duration(r.durationMs), money(r.costUsd), r.turns && r.turns > 1 ? `${r.turns} turns` : ''].filter(Boolean)
+  const parts = [duration(r.durationMs), money(r.costUsd), r.turns && r.turns > 1 ? t('{n} turns', { n: r.turns }) : ''].filter(Boolean)
   return (
     <div class={cls('result', bad && 'bad')}>
       <span class="line" />
       <span>
-        {interrupted ? 'Interrupted' : bad ? (st && st !== 'success' && st !== 'completed' ? `Stopped · ${st.replace(/_/g, ' ')}` : 'Error') : 'Done'}
+        {interrupted ? t('Interrupted') : bad ? (st && st !== 'success' && st !== 'completed' ? t('Stopped · {status}', { status: st.replace(/_/g, ' ') }) : t('Error')) : t('Done')}
         {parts.length > 0 && ' · ' + parts.join(' · ')}
       </span>
       <span class="line" />
@@ -413,9 +414,9 @@ export const ItemView = memo(function ItemView({ item, kids, sid = '', cwd }: It
     case 'plan':
       return <Plan steps={item.plan || []} text={item.text} />
     case 'notice':
-      return <div class="notice">{item.text}</div>
+      return <div class="notice">{ts(item.text || '')}</div>
     case 'error':
-      return <Pre class="error-box" text={item.text || 'Error'} />
+      return <Pre class="error-box" text={item.text ? ts(item.text) : t('Error')} />
     case 'result':
       return <ResultLine item={item} />
   }
@@ -430,11 +431,11 @@ function Working({ since, status }: { since: number; status: string }) {
     const t = setInterval(() => tick((x) => x + 1), 1000)
     return () => clearInterval(t)
   }, [])
-  const label = status === 'starting' ? 'Starting agent' : status === 'waiting' ? 'Waiting for you' : 'Working'
+  const label = status === 'starting' ? t('Starting agent…') : status === 'waiting' ? t('Waiting for you…') : t('Working…')
   return (
     <div class={cls('working', status)}>
       <span class="pulse" />
-      <span class="shimmer">{label}…</span>
+      <span class="shimmer">{label}</span>
       {since > 0 && <span class="dim">{duration(Date.now() - since)}</span>}
     </div>
   )
@@ -527,7 +528,7 @@ export function Timeline({ session }: { session: Session }) {
       <div class="timeline-inner" ref={inner}>
         {start > 0 && (
           <button class="btn ghost small older" onClick={loadOlder} disabled={loadingOlder}>
-            {loadingOlder ? <Spinner size={12} /> : null} Load earlier messages
+            {loadingOlder ? <Spinner size={12} /> : null} {t('Load earlier messages')}
           </button>
         )}
         {!loaded && (
@@ -535,7 +536,7 @@ export function Timeline({ session }: { session: Session }) {
             <Spinner />
           </div>
         )}
-        {loaded && top.length === 0 && !busy && <div class="empty-chat dim">Send a message to start.</div>}
+        {loaded && top.length === 0 && !busy && <div class="empty-chat dim">{t('Send a message to start.')}</div>}
         {top.map((it) => (
           <div key={it.id} class={'it it-' + it.kind}>
             <ItemView item={it} kids={kids.get(it.id)} sid={session.id} cwd={session.cwd} />

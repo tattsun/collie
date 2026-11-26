@@ -1,3 +1,4 @@
+import { t as tr } from './i18n'
 export type DiffLine = { k: 'add' | 'del' | 'ctx' | 'hunk' | 'file' | 'meta'; t: string }
 
 export function parseDiff(text: string): DiffLine[] {
@@ -52,7 +53,7 @@ function collapseContext(lines: DiffLine[], keep = 3): DiffLine[] {
       const tail = end ? [] : run.slice(-keep)
       const hidden = run.length - head.length - tail.length
       out.push(...head)
-      if (hidden > 0) out.push({ k: 'hunk', t: `⋯ ${hidden} unchanged line${hidden > 1 ? 's' : ''}` })
+      if (hidden > 0) out.push({ k: 'hunk', t: hidden > 1 ? tr('⋯ {n} unchanged lines', { n: hidden }) : tr('⋯ 1 unchanged line') })
       out.push(...tail)
     } else out.push(...run)
     run = []

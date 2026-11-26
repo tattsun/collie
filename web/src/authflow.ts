@@ -1,3 +1,4 @@
+import { t } from './i18n'
 import { signal } from '@preact/signals'
 import { createPasskey, getPasskey } from './webauthn'
 
@@ -62,6 +63,6 @@ export function deviceName(): string {
   if (/iPad/.test(ua)) return 'iPad'
   if (/Android/.test(ua)) return 'Android'
   if (/Macintosh/.test(ua)) return 'Mac'
-  if (/Windows/.test(ua)) return 'Windows PC'
-  return 'This device'
+  if (/Windows/.test(ua)) return t('Windows PC')
+  return t('This device')
 }

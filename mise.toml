@@ -28,11 +28,12 @@ usage = 'arg "<arch>" help="GOARCH, e.g. amd64 or arm64"'
 run = "GOOS=linux GOARCH=${usage_arch} go build -trimpath -ldflags '-s -w' -o bin/collie-linux-${usage_arch} ."
 
 [tasks.test]
-description = "Run Go tests and the frontend type check"
+description = "Run Go tests, the frontend type check and the translation check"
 run = [
   "go vet ./...",
   "go test ./...",
   "cd web && npx tsc --noEmit -p .",
+  "cd web && node scripts/i18n-check.mjs",
 ]
 
 [tasks.install]

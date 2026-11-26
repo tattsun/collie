@@ -1,8 +1,10 @@
+import { rich } from './ui'
 import { useEffect, useState } from 'preact/hooks'
 import { api } from '../api'
 import { addPasskey, deviceName, signOut } from '../authflow'
 import { go, me, route, sandbox, toast, toastError } from '../store'
 import { ago, cls, copyText } from '../util'
+import { lang, setLang, t, type Lang } from '../i18n'
 import { passkeyError, passkeysSupported } from '../webauthn'
 import { EnvEditor, ProfileEditor } from './Editors'
 import { IBack, ICheck, IPlus, IShield, ITrash, IX, Spinner } from './icons'
@@ -15,19 +17,21 @@ interface MeInfo {
   claudeToken: boolean
 }
 
+/** Renders a translated sentence, replacing {key} placeholders with elements. */
+
 export function LinkBox({ url, onClose }: { url: string; onClose: () => void }) {
   return (
     <div class="card link-box">
       <div class="row gap">
         <input class="input mono small grow" readOnly value={url} onFocus={(e) => (e.target as HTMLInputElement).select()} />
-        <button class="btn small" onClick={() => copyText(url).then((ok) => toast(ok ? 'Copied' : 'Copy failed'))}>
-          Copy
+        <button class="btn small" onClick={() => copyText(url).then((ok) => toast(ok ? t('Copied') : t('Copy failed')))}>
+          {t('Copy')}
         </button>
-        <button class="icon-btn" onClick={onClose} aria-label="Close">
+        <button class="icon-btn" onClick={onClose} aria-label={t('Close')}>
           <IX size={14} />
         </button>
       </div>
-      <p class="dim small">One-time link. Open it on the other device; anyone with it can use it until it expires.</p>
+      <p class="dim small">{t('One-time link. Open it on the other device; anyone with it can use it until it expires.')}</p>
     </div>
   )
 }
@@ -55,7 +59,7 @@ export function AccountPage() {
     setBusy('add')
     try {
       await addPasskey(deviceName())
-      toast('Passkey added')
+      toast(t('Passkey added'))
       load()
     } catch (e) {
       toastError(passkeyError(e))
@@ -84,7 +88,7 @@ export function AccountPage() {
       lines.push(`CLAUDE_CODE_OAUTH_TOKEN=${tok}`)
       await api('PUT', '/api/me/env', { env: lines.filter((l, i) => l.trim() || i < lines.length - 1).join('\n') + '\n' })
       setClaude('')
-      toast('Saved — used by your agents from their next start')
+      toast(t('Saved — used by your agents from their next start'))
       load()
     } catch (e) {
       toastError(e)
@@ -96,24 +100,24 @@ export function AccountPage() {
   return (
     <div class="page page-pad narrow account">
       <div class="page-head">
-        <button class="icon-btn back" onClick={() => go('#/')} aria-label="Back">
+        <button class="icon-btn back" onClick={() => go('#/')} aria-label={t('Back')}>
           <IBack size={20} />
         </button>
-        <h1>{me.value?.displayName || 'Account'}</h1>
+        <h1>{me.value?.displayName || t('Account')}</h1>
         <span class="grow" />
         <button class="btn small" onClick={signOut}>
-          Sign out
+          {t('Sign out')}
         </button>
       </div>
       <nav class="tabs flat">
         <a href="#/account" class={cls('tab', tab === 'account' && 'on')}>
-          Account
+          {t('Account')}
         </a>
         <a href="#/account/agents" class={cls('tab', tab === 'agents' && 'on')}>
-          Agent accounts
+          {t('Agent accounts')}
         </a>
         <a href="#/account/profile" class={cls('tab', tab === 'profile' && 'on')}>
-          My skills & MCP
+          {t('My skills & MCP')}
         </a>
       </nav>
 
@@ -122,40 +126,51 @@ export function AccountPage() {
       {info && tab === 'account' && (
         <div class="col gap-l">
           <section class="card col gap">
-            <h3>Profile</h3>
+            <h3>{t('Profile')}</h3>
             <div class="kv">
-              <span>User name</span>
+              <span>{t('User name')}</span>
               <span class="mono">{info.user.name}</span>
-              <span>Role</span>
-              <span>{info.user.admin ? 'Admin' : 'Member'}</span>
+              <span>{t('Role')}</span>
+              <span>{info.user.admin ? t('Administrator') : t('Member')}</span>
             </div>
             <label class="field">
-              <span class="field-l">Display name</span>
+              <span class="field-l">{t('Display name')}</span>
               <div class="row gap">
                 <input class="input" value={display} onInput={(e) => setDisplay((e.target as HTMLInputElement).value)} />
                 <button class="btn" disabled={display === info.user.displayName || !!busy} onClick={act('name', () => api('PATCH', '/api/me', { displayName: display }))}>
-                  Save
+                  {t('Save')}
                 </button>
               </div>
+            </label>
+            <label class="field">
+              <span class="field-l">{t('Language')}</span>
+              <select class="select" value={lang.value} onChange={(e) => setLang((e.target as HTMLSelectElement).value as Lang)}>
+                <option value="en">English</option>
+                <option value="ja">日本語</option>
+              </select>
             </label>
           </section>
 
           <section class="card col gap">
             <h3>
-              <IShield size={15} /> Passkeys
+              <IShield size={15} /> {t('Passkeys')}
             </h3>
-            {info.passkeys.length === 0 && <p class="warn small">No passkey yet — create one to protect your account.</p>}
+            {info.passkeys.length === 0 && <p class="warn small">{t('No passkey yet — create one to protect your account.')}</p>}
             {info.passkeys.map((p) => (
               <div key={p.id} class="row gap list-row">
                 <span class="grow">
                   <b>{p.name}</b>
-                  <span class="dim small"> · added {ago(p.createdAt)} ago{p.lastUsed ? ` · used ${ago(p.lastUsed)} ago` : ''}</span>
+                  <span class="dim small">
+                    {' · '}
+                    {t('added {time} ago', { time: ago(p.createdAt) })}
+                    {p.lastUsed ? ' · ' + t('used {time} ago', { time: ago(p.lastUsed) }) : ''}
+                  </span>
                 </span>
                 <button
                   class="icon-btn"
-                  aria-label="Rename"
+                  aria-label={t('Rename')}
                   onClick={() => {
-                    const n = prompt('Name', p.name)
+                    const n = prompt(t('Name'), p.name)
                     if (n) act('rn', () => api('PATCH', `/api/me/passkeys/${encodeURIComponent(p.id)}`, { name: n }))()
                   }}
                 >
@@ -163,8 +178,8 @@ export function AccountPage() {
                 </button>
                 <button
                   class="icon-btn"
-                  aria-label="Delete"
-                  onClick={() => confirm(`Delete passkey “${p.name}”?`) && act('del', () => api('DELETE', `/api/me/passkeys/${encodeURIComponent(p.id)}`))()}
+                  aria-label={t('Delete')}
+                  onClick={() => confirm(t('Delete passkey “{name}”?', { name: p.name })) && act('del', () => api('DELETE', `/api/me/passkeys/${encodeURIComponent(p.id)}`))()}
                 >
                   <ITrash size={14} />
                 </button>
@@ -172,7 +187,7 @@ export function AccountPage() {
             ))}
             <div class="row gap wrap">
               <button class="btn primary" onClick={add} disabled={!!busy || !passkeysSupported()}>
-                {busy === 'add' ? <Spinner size={12} /> : <IPlus size={14} />} Add a passkey on this device
+                {busy === 'add' ? <Spinner size={12} /> : <IPlus size={14} />} {t('Add a passkey on this device')}
               </button>
               <button
                 class="btn"
@@ -182,26 +197,31 @@ export function AccountPage() {
                   setLink(r.url)
                 })}
               >
-                Add another device…
+                {t('Add another device…')}
               </button>
             </div>
             {link && <LinkBox url={link} onClose={() => setLink('')} />}
           </section>
 
           <section class="card col gap">
-            <h3>Signed-in devices</h3>
+            <h3>{t('Signed-in devices')}</h3>
             {info.sessions.map((s, i) => (
               <div key={i} class="row gap list-row">
                 <span class="grow">
                   {s.agent}
-                  {s.current && <span class="chip">this device</span>}
-                  <span class="dim small"> · since {ago(s.createdAt)} · active {ago(s.lastSeen)}</span>
+                  {s.current && <span class="chip">{t('this device')}</span>}
+                  <span class="dim small">
+                    {' · '}
+                    {t('since {time}', { time: ago(s.createdAt) })}
+                    {' · '}
+                    {t('active {time}', { time: ago(s.lastSeen) })}
+                  </span>
                 </span>
               </div>
             ))}
             {info.sessions.length > 1 && (
               <button class="btn small" onClick={act('out', () => api('POST', '/api/me/signout-others'))}>
-                Sign out all other devices
+                {t('Sign out all other devices')}
               </button>
             )}
           </section>
@@ -212,30 +232,30 @@ export function AccountPage() {
         <div class="col gap-l">
           <section class="card col gap">
             <h3>
-              Claude Code {info.claudeToken ? <span class="chip ok-chip"><ICheck size={11} /> token set</span> : <span class="chip">not set</span>}
+              Claude Code {info.claudeToken ? <span class="chip ok-chip"><ICheck size={11} /> {t('token set')}</span> : <span class="chip">{t('not set')}</span>}
             </h3>
             <p class="dim small">
-              Your agents use your own Claude account. Run <code>claude setup-token</code> in any project’s Terminal tab, sign in with your Claude account, and paste the token here.
+              {rich(t('Your agents use your own Claude account. Run {cmd} in any project’s Terminal tab, sign in with your Claude account, and paste the token here.'), { cmd: <code>claude setup-token</code> })}
             </p>
             <div class="row gap">
               <input class="input mono" type="password" value={claude} placeholder="sk-ant-oat01-…" onInput={(e) => setClaude((e.target as HTMLInputElement).value)} />
               <button class="btn primary" disabled={!claude.trim() || !!busy} onClick={saveClaude}>
-                Save
+                {t('Save')}
               </button>
             </div>
           </section>
           <section class="card col gap">
             <h3>
-              Codex {info.codexLoggedIn ? <span class="chip ok-chip"><ICheck size={11} /> logged in</span> : <span class="chip">not logged in</span>}
+              Codex {info.codexLoggedIn ? <span class="chip ok-chip"><ICheck size={11} /> {t('logged in')}</span> : <span class="chip">{t('not logged in')}</span>}
             </h3>
             <p class="dim small">
-              Open any of your isolated projects → Terminal, run <code>codex login --device-auth</code> and follow the link. The login is kept for all of your projects.
+              {rich(t('Open any of your isolated projects → Terminal, run {cmd} and follow the link. The login is kept for all of your projects.'), { cmd: <code>codex login --device-auth</code> })}
             </p>
           </section>
           <section class="card col gap">
-            <h3>My environment</h3>
+            <h3>{t('My environment')}</h3>
             <p class="dim small">
-              KEY=VALUE lines exported in all of your containers (e.g. <code>GH_TOKEN</code> for pushing, which also lets you clone private GitHub repositories). Applies when your containers next start.
+              {rich(t('KEY=VALUE lines exported in all of your containers (e.g. {var} for pushing, which also lets you clone private GitHub repositories). Applies when your containers next start.'), { var: <code>GH_TOKEN</code> })}
             </p>
             <EnvEditor url="/api/me/env" placeholder={'GH_TOKEN=github_pat_…'} />
           </section>
@@ -243,7 +263,7 @@ export function AccountPage() {
       )}
 
       {tab === 'profile' && (
-        <section class="card">{sandbox.value.available ? <ProfileEditor scope="me" /> : <p class="dim">Isolation is not available on this server.</p>}</section>
+        <section class="card">{sandbox.value.available ? <ProfileEditor scope="me" /> : <p class="dim">{t('Isolation is not available on this server.')}</p>}</section>
       )}
     </div>
   )

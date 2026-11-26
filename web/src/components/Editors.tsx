@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'preact/hooks'
 import { api } from '../api'
+import { t } from '../i18n'
 import { toast, toastError } from '../store'
 import type { ProfileFile } from '../types'
 import { cls } from '../util'
@@ -18,7 +19,7 @@ export function EnvEditor({ url, placeholder, note }: { url: string; placeholder
     setBusy(true)
     try {
       await api('PUT', url, { env: env || '' })
-      toast(note || 'Saved')
+      toast(note || t('Saved'))
     } catch (e) {
       toastError(e)
     } finally {
@@ -30,13 +31,14 @@ export function EnvEditor({ url, placeholder, note }: { url: string; placeholder
       <textarea class="input mono env-edit" rows={5} spellcheck={false} value={env ?? ''} placeholder={placeholder} onInput={(e) => setEnv((e.target as HTMLTextAreaElement).value)} />
       <div class="modal-actions">
         <button class="btn" disabled={env === null || busy} onClick={save}>
-          {busy && <Spinner size={12} />} Save
+          {busy && <Spinner size={12} />} {t('Save')}
         </button>
       </div>
     </div>
   )
 }
 
+// Labels stay in English here and are translated where rendered.
 const QUICK: { path: string; label: string }[] = [
   { path: 'claude/CLAUDE.md', label: 'Claude instructions' },
   { path: 'claude/mcp.json', label: 'Claude MCP servers' },
@@ -86,7 +88,7 @@ export function ProfileEditor({ scope }: { scope: 'global' | 'me' }) {
     try {
       await api('PUT', `${base}/file?path=${encodeURIComponent(open)}`, { content })
       setOrig(content)
-      toast('Saved — applies the next time an agent starts')
+      toast(t('Saved — applies the next time an agent starts'))
       reload()
     } catch (e) {
       toastError(e)
@@ -95,7 +97,7 @@ export function ProfileEditor({ scope }: { scope: 'global' | 'me' }) {
     }
   }
   const remove = async (path: string) => {
-    if (!confirm(`Delete ${path}?`)) return
+    if (!confirm(t('Delete {path}?', { path }))) return
     try {
       await api('DELETE', `${base}/file?path=${encodeURIComponent(path)}`)
       if (open === path || open?.startsWith(path + '/')) setOpen(null)
@@ -105,7 +107,7 @@ export function ProfileEditor({ scope }: { scope: 'global' | 'me' }) {
     }
   }
   const newSkill = async (agent: 'claude' | 'codex') => {
-    const name = prompt('Skill name (a-z, 0-9, -)')?.trim().toLowerCase()
+    const name = prompt(t('Skill name (a-z, 0-9, -)'))?.trim().toLowerCase()
     if (!name || !/^[a-z0-9][a-z0-9-]*$/.test(name)) return
     const path = `${agent}/skills/${name}/SKILL.md`
     try {
@@ -117,7 +119,7 @@ export function ProfileEditor({ scope }: { scope: 'global' | 'me' }) {
     }
   }
   const newFile = async () => {
-    const path = prompt('Path inside the profile (e.g. claude/agents/reviewer.md)')?.trim()
+    const path = prompt(t('Path inside the profile (e.g. claude/agents/reviewer.md)'))?.trim()
     if (!path) return
     try {
       await api('PUT', `${base}/file?path=${encodeURIComponent(path)}`, { content: '' })
@@ -135,36 +137,36 @@ export function ProfileEditor({ scope }: { scope: 'global' | 'me' }) {
   return (
     <div class="profile-editor">
       <div class="pe-side">
-        <div class="group-h">Settings</div>
+        <div class="group-h">{t('Settings')}</div>
         {QUICK.map((q) => (
           <button key={q.path} class={cls('pe-item', open === q.path && 'on')} onClick={() => openFile(q.path)}>
-            <IFile size={13} /> {q.label}
+            <IFile size={13} /> {t(q.label)}
           </button>
         ))}
         <div class="group-h row">
-          <span class="grow">Skills</span>
-          <button class="link-btn" onClick={() => newSkill('claude')} title="New Claude skill">
+          <span class="grow">{t('Skills')}</span>
+          <button class="link-btn" onClick={() => newSkill('claude')} title={t('New Claude skill')}>
             <IPlus size={12} /> Claude
           </button>
-          <button class="link-btn" onClick={() => newSkill('codex')} title="New Codex skill">
+          <button class="link-btn" onClick={() => newSkill('codex')} title={t('New Codex skill')}>
             <IPlus size={12} /> Codex
           </button>
         </div>
-        {skills.length === 0 && <div class="dim small pad-s">No skills yet.</div>}
+        {skills.length === 0 && <div class="dim small pad-s">{t('No skills yet.')}</div>}
         {skills.map((sk) => (
           <div key={sk.path} class="pe-row">
             <button class={cls('pe-item', open?.startsWith(sk.path + '/') && 'on')} onClick={() => openFile(sk.path + '/SKILL.md')}>
               <IFolder size={13} /> {sk.path.split('/')[0]}: {sk.path.split('/').pop()}
             </button>
-            <button class="icon-btn tiny" onClick={() => remove(sk.path)} aria-label="Delete skill">
+            <button class="icon-btn tiny" onClick={() => remove(sk.path)} aria-label={t('Delete skill')}>
               <ITrash size={13} />
             </button>
           </div>
         ))}
         <div class="group-h row">
-          <span class="grow">Other files</span>
+          <span class="grow">{t('Other files')}</span>
           <button class="link-btn" onClick={newFile}>
-            <IPlus size={12} /> File
+            <IPlus size={12} /> {t('File')}
           </button>
         </div>
         {others.map((f) => (
@@ -172,7 +174,7 @@ export function ProfileEditor({ scope }: { scope: 'global' | 'me' }) {
             <button class={cls('pe-item', open === f.path && 'on')} onClick={() => openFile(f.path)}>
               <IFile size={13} /> <span class="mono small">{f.path}</span>
             </button>
-            <button class="icon-btn tiny" onClick={() => remove(f.path)} aria-label="Delete">
+            <button class="icon-btn tiny" onClick={() => remove(f.path)} aria-label={t('Delete')}>
               <ITrash size={13} />
             </button>
           </div>
@@ -184,7 +186,7 @@ export function ProfileEditor({ scope }: { scope: 'global' | 'me' }) {
             <div class="row gap">
               <span class="mono small grow">{open}</span>
               <button class="btn primary small" disabled={busy || content === orig} onClick={save}>
-                {busy && <Spinner size={12} />} Save
+                {busy && <Spinner size={12} />} {t('Save')}
               </button>
             </div>
             <textarea class="input mono pe-text" spellcheck={false} value={content} onInput={(e) => setContent((e.target as HTMLTextAreaElement).value)} />
@@ -192,8 +194,8 @@ export function ProfileEditor({ scope }: { scope: 'global' | 'me' }) {
         ) : (
           <div class="dim small pad">
             {scope === 'global'
-              ? 'The global profile applies to every user’s isolated projects. Users can add personal skills and settings on top.'
-              : 'Your personal profile is merged over the global one for all of your projects: your skills win on name clashes, MCP servers and settings are merged, instructions are appended.'}
+              ? t('The global profile applies to every user’s isolated projects. Users can add personal skills and settings on top.')
+              : t('Your personal profile is merged over the global one for all of your projects: your skills win on name clashes, MCP servers and settings are merged, instructions are appended.')}
           </div>
         )}
       </div>

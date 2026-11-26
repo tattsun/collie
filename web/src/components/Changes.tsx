@@ -5,6 +5,7 @@ import { parseDiff } from '../diff'
 import { DiffView } from './Timeline'
 import { IBranch, IChevron, IRefresh, Spinner } from './icons'
 import { cls } from '../util'
+import { t, ts } from '../i18n'
 
 const statusName: Record<string, string> = { M: 'modified', A: 'added', D: 'deleted', R: 'renamed', '?': 'new', C: 'copied', U: 'conflict' }
 
@@ -24,7 +25,7 @@ function FileRow({ f }: { f: FileChange }) {
   return (
     <div class={cls('cfile', open && 'open')}>
       <button class="row-btn" onClick={() => setOpen(!open)}>
-        <span class={cls('fstat', 's' + (code === '?' ? 'N' : code))} title={statusName[code] || f.status}>
+        <span class={cls('fstat', 's' + (code === '?' ? 'N' : code))} title={statusName[code] ? t(statusName[code]) : f.status}>
           {code === '?' ? 'N' : code}
         </span>
         <span class="detail mono">{f.path}</span>
@@ -34,7 +35,7 @@ function FileRow({ f }: { f: FileChange }) {
         </span>
         <IChevron size={12} class="chev" />
       </button>
-      {open && (f.binary ? <div class="dim small pad">Binary file</div> : f.diff ? <DiffView lines={lines} /> : <div class="dim small pad">No textual changes</div>)}
+      {open && (f.binary ? <div class="dim small pad">{t('Binary file')}</div> : f.diff ? <DiffView lines={lines} /> : <div class="dim small pad">{t('No textual changes')}</div>)}
     </div>
   )
 }
@@ -66,17 +67,17 @@ export function ChangesView({ url, refreshKey }: { url: string; refreshKey?: unk
             <IBranch size={12} /> {data.branch}
           </span>
         )}
-        {data && <span class="dim small">{data.files.length} changed file{data.files.length === 1 ? '' : 's'}</span>}
+        {data && <span class="dim small">{data.files.length === 1 ? t('1 changed file') : t('{n} changed files', { n: data.files.length })}</span>}
         <span class="grow" />
         <button class="btn small" onClick={load} disabled={loading}>
-          {loading ? <Spinner size={12} /> : <IRefresh size={14} />} Refresh
+          {loading ? <Spinner size={12} /> : <IRefresh size={14} />} {t('Refresh')}
         </button>
       </div>
-      {err && <div class="error-box">{err}</div>}
-      {data && !data.repo && <div class="dim pad">Not a git repository.</div>}
+      {err && <div class="error-box">{ts(err)}</div>}
+      {data && !data.repo && <div class="dim pad">{t('Not a git repository.')}</div>}
       {data?.commits && data.commits.length > 0 && (
         <div class="commits">
-          <div class="group-h">Commits on this branch</div>
+          <div class="group-h">{t('Commits on this branch')}</div>
           {data.commits.map((c) => (
             <div key={c} class="commit mono small">
               {c}
@@ -84,7 +85,7 @@ export function ChangesView({ url, refreshKey }: { url: string; refreshKey?: unk
           ))}
         </div>
       )}
-      {data?.repo && data.files.length === 0 && <div class="dim pad">Working tree clean.</div>}
+      {data?.repo && data.files.length === 0 && <div class="dim pad">{t('Working tree clean.')}</div>}
       {data?.files.map((f) => <FileRow key={f.path} f={f} />)}
     </div>
   )

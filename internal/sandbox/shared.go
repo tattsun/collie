@@ -2,6 +2,8 @@ package sandbox
 
 import (
 	"io"
+	"io/fs"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -132,6 +134,15 @@ func (m *Manager) ClaudeArgs() []string {
 	return args
 }
 
+// The project home is mounted read-write into the container, so the agent
+// controls its contents (it can plant symlinks pointing anywhere on the
+// server). Every host-side write into it therefore goes through an os.Root,
+// which refuses any path that would resolve outside the home.
+
+func (m *Manager) homeRoot(projectID string) (*os.Root, error) {
+	return os.OpenRoot(m.HomeDir(projectID))
+}
+
 // PrepareCodex copies the shared Codex config into the project's home so
 // that the next app-server start picks it up.
 func (m *Manager) PrepareCodex(projectID string) error {
@@ -139,25 +150,25 @@ func (m *Manager) PrepareCodex(projectID string) error {
 	if _, err := os.Stat(src); err != nil {
 		return nil
 	}
-	dst := filepath.Join(m.HomeDir(projectID), ".codex", "config.toml")
-	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
+	root, err := m.homeRoot(projectID)
+	if err != nil {
 		return err
 	}
-	return copyFile(src, dst, 0o600)
+	defer root.Close()
+	return copyInto(root, src, ".codex/config.toml")
 }
 
 // StageUpload copies an uploaded image into the project's home and returns
 // its path inside the container (for agents that take image paths).
 func (m *Manager) StageUpload(projectID, hostPath string) (string, error) {
 	name := filepath.Base(hostPath)
-	dst := filepath.Join(m.HomeDir(projectID), ".collie-uploads", name)
-	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
+	root, err := m.homeRoot(projectID)
+	if err != nil {
 		return "", err
 	}
-	if _, err := os.Stat(dst); err != nil {
-		if err := copyFile(hostPath, dst, 0o600); err != nil {
-			return "", err
-		}
+	defer root.Close()
+	if err := copyInto(root, hostPath, ".collie-uploads/"+name); err != nil {
+		return "", err
 	}
 	return Home + "/.collie-uploads/" + name, nil
 }
@@ -179,46 +190,54 @@ func claudeKey(path string) string {
 // migrateClaudeState copies the server user's Claude Code state for this
 // project (memory and conversations, so existing sessions can resume) into
 // the container home the first time the project runs isolated.
-func migrateClaudeState(p model.Project, home, worktreeRoot string) error {
-	dst := filepath.Join(home, ".claude", "projects")
-	if _, err := os.Stat(dst); err == nil {
+//
+// Only entries for exactly the project directory and the working
+// directories of its own sessions are copied. Prefix matching would not be
+// safe: the key mapping is lossy ("/" and "-" both become "-"), so
+// "/x/app" + "-" also prefixes the key of an unrelated "/x/app-secret".
+func migrateClaudeState(p model.Project, root *os.Root, sessionDirs []string, hostHome string) error {
+	if _, err := root.Lstat(".claude/projects"); err == nil {
 		return nil // already initialised
 	}
-	if err := os.MkdirAll(dst, 0o700); err != nil {
+	if err := root.MkdirAll(".claude/projects", 0o700); err != nil {
 		return err
 	}
-	hostHome, err := os.UserHomeDir()
-	if err != nil {
+	if hostHome == "" {
 		return nil
 	}
 	src := filepath.Join(hostHome, ".claude", "projects")
+	want := map[string]bool{claudeKey(p.Path): true}
+	for _, d := range sessionDirs {
+		want[claudeKey(d)] = true
+	}
 	entries, err := os.ReadDir(src)
 	if err != nil {
 		return nil
 	}
-	keys := []string{claudeKey(p.Path), claudeKey(worktreeRoot)}
 	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		for _, k := range keys {
-			if e.Name() == k || strings.HasPrefix(e.Name(), k+"-") {
-				_ = copyTree(filepath.Join(src, e.Name()), filepath.Join(dst, e.Name()))
-				break
+		if e.IsDir() && want[e.Name()] {
+			if err := copyTreeInto(root, filepath.Join(src, e.Name()), ".claude/projects/"+e.Name()); err != nil {
+				log.Printf("migrate claude state %s: %v", e.Name(), err)
 			}
 		}
 	}
 	return nil
 }
 
-func copyFile(src, dst string, mode os.FileMode) error {
+// copyInto copies a host file to name inside root (atomically, never
+// following a symlink out of root).
+func copyInto(root *os.Root, src, name string) error {
 	in, err := os.Open(src)
 	if err != nil {
 		return err
 	}
 	defer in.Close()
-	tmp := dst + ".tmp"
-	out, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
+	if err := root.MkdirAll(filepath.Dir(name), 0o700); err != nil {
+		return err
+	}
+	tmp := name + ".collie-tmp"
+	_ = root.Remove(tmp)
+	out, err := root.OpenFile(tmp, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
 	}
@@ -229,21 +248,22 @@ func copyFile(src, dst string, mode os.FileMode) error {
 	if err := out.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmp, dst)
+	return root.Rename(tmp, name)
 }
 
-func copyTree(src, dst string) error {
-	return filepath.Walk(src, func(p string, fi os.FileInfo, err error) error {
+// copyTreeInto copies a host directory tree (regular files only) into root.
+func copyTreeInto(root *os.Root, src, name string) error {
+	return filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
 		rel, _ := filepath.Rel(src, p)
-		target := filepath.Join(dst, rel)
+		target := filepath.ToSlash(filepath.Join(name, rel))
 		switch {
-		case fi.IsDir():
-			return os.MkdirAll(target, 0o700)
-		case fi.Mode().IsRegular():
-			return copyFile(p, target, 0o600)
+		case d.IsDir():
+			return root.MkdirAll(target, 0o700)
+		case d.Type().IsRegular():
+			return copyInto(root, p, target)
 		}
 		return nil
 	})

@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -328,7 +329,10 @@ func (m *Manager) inspect(ctx context.Context, name string) containerState {
 
 // Ensure starts the project's container, creating (or re-creating, when
 // its configuration changed and recreate is allowed) it as needed.
-func (m *Manager) Ensure(p model.Project, recreate bool) error {
+// sessionDirs are the working directories of the project's sessions; ones
+// outside the project and its worktree root (worktrees created by older
+// versions) are mounted too.
+func (m *Manager) Ensure(p model.Project, recreate bool, sessionDirs []string) error {
 	if !m.available {
 		return ErrUnavailable
 	}
@@ -338,10 +342,10 @@ func (m *Manager) Ensure(p model.Project, recreate bool) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	if err := m.prepare(p); err != nil {
+	if err := m.prepare(p, sessionDirs); err != nil {
 		return err
 	}
-	args := m.runArgs(p)
+	args := m.runArgs(p, m.extraMounts(p, sessionDirs))
 	want := configHash(args)
 	name := Name(p.ID)
 	st := m.inspect(ctx, name)
@@ -365,7 +369,31 @@ func (m *Manager) Ensure(p model.Project, recreate bool) error {
 	return nil
 }
 
-func (m *Manager) runArgs(p model.Project) []string {
+// extraMounts lists session directories not covered by the standard mounts.
+func (m *Manager) extraMounts(p model.Project, sessionDirs []string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, d := range sessionDirs {
+		d = filepath.Clean(d)
+		if d == "" || seen[d] || within(d, p.Path) || within(d, m.WorktreeRoot(p.ID)) {
+			continue
+		}
+		if fi, err := os.Stat(d); err != nil || !fi.IsDir() {
+			continue
+		}
+		seen[d] = true
+		out = append(out, d)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func within(p, dir string) bool {
+	rel, err := filepath.Rel(dir, p)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, "../")
+}
+
+func (m *Manager) runArgs(p model.Project, extra []string) []string {
 	name := Name(p.ID)
 	home := m.HomeDir(p.ID)
 	shared := m.SharedPath()
@@ -407,6 +435,9 @@ func (m *Manager) runArgs(p model.Project) []string {
 		"-v", m.WorktreeRoot(p.ID) + ":" + m.WorktreeRoot(p.ID),
 		"-v", shared + ":" + SharedDir + ":ro",
 		"-w", p.Path,
+	}
+	for _, d := range extra {
+		args = append(args, "-v", d+":"+d)
 	}
 	if mem != "" && mem != "0" {
 		args = append(args, "--memory", mem, "--memory-swap", mem)
@@ -510,7 +541,7 @@ func currentUser() string {
 
 // prepare creates the host directories the container mounts and seeds the
 // shared profile on first use.
-func (m *Manager) prepare(p model.Project) error {
+func (m *Manager) prepare(p model.Project, sessionDirs []string) error {
 	home := m.HomeDir(p.ID)
 	for _, d := range []string{home, m.WorktreeRoot(p.ID)} {
 		if err := os.MkdirAll(d, 0o700); err != nil {
@@ -520,28 +551,37 @@ func (m *Manager) prepare(p model.Project) error {
 	if err := SeedShared(m.SharedPath()); err != nil {
 		return err
 	}
+	m.repairOwnership(home)
+	// Writes into the home go through os.Root: the agent controls its
+	// contents and may have planted symlinks.
+	root, err := os.OpenRoot(home)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
 	// Create every mount point inside the home ourselves. Otherwise podman
 	// creates them as the namespace's root (a subuid on the host) and the
 	// agent, running as the server user, cannot write to e.g. ~/.codex.
-	m.repairOwnership(home)
 	for _, d := range []string{".claude", ".claude/skills", ".claude/agents", ".claude/commands", ".codex", ".codex/skills"} {
-		if err := os.MkdirAll(filepath.Join(home, d), 0o700); err != nil {
-			return err
+		if err := root.MkdirAll(d, 0o700); err != nil {
+			return fmt.Errorf("prepare container home: %w", err)
 		}
 	}
 	for _, f := range []string{".claude/CLAUDE.md", ".codex/AGENTS.md", ".gitconfig", ".codex/auth.json"} {
-		fp := filepath.Join(home, f)
-		if _, err := os.Lstat(fp); errors.Is(err, os.ErrNotExist) {
-			if err := os.WriteFile(fp, nil, 0o600); err != nil {
-				return err
+		if _, err := root.Lstat(f); errors.Is(err, os.ErrNotExist) {
+			fh, err := root.OpenFile(f, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+			if err != nil {
+				return fmt.Errorf("prepare container home: %w", err)
 			}
+			fh.Close()
 		}
 	}
 	hosts := fmt.Sprintf("127.0.0.1\tlocalhost\n::1\tlocalhost ip6-localhost ip6-loopback\n127.0.1.1\t%s\n", hostname(p.Name))
 	if err := os.WriteFile(m.hostsPath(p.ID), []byte(hosts), 0o644); err != nil {
 		return err
 	}
-	return migrateClaudeState(p, home, m.WorktreeRoot(p.ID))
+	hostHome, _ := os.UserHomeDir()
+	return migrateClaudeState(p, root, sessionDirs, hostHome)
 }
 
 func (m *Manager) hostsPath(projectID string) string {
@@ -570,7 +610,8 @@ func (m *Manager) repairOwnership(home string) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	if _, err := m.podman(ctx, "unshare", "chown", "-R", "0:0", home); err != nil {
+	// -h: change symlinks themselves, never what they point to.
+	if _, err := m.podman(ctx, "unshare", "chown", "-R", "-h", "0:0", home); err != nil {
 		log.Printf("repair ownership of %s: %v", home, err)
 	}
 }

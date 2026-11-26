@@ -98,7 +98,13 @@ func (m *Manager) ensureContainer(p model.Project, onBuild func()) error {
 	if err := m.sb.WaitImage(45*time.Minute, onBuild); err != nil {
 		return err
 	}
-	if err := m.sb.Ensure(p, !m.projectBusy(p.ID)); err != nil {
+	var dirs []string
+	for _, s := range m.st.Sessions() {
+		if s.ProjectID == p.ID {
+			dirs = append(dirs, s.Cwd)
+		}
+	}
+	if err := m.sb.Ensure(p, !m.projectBusy(p.ID), dirs); err != nil {
 		return fmt.Errorf("start project container: %w", err)
 	}
 	m.ctrMu.Lock()

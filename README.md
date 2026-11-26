@@ -91,6 +91,19 @@ claude setup-token                    # 表示されたトークンを Collie �
 - `loginctl enable-linger` でログアウト後・再起動後も動き続けます
 - ログ: `journalctl --user -u collie -f`
 
+### アップデート
+
+```bash
+cd collie && git pull
+mise install
+mise run install --serve      # 初回と同じオプションで（--serve なしで入れた場合はなし）
+```
+
+- サービスが再起動するので、実行中のエージェントは止まります（会話は次のメッセージで再開）。開いているブラウザは自動でリロードされます
+- エージェント用イメージも必要に応じて作り直されます。Claude Code / Codex だけ最新にしたいときは `collie --build-image`
+- 既存のプロジェクトは「ホスト実行」のまま残ります。Project → Settings で **Isolated container** に切り替えると、Claude のメモリーと会話はそのプロジェクトの分だけ引き継がれ、旧バージョンで作った worktree セッションもそのまま使えます（Codex の会話は新しいスレッドとして続きます）
+- 自分のユーザーで動かしていたものを専用ユーザー構成に移す場合: `sudo ./deploy/setup-host.sh` → 旧サービスを `systemctl --user disable --now collie` で止める → `collie` ユーザーで導入し直し、プロジェクトは `collie` ユーザーが読み書きできる場所へ移して登録し直してください（専用ユーザーからは元ユーザーのホームは見えません）
+
 ### `--serve`（tailscale serve）を推奨する理由
 
 `https://<マシン名>.<tailnet>.ts.net/` で HTTPS になり、

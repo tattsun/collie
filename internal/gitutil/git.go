@@ -4,7 +4,6 @@ package gitutil
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"fmt"
 	"os"
 	"os/exec"
@@ -56,53 +55,14 @@ func Init(dir string) error {
 	return err
 }
 
-// CloneOpts restricts a clone made on behalf of a non-admin user: only
-// remote HTTPS is allowed and none of the server user's credentials, SSH
-// keys or git configuration are used. GitHubToken (the user's own), if set,
-// authenticates github.com.
-type CloneOpts struct {
-	Restricted  bool
-	GitHubToken string
-}
-
-func Clone(url, dest string, o CloneOpts) error {
+// Clone clones url into dest on the server, with the server user's git
+// configuration and credentials (admins only; members clone inside their
+// container).
+func Clone(url, dest string) error {
 	c, cancel := ctx(30 * time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(c, "git", "clone", "--quiet", "--", url, dest)
-	cmd.Dir = filepath.Dir(dest)
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "LC_ALL=C")
-	if o.Restricted {
-		tmp, err := os.MkdirTemp("", "collie-clone-")
-		if err != nil {
-			return err
-		}
-		defer os.RemoveAll(tmp)
-		cfg := [][2]string{
-			{"protocol.allow", "never"},
-			{"protocol.https.allow", "always"},
-			{"credential.helper", ""},
-		}
-		if o.GitHubToken != "" {
-			auth := base64.StdEncoding.EncodeToString([]byte("x-access-token:" + o.GitHubToken))
-			cfg = append(cfg, [2]string{"http.https://github.com/.extraHeader", "Authorization: Basic " + auth})
-		}
-		cmd.Env = append(cmd.Env, "HOME="+tmp, "XDG_CONFIG_HOME="+tmp, "GIT_CONFIG_NOSYSTEM=1",
-			"GIT_SSH_COMMAND=false", "GIT_ASKPASS=/bin/false", "SSH_ASKPASS=/bin/false", "SSH_AUTH_SOCK=",
-			fmt.Sprintf("GIT_CONFIG_COUNT=%d", len(cfg)))
-		for i, kv := range cfg {
-			cmd.Env = append(cmd.Env, fmt.Sprintf("GIT_CONFIG_KEY_%d=%s", i, kv[0]), fmt.Sprintf("GIT_CONFIG_VALUE_%d=%s", i, kv[1]))
-		}
-	}
-	var errb bytes.Buffer
-	cmd.Stderr = &errb
-	if err := cmd.Run(); err != nil {
-		msg := strings.TrimSpace(errb.String())
-		if msg == "" {
-			msg = err.Error()
-		}
-		return fmt.Errorf("git clone: %s", msg)
-	}
-	return nil
+	_, err := run(c, filepath.Dir(dest), "clone", "--quiet", "--", url, dest)
+	return err
 }
 
 func CurrentBranch(dir string) string {

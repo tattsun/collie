@@ -1,15 +1,19 @@
 package session
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/tattsun/collie/internal/gitutil"
 	"github.com/tattsun/collie/internal/model"
@@ -101,6 +105,9 @@ func (m *Manager) CreateProject(a Actor, req CreateProjectReq) (model.Project, e
 		if !a.Admin && !strings.HasPrefix(url, "https://") {
 			return model.Project{}, errors.New("use an https:// URL (private GitHub repositories work with GH_TOKEN in your account environment)")
 		}
+		if !a.Admin && (m.sb == nil || !m.sb.Available()) {
+			return model.Project{}, errors.New("cloning needs the isolated runtime (podman) on the server")
+		}
 		if name == "" {
 			name = strings.TrimSuffix(filepath.Base(strings.TrimRight(url, "/")), ".git")
 			if i := strings.LastIndex(name, ":"); i >= 0 {
@@ -164,14 +171,24 @@ func (m *Manager) CreateProject(a Actor, req CreateProjectReq) (model.Project, e
 	case "clone":
 		p.Status = "cloning"
 		url := strings.TrimSpace(req.URL)
-		opts := gitutil.CloneOpts{Restricted: !a.Admin}
 		if !a.Admin {
-			if env, err := m.UserEnv(a.ID); err == nil {
-				opts.GitHubToken = envValue(env, "GH_TOKEN")
+			// A member's clone runs inside their own container for the
+			// project: the same network policy as their agents (no host
+			// loopback, no LAN/tailnet behind the firewall), their own
+			// GH_TOKEN, and none of the server's credentials.
+			if err := os.MkdirAll(path, 0o755); err != nil {
+				return model.Project{}, err
 			}
 		}
+		member := !a.Admin
+		uid := a.ID
 		go func() {
-			err := gitutil.Clone(url, path, opts)
+			var err error
+			if member {
+				err = m.cloneInContainer(p, uid, url)
+			} else {
+				err = gitutil.Clone(url, path)
+			}
 			np, ok := m.st.UpdateProject(p.ID, func(x *model.Project) {
 				if err != nil {
 					x.Status, x.Error = "error", err.Error()
@@ -479,13 +496,31 @@ func (m *Manager) GroupProjects(groupID string) []model.Project {
 // AllProjects is for admin overviews (names and owners only).
 func (m *Manager) AllProjects() []model.Project { return m.st.Projects() }
 
-// envValue reads KEY from KEY=VALUE lines.
-func envValue(content, key string) string {
-	for _, line := range strings.Split(content, "\n") {
-		k, v, ok := strings.Cut(strings.TrimSpace(line), "=")
-		if ok && k == key {
-			return strings.Trim(strings.TrimSpace(v), `"'`)
-		}
+// cloneInContainer clones url into the (empty) project directory from
+// inside the user's container for the project.
+func (m *Manager) cloneInContainer(p model.Project, uid, url string) error {
+	if err := m.ensureContainer(p, uid, nil); err != nil {
+		return err
 	}
-	return ""
+	argv, kill := m.sb.Exec(p.ID, uid, p.Path, "clone-"+model.NewID(), false,
+		[]string{"GIT_TERMINAL_PROMPT=0"}, []string{"git", "clone", "--quiet", "--", url, "."})
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	var errb bytes.Buffer
+	cmd.Stderr = &errb
+	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			kill("KILL")
+		}
+		msg := strings.TrimSpace(errb.String())
+		if msg == "" {
+			msg = err.Error()
+		}
+		if lines := strings.Split(msg, "\n"); len(lines) > 4 {
+			msg = strings.Join(lines[len(lines)-4:], "\n")
+		}
+		return fmt.Errorf("git clone: %s", msg)
+	}
+	return nil
 }

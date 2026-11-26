@@ -1,0 +1,183 @@
+import { signal } from '@preact/signals'
+import { memo } from 'preact/compat'
+import { useMemo } from 'preact/hooks'
+import type { Session } from '../types'
+import { attention, conn, go, notifyEnabled, projectById, projects, route, sessions, setNotify, version } from '../store'
+import { ago, cls, home } from '../util'
+import { IBell, IFolder, IPlus, IBranch, Spinner } from './icons'
+import { AgentBadge, StatusDot } from './ui'
+
+export const listTab = signal<'sessions' | 'projects'>((localStorage.getItem('collie.tab') as any) || 'sessions')
+export const projectFilter = signal<string>(localStorage.getItem('collie.filter') || '')
+const showArchived = signal(false)
+
+const rank = (s: Session) => (s.status === 'waiting' ? 0 : s.status === 'error' ? 1 : s.status === 'running' || s.status === 'starting' ? 2 : 3)
+
+const SessionRow = memo(function SessionRow({ s, active, project }: { s: Session; active: boolean; project?: string }) {
+  return (
+    <a href={`#/s/${s.id}`} class={cls('srow', active && 'active', s.unread && 'unread', s.archived && 'archived')}>
+      <StatusDot status={s.status} unread={s.unread} />
+      <div class="srow-main">
+        <div class="srow-top">
+          <span class="srow-title">{s.title}</span>
+          <span class="srow-time">{ago(s.updatedAt)}</span>
+        </div>
+        <div class="srow-meta">
+          <AgentBadge agent={s.agent} small />
+          {project && <span class="srow-proj">{project}</span>}
+          {s.worktree && s.branch && (
+            <span class="srow-branch">
+              <IBranch size={11} />
+              {s.branch.replace(/^collie\//, '')}
+            </span>
+          )}
+        </div>
+        {s.status === 'waiting' ? (
+          <div class="srow-preview warn">Needs your input</div>
+        ) : s.preview ? (
+          <div class="srow-preview">{s.preview}</div>
+        ) : null}
+      </div>
+    </a>
+  )
+})
+
+function SessionList() {
+  const r = route.value
+  const pmap = projectById.value
+  const filter = projectFilter.value
+  const { needs, rest, archivedCount } = useMemo(() => {
+    let list = sessions.value
+    if (filter) list = list.filter((s) => s.projectId === filter)
+    const archivedCount = list.filter((s) => s.archived).length
+    if (!showArchived.value) list = list.filter((s) => !s.archived)
+    const sorted = [...list].sort((a, b) => rank(a) - rank(b) || b.updatedAt - a.updatedAt)
+    return {
+      needs: sorted.filter((s) => s.status === 'waiting' || s.status === 'error'),
+      rest: sorted.filter((s) => s.status !== 'waiting' && s.status !== 'error'),
+      archivedCount,
+    }
+  }, [sessions.value, filter, showArchived.value])
+  const activeId = r.name === 'session' ? r.id : undefined
+
+  return (
+    <div class="slist">
+      {projects.value.length > 1 && (
+        <select
+          class="select filter"
+          value={filter}
+          onChange={(e) => {
+            projectFilter.value = (e.target as HTMLSelectElement).value
+            localStorage.setItem('collie.filter', projectFilter.value)
+          }}
+        >
+          <option value="">All projects</option>
+          {projects.value.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
+          ))}
+        </select>
+      )}
+      {needs.length > 0 && <div class="group-h warn">Needs you · {needs.length}</div>}
+      {needs.map((s) => (
+        <SessionRow key={s.id} s={s} active={s.id === activeId} project={pmap.get(s.projectId)?.name} />
+      ))}
+      {needs.length > 0 && rest.length > 0 && <div class="group-h">Sessions</div>}
+      {rest.map((s) => (
+        <SessionRow key={s.id} s={s} active={s.id === activeId} project={pmap.get(s.projectId)?.name} />
+      ))}
+      {needs.length + rest.length === 0 && (
+        <div class="empty dim">
+          {projects.value.length === 0 ? 'Create a project to get started.' : 'No sessions yet.'}
+          <button class="btn primary" onClick={() => go(projects.value.length ? '#/new' : '#/projects?new=1')}>
+            <IPlus size={15} /> {projects.value.length ? 'New session' : 'New project'}
+          </button>
+        </div>
+      )}
+      {archivedCount > 0 && (
+        <button class="btn ghost small archived-toggle" onClick={() => (showArchived.value = !showArchived.value)}>
+          {showArchived.value ? 'Hide' : 'Show'} archived ({archivedCount})
+        </button>
+      )}
+    </div>
+  )
+}
+
+function ProjectList() {
+  const r = route.value
+  const counts = useMemo(() => {
+    const m = new Map<string, { n: number; busy: number }>()
+    for (const s of sessions.value) {
+      if (s.archived) continue
+      const c = m.get(s.projectId) || { n: 0, busy: 0 }
+      c.n++
+      if (s.status === 'running' || s.status === 'waiting') c.busy++
+      m.set(s.projectId, c)
+    }
+    return m
+  }, [sessions.value])
+  return (
+    <div class="slist">
+      {projects.value.map((p) => {
+        const c = counts.get(p.id)
+        return (
+          <a key={p.id} href={`#/p/${p.id}`} class={cls('prow', r.name === 'project' && r.id === p.id && 'active')}>
+            <IFolder size={16} />
+            <div class="srow-main">
+              <div class="srow-top">
+                <span class="srow-title">{p.name}</span>
+                {p.status === 'cloning' && <Spinner size={12} />}
+                {c && <span class="srow-time">{c.busy ? `${c.busy} active · ` : ''}{c.n}</span>}
+              </div>
+              <div class="srow-preview mono">{p.status === 'error' ? p.error : home(p.path)}</div>
+            </div>
+          </a>
+        )
+      })}
+      <button class="btn ghost new-proj" onClick={() => go('#/projects?new=1')}>
+        <IPlus size={15} /> New project
+      </button>
+    </div>
+  )
+}
+
+export function Sidebar() {
+  const tab = listTab.value
+  const setTab = (t: 'sessions' | 'projects') => {
+    listTab.value = t
+    localStorage.setItem('collie.tab', t)
+  }
+  const n = attention.value.filter((s) => s.status === 'waiting').length
+  return (
+    <aside class="sidebar">
+      <header class="side-head">
+        <a href="#/" class="brand">
+          <img src="/icon.svg" width={22} height={22} alt="" />
+          <span>Collie</span>
+        </a>
+        <span class={cls('conn', conn.value)} title={conn.value} />
+        <span class="grow" />
+        <button class="btn primary small" onClick={() => go('#/new')} disabled={projects.value.length === 0}>
+          <IPlus size={15} /> New
+        </button>
+      </header>
+      <div class="side-tabs">
+        <button class={cls('side-tab', tab === 'sessions' && 'on')} onClick={() => setTab('sessions')}>
+          Sessions{n > 0 && <span class="badge">{n}</span>}
+        </button>
+        <button class={cls('side-tab', tab === 'projects' && 'on')} onClick={() => setTab('projects')}>
+          Projects
+        </button>
+      </div>
+      <div class="side-scroll">{tab === 'sessions' ? <SessionList /> : <ProjectList />}</div>
+      <footer class="side-foot">
+        <button class={cls('foot-btn', notifyEnabled.value && 'on')} onClick={() => setNotify(!notifyEnabled.value)} title="Notifications">
+          <IBell size={14} /> {notifyEnabled.value ? 'Notifications on' : 'Notifications off'}
+        </button>
+        <span class="grow" />
+        <span class="dim small">v{version.value}</span>
+      </footer>
+    </aside>
+  )
+}

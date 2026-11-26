@@ -27,7 +27,7 @@ Tailscale 経由でスマホや別 PC からプロジェクトを作り、エー
 - [mise](https://mise.jdx.dev/)（Go / Node.js はプロジェクトの `mise.toml` で固定しているので、別途入れる必要なし）
 - `git`
 - 隔離実行（推奨）: `podman`（`deploy/setup-host.sh` が入れます）
-- ホスト実行のプロジェクトを使う場合: サーバのユーザーでログイン済みの `claude` / `codex`
+- ホスト実行のプロジェクトを使う場合: サーバのユーザーでログイン済みの `claude` / `codex`（入れ方は「エージェントのアカウント」）
 
 ## ビルド
 
@@ -94,6 +94,17 @@ mise run install --serve              # ビルド → エージェント用イ�
 - **GitHub**: 自分の環境変数に `GH_TOKEN=…` を入れると、push と private リポジトリの clone に使われます
 
 （ホスト実行のプロジェクト＝管理者のみ、はサーバユーザーの `claude` / `codex` / git 認証を使います）
+
+ホスト実行も使う場合は、`collie` ユーザーで CLI を入れてログインしておきます:
+
+```bash
+cd ~
+mise use -g node@lts npm:@openai/codex 'npm:@anthropic-ai/claude-code[allow_builds=true]'
+claude                                # 起動してログイン
+codex login --device-auth
+```
+
+`allow_builds=true` は必須です。mise の npm バックエンドは既定で依存パッケージのインストールスクリプトを実行しないため、付けないと Claude Code のネイティブバイナリが配置されず、`claude` が `native binary not installed` で起動しません（入れてしまった場合は `~/.config/mise/config.toml` の該当行に `allow_builds = true` を足して `mise install -f npm:@anthropic-ai/claude-code`）。
 
 - サービスは `collie` ユーザーとして動きます
 - インストール時の `PATH` をユニットに書き込みます。mise を使っていれば shims を先頭に入れるので、mise で入れた CLI はアップグレード後も見つかり、各プロジェクトの `mise.toml` のバージョンもエージェントからそのまま使われます。PATH を変えたら再実行

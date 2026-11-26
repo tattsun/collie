@@ -1,6 +1,6 @@
 import { rich } from './ui'
 import { useEffect, useState } from 'preact/hooks'
-import { api } from '../api'
+import { api, saveClaudeToken } from '../api'
 import { addPasskey, deviceName, signOut } from '../authflow'
 import { go, me, route, sandbox, toast, toastError } from '../store'
 import { ago, cls, copyText } from '../util'
@@ -79,14 +79,10 @@ export function AccountPage() {
     }
   }
   const saveClaude = async () => {
-    const tok = claude.replace(/\s+/g, '') // tokens copied from a narrow terminal may carry line breaks
-    if (!tok) return
+    if (!claude.trim()) return
     setBusy('claude')
     try {
-      const cur = (await api<{ env: string }>('GET', '/api/me/env')).env || ''
-      const lines = cur.split('\n').filter((l) => !l.trim().startsWith('CLAUDE_CODE_OAUTH_TOKEN='))
-      lines.push(`CLAUDE_CODE_OAUTH_TOKEN=${tok}`)
-      await api('PUT', '/api/me/env', { env: lines.filter((l, i) => l.trim() || i < lines.length - 1).join('\n') + '\n' })
+      await saveClaudeToken(claude)
       setClaude('')
       toast(t('Saved — used by your agents from their next start'))
       load()

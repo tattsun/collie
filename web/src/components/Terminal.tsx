@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'preact/hooks'
 import type { TermInfo } from '../types'
-import { api } from '../api'
+import { api, saveClaudeToken } from '../api'
 import { terms, toast, toastError } from '../store'
 import { cls, copyText, isTouch } from '../util'
 import { t } from '../i18n'
@@ -50,15 +50,65 @@ function bufferText(term: XTerm): string {
   return out.join('\n')
 }
 
+// `claude setup-token` prints the token alone in a text block that Ink
+// hard-wraps at the terminal width, with a blank line after it. Find the
+// latest one and join its rows back; picking it by hand on a phone easily
+// drops a character.
+const TOKEN_START = 'sk-ant-oat01-'
+const TOKEN_ROW = /^[A-Za-z0-9_-]+$/
+export function findClaudeToken(text: string): string | null {
+  const rows = text.split('\n')
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const at = rows[i].lastIndexOf(TOKEN_START)
+    if (at < 0) continue
+    const rest = rows[i].slice(at).trimEnd()
+    if (!TOKEN_ROW.test(rest)) continue // something else follows it on the row: not the token output
+    let tok = rest
+    for (let j = i + 1; j < rows.length && TOKEN_ROW.test(rows[j].trimEnd()); j++) tok += rows[j].trimEnd()
+    return tok.length >= TOKEN_START.length + 40 ? tok : null
+  }
+  return null
+}
+
 // Touch browsers cannot select text inside xterm, so show it in a native
 // text box where long-press selection and Copy work.
 function TextView({ text, onClose }: { text: string; onClose: () => void }) {
   const ta = useRef<HTMLTextAreaElement>(null)
+  const token = findClaudeToken(text)
+  const [saving, setSaving] = useState(false)
   useEffect(() => {
     if (ta.current) ta.current.scrollTop = ta.current.scrollHeight
   }, [])
+  const save = async () => {
+    if (!token) return
+    setSaving(true)
+    try {
+      await saveClaudeToken(token)
+      toast(t('Saved — used by your agents from their next start'))
+      onClose()
+    } catch (e) {
+      toastError(e)
+    } finally {
+      setSaving(false)
+    }
+  }
   return (
     <Modal title={t('Terminal text')} onClose={onClose} wide>
+      {token && (
+        <div class="card col gap token-found">
+          <div class="small">
+            {t('Claude token found:')} <code>{token.slice(0, TOKEN_START.length + 6)}…{token.slice(-6)}</code> <span class="dim">({t('{n} characters', { n: token.length })})</span>
+          </div>
+          <div class="row gap">
+            <button class="btn primary" disabled={saving} onClick={save}>
+              {saving ? <Spinner size={12} /> : t('Save as my Claude token')}
+            </button>
+            <button class="btn" onClick={() => copyText(token).then((ok) => toast(ok ? t('Copied') : t('Copy failed')))}>
+              {t('Copy token')}
+            </button>
+          </div>
+        </div>
+      )}
       <p class="dim small">{t('Long-press to select and copy.')}</p>
       <textarea ref={ta} class="input mono term-text" readOnly value={text} />
       <div class="modal-actions">

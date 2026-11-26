@@ -2062,6 +2062,12 @@ pre.out.error-box {
   white-space: pre-wrap;
   word-break: break-all; /* wrap long tokens on screen; copying keeps them whole */
 }
+.token-found .row {
+  flex-wrap: wrap;
+}
+.token-found code {
+  word-break: break-all;
+}
 .keybar {
   display: flex;
   gap: 6px;

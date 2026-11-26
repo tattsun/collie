@@ -636,9 +636,10 @@ func (c *Claude) onResult(o map[string]any) {
 		it.Text = text
 	}
 	c.sink.Put(it)
-	if isErr && strings.Contains(str(o, "result"), "Not logged in") {
-		c.sink.Put(&model.Item{ID: model.NewID(), Kind: model.KindNotice, TS: model.NowMs(), Done: true,
-			Text: "Claude Code is not logged in for you. Run `claude setup-token` in a project terminal and paste the token under Account → Agent accounts."})
+	if isErr {
+		if note := authNotice(str(o, "result")); note != "" {
+			c.sink.Put(&model.Item{ID: model.NewID(), Kind: model.KindNotice, TS: model.NowMs(), Done: true, Text: note})
+		}
 	}
 	c.sink.Meta(func(s *model.Session) {
 		s.CostUSD += delta
@@ -775,4 +776,16 @@ func orDefault(s, d string) string {
 		return d
 	}
 	return s
+}
+
+// authNotice turns a failed result caused by the user's Claude credentials
+// into a hint on how to fix it ("" when the failure is something else).
+func authNotice(result string) string {
+	switch {
+	case strings.Contains(result, "Not logged in"):
+		return "Claude Code is not logged in for you. Run `claude setup-token` in a project terminal and paste the token under Account → Agent accounts."
+	case strings.Contains(result, "OAuth access token is invalid"):
+		return "Your Claude token was rejected — it may have been copied incompletely or revoked. Run `claude setup-token` in a project terminal again and save the new token (in the terminal: Select → Save as my Claude token)."
+	}
+	return ""
 }

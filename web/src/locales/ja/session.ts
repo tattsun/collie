@@ -111,6 +111,11 @@ const ja: Record<string, string> = {
   'Long-press to select and copy.': '長押しで範囲を選んでコピーできます。',
   'Copy all': 'すべてコピー',
   'Copy failed': 'コピーに失敗しました',
+  'Claude token found:': 'Claude のトークンが見つかりました:',
+  '{n} characters': '{n} 文字',
+  'Save as my Claude token': '自分の Claude トークンとして保存',
+  'Copy token': 'トークンをコピー',
+  'Saved — used by your agents from their next start': '保存しました。エージェントの次回起動から使われます',
 
   // ---- Server texts: timeline notices
   'Context compacted': 'コンテキストを圧縮しました',
@@ -120,6 +125,8 @@ const ja: Record<string, string> = {
   'Building the agent container image (first time only — this takes a few minutes)…':
     'エージェントのコンテナイメージをビルドしています（初回のみ。数分かかります）…',
   'Claude Code is not logged in for you. Run `claude setup-token` in a project terminal and paste the token under Account → Agent accounts.': 'あなたの Claude Code はまだログインしていません。プロジェクトのターミナルで `claude setup-token` を実行し、表示されたトークンを アカウント → エージェントのアカウント に貼り付けてください。',
+  'Your Claude token was rejected — it may have been copied incompletely or revoked. Run `claude setup-token` in a project terminal again and save the new token (in the terminal: Select → Save as my Claude token).':
+    'Claude のトークンが拒否されました。コピー時に一部が欠けたか、失効している可能性があります。プロジェクトのターミナルで `claude setup-token` をもう一度実行し、新しいトークンを保存してください（ターミナルの「選択」→「自分の Claude トークンとして保存」）。',
   'An MCP server asked for input; collie declined it.': 'MCP サーバから入力を求められましたが、Collie が断りました。',
 
   // ---- Server texts: timeline errors

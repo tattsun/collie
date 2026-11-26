@@ -46,3 +46,18 @@ func TestClip(t *testing.T) {
 		t.Fatal("short strings must be untouched")
 	}
 }
+
+func TestAuthNotice(t *testing.T) {
+	cases := map[string]string{
+		"Not logged in · Please run /login":                                     "not logged in",
+		"Failed to authenticate. API Error: 401 OAuth access token is invalid.": "token was rejected",
+		"API Error: 529 Overloaded":                                             "",
+		"":                                                                      "",
+	}
+	for in, want := range cases {
+		got := authNotice(in)
+		if want == "" && got != "" || want != "" && !strings.Contains(got, want) {
+			t.Errorf("authNotice(%q) = %q, want it to mention %q", in, got, want)
+		}
+	}
+}

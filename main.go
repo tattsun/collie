@@ -44,6 +44,7 @@ func main() {
 	codexBin := flag.String("codex", env("COLLIE_CODEX", "codex"), "Codex executable")
 	idle := flag.Duration("idle-timeout", 30*time.Minute, "stop idle agent processes after this long (they resume on the next message; 0 = never)")
 	showToken := flag.Bool("print-token", false, "print the access token and exit")
+	loginURL := flag.Bool("login-url", false, "print sign-in links (containing the access token) and exit")
 	flag.Parse()
 
 	st, err := store.Open(*dataDir)
@@ -58,6 +59,16 @@ func main() {
 	}
 	if *showToken {
 		fmt.Println(*token)
+		return
+	}
+	if *loginURL {
+		ta, err := net.ResolveTCPAddr("tcp", *addr)
+		if err != nil {
+			log.Fatalf("addr: %v", err)
+		}
+		for _, u := range signInURLs(ta, *token, *noAuth, true) {
+			fmt.Println(u)
+		}
 		return
 	}
 	absRoot, _ := filepath.Abs(*root)
@@ -78,7 +89,16 @@ func main() {
 	}
 	hs := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
 
-	printURLs(ln.Addr().(*net.TCPAddr), *token, *noAuth)
+	// The token is only shown on an interactive terminal, never written to a
+	// persistent log (e.g. the systemd journal).
+	interactive := isTerminal(os.Stderr)
+	log.Printf("collie %s listening on %s", server.Version, ln.Addr())
+	for _, u := range signInURLs(ln.Addr().(*net.TCPAddr), *token, *noAuth, interactive) {
+		log.Printf("  open: %s", u)
+	}
+	if !interactive && !*noAuth {
+		log.Printf("  sign in with the token from `collie --print-token` (or get links with `collie --login-url`)")
+	}
 	log.Printf("projects root: %s · data: %s", absRoot, *dataDir)
 
 	go func() {
@@ -112,13 +132,20 @@ func loadToken(path string) (string, error) {
 	return t, os.WriteFile(path, []byte(t+"\n"), 0o600)
 }
 
-func printURLs(a *net.TCPAddr, token string, noAuth bool) {
-	q := "/?token=" + token
-	if noAuth {
-		q = "/"
+func isTerminal(f *os.File) bool {
+	fi, err := f.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
+}
+
+// signInURLs lists the URLs the server can be reached on, optionally with the
+// access token (opening such a link signs the device in).
+func signInURLs(a *net.TCPAddr, token string, noAuth, withToken bool) []string {
+	q := "/"
+	if withToken && !noAuth {
+		q = "/?token=" + token
 	}
 	var hosts []string
-	if a.IP.IsUnspecified() {
+	if a.IP == nil || a.IP.IsUnspecified() {
 		ifaces, _ := net.InterfaceAddrs()
 		for _, ia := range ifaces {
 			ipn, ok := ia.(*net.IPNet)
@@ -131,14 +158,15 @@ func printURLs(a *net.TCPAddr, token string, noAuth bool) {
 	} else {
 		hosts = append(hosts, a.IP.String())
 	}
-	log.Printf("collie %s listening on %s", server.Version, a.String())
+	var out []string
 	for _, h := range hosts {
 		tag := ""
 		if ip := net.ParseIP(h); ip != nil && isTailscale(ip) {
 			tag = "  ← tailscale"
 		}
-		log.Printf("  open: http://%s%s%s", net.JoinHostPort(h, fmt.Sprint(a.Port)), q, tag)
+		out = append(out, "http://"+net.JoinHostPort(h, fmt.Sprint(a.Port))+q+tag)
 	}
+	return out
 }
 
 // isTailscale reports whether ip is in the CGNAT range Tailscale uses.

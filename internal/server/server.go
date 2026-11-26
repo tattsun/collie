@@ -17,6 +17,7 @@ import (
 	"mime"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path"
@@ -80,11 +81,60 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "+
 		"img-src 'self' data: blob: https:; connect-src 'self' ws: wss:; font-src 'self' data:; object-src 'none'; "+
 		"base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
-	if strings.HasPrefix(r.URL.Path, "/api/") && r.URL.Path != "/api/login" && !s.authed(r) {
-		httpError(w, http.StatusUnauthorized, "unauthorized")
-		return
+	if strings.HasPrefix(r.URL.Path, "/api/") {
+		// Authentication may come from the Tailscale identity header, which the
+		// proxy attaches to every request from the user's browser — including
+		// ones a malicious site triggers. So every API call (WebSockets too)
+		// must be same-origin, whatever its method.
+		if !sameOrigin(r) {
+			httpError(w, http.StatusForbidden, "cross-origin request rejected")
+			return
+		}
+		if r.URL.Path != "/api/login" && !s.authed(r) {
+			httpError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
 	}
 	s.mux.ServeHTTP(w, r)
+}
+
+// allowedHosts lists the host[:port] values a same-origin browser request
+// can carry in its Origin header.
+func allowedHosts(r *http.Request) []string {
+	hosts := []string{r.Host}
+	// Behind a local reverse proxy (tailscale serve) the public name may only
+	// arrive in X-Forwarded-Host. Browsers cannot set this header themselves,
+	// and it is only trusted from loopback.
+	if isLoopback(r.RemoteAddr) {
+		if h := r.Header.Get("X-Forwarded-Host"); h != "" {
+			hosts = append(hosts, h)
+		}
+	}
+	return hosts
+}
+
+func normHost(h string) string {
+	h = strings.ToLower(h)
+	return strings.TrimSuffix(strings.TrimSuffix(h, ":443"), ":80")
+}
+
+// sameOrigin rejects cross-site browser requests (CSRF and cross-site
+// WebSocket hijacking). Browsers always send Origin on WebSocket handshakes
+// and cross-origin requests; non-browser clients (curl) send neither header.
+func sameOrigin(r *http.Request) bool {
+	if o := r.Header.Get("Origin"); o != "" {
+		u, err := url.Parse(o)
+		if err != nil || u.Host == "" {
+			return false // includes the opaque "null" origin
+		}
+		for _, h := range allowedHosts(r) {
+			if normHost(u.Host) == normHost(h) {
+				return true
+			}
+		}
+		return false
+	}
+	return r.Header.Get("Sec-Fetch-Site") != "cross-site"
 }
 
 func (s *Server) routes() {
@@ -202,15 +252,20 @@ func (s *Server) stateData() map[string]any {
 func (s *Server) state(w http.ResponseWriter, r *http.Request) { writeJSON(w, s.stateData()) }
 
 func (s *Server) acceptWS(w http.ResponseWriter, r *http.Request) (*websocket.Conn, error) {
-	patterns := []string{r.Host, "*.ts.net", "localhost:*", "127.0.0.1:*"}
-	if h := r.Header.Get("X-Forwarded-Host"); h != "" {
-		patterns = append(patterns, h)
+	// Exact hosts only (sameOrigin has already checked this in ServeHTTP;
+	// the library check is a second layer). Glob characters are escaped so
+	// e.g. IPv6 literals match literally.
+	var patterns []string
+	for _, h := range allowedHosts(r) {
+		patterns = append(patterns, globEscape.Replace(h))
 	}
 	return websocket.Accept(w, r, &websocket.AcceptOptions{
 		OriginPatterns:  patterns,
 		CompressionMode: websocket.CompressionContextTakeover,
 	})
 }
+
+var globEscape = strings.NewReplacer(`\`, `\\`, `*`, `\*`, `?`, `\?`, `[`, `\[`, `]`, `\]`)
 
 func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 	c, err := s.acceptWS(w, r)

@@ -2,10 +2,11 @@ import { signal } from '@preact/signals'
 import { memo } from 'preact/compat'
 import { useMemo } from 'preact/hooks'
 import type { Session } from '../types'
-import { attention, conn, go, notifyEnabled, projectById, projects, route, sessions, setNotify, version } from '../store'
+import { attention, conn, go, groupById, me, notifyEnabled, projectById, projects, route, sessions, setNotify, userName, version } from '../store'
 import { ago, cls, home } from '../util'
-import { IBell, IBox, IFolder, IPlus, IBranch, Spinner } from './icons'
-import { AgentBadge, StatusDot } from './ui'
+import { IBell, IBox, IFolder, IPlus, IBranch, IUsers, Spinner } from './icons'
+import { AgentBadge, Menu, StatusDot } from './ui'
+import { signOut } from '../authflow'
 import { ImageIndicator } from './ProjectSettings'
 
 export const listTab = signal<'sessions' | 'projects'>((localStorage.getItem('collie.tab') as any) || 'sessions')
@@ -26,6 +27,11 @@ const SessionRow = memo(function SessionRow({ s, active, project }: { s: Session
         <div class="srow-meta">
           <AgentBadge agent={s.agent} small />
           {project && <span class="srow-proj">{project}</span>}
+          {s.owner && s.owner !== me.value?.id && (
+            <span class="srow-by">
+              <IUsers size={11} /> {userName(s.owner)}
+            </span>
+          )}
           {s.worktree && s.branch && (
             <span class="srow-branch">
               <IBranch size={11} />
@@ -107,6 +113,19 @@ function SessionList() {
 
 function ProjectList() {
   const r = route.value
+  const sections = useMemo(() => {
+    const out: { key: string; label: string; items: typeof projects.value }[] = []
+    const mine = projects.value.filter((p) => !p.ownerGroup)
+    if (mine.length) out.push({ key: 'me', label: 'Personal', items: mine })
+    const byGroup = new Map<string, typeof projects.value>()
+    for (const p of projects.value) {
+      if (!p.ownerGroup) continue
+      if (!byGroup.has(p.ownerGroup)) byGroup.set(p.ownerGroup, [])
+      byGroup.get(p.ownerGroup)!.push(p)
+    }
+    for (const [gid, items] of byGroup) out.push({ key: gid, label: groupById.value.get(gid)?.name || 'Group', items })
+    return out
+  }, [projects.value, groupById.value])
   const counts = useMemo(() => {
     const m = new Map<string, { n: number; busy: number }>()
     for (const s of sessions.value) {
@@ -120,7 +139,14 @@ function ProjectList() {
   }, [sessions.value])
   return (
     <div class="slist">
-      {projects.value.map((p) => {
+      {sections.map((sec) => (
+        <div key={sec.key} class="slist">
+          {sections.length > 1 && (
+            <div class="group-h">
+              {sec.key !== 'me' && <IUsers size={11} />} {sec.label}
+            </div>
+          )}
+          {sec.items.map((p) => {
         const c = counts.get(p.id)
         return (
           <a key={p.id} href={`#/p/${p.id}`} class={cls('prow', r.name === 'project' && r.id === p.id && 'active')}>
@@ -136,6 +162,8 @@ function ProjectList() {
           </a>
         )
       })}
+        </div>
+      ))}
       <button class="btn ghost new-proj" onClick={() => go('#/projects?new=1')}>
         <IPlus size={15} /> New project
       </button>
@@ -173,6 +201,21 @@ export function Sidebar() {
       </div>
       <div class="side-scroll">{tab === 'sessions' ? <SessionList /> : <ProjectList />}</div>
       <footer class="side-foot">
+        <Menu
+          up
+          label="Account menu"
+          trigger={
+            <span class="avatar" title={me.value?.displayName}>
+              {(me.value?.displayName || '?').slice(0, 1).toUpperCase()}
+            </span>
+          }
+          items={[
+            { label: `${me.value?.displayName || ''} — account`, onClick: () => go('#/account') },
+            { label: 'Groups', onClick: () => go('#/groups') },
+            ...(me.value?.admin ? [{ label: 'Admin', onClick: () => go('#/admin') }] : []),
+            { label: 'Sign out', onClick: signOut, danger: true },
+          ]}
+        />
         <button class={cls('foot-btn', notifyEnabled.value && 'on')} onClick={() => setNotify(!notifyEnabled.value)} title="Notifications">
           <IBell size={14} /> {notifyEnabled.value ? 'Notifications on' : 'Notifications off'}
         </button>

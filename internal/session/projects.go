@@ -25,13 +25,10 @@ type CreateProjectReq struct {
 	Path    string `json:"path"`
 	Git     *bool  `json:"git"`     // for "empty": run git init (default true)
 	Runtime string `json:"runtime"` // container | host ("" = container when available)
+	Group   string `json:"group"`   // owning group id ("" = personal)
 }
 
 var nameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$`)
-
-func (m *Manager) broadcastProject(p model.Project) {
-	m.hub.Broadcast(map[string]any{"t": "project", "project": p})
-}
 
 func (m *Manager) expand(p string) string {
 	p = strings.TrimSpace(p)
@@ -45,7 +42,39 @@ func (m *Manager) expand(p string) string {
 	return filepath.Clean(p)
 }
 
-func (m *Manager) CreateProject(req CreateProjectReq) (model.Project, error) {
+// OwnerRoot is where new projects of a user / group are created. Users and
+// groups live in separate subtrees so a name can never alias another
+// owner's folder.
+func (m *Manager) OwnerRoot(a Actor, groupID string) string {
+	if groupID != "" && m.acc != nil {
+		return filepath.Join(m.cfg.ProjectRoot, "groups", m.acc.GroupName(groupID))
+	}
+	return filepath.Join(m.cfg.ProjectRoot, "users", a.Name)
+}
+
+func within(p, dir string) bool {
+	rel, err := filepath.Rel(dir, p)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, "../")
+}
+
+func (m *Manager) CreateProject(a Actor, req CreateProjectReq) (model.Project, error) {
+	if req.Group != "" && m.role(req.Group, a.ID) == "" {
+		return model.Project{}, ErrNotFound
+	}
+	if !a.Admin {
+		// Members only get isolated projects inside their own folder.
+		if req.Kind == "existing" {
+			return model.Project{}, errors.New("only admins can add existing folders")
+		}
+		if req.Runtime == "host" {
+			return model.Project{}, errors.New("only admins can run agents directly on the server")
+		}
+		req.Runtime = "container"
+	}
+	if req.Group != "" && req.Runtime == "host" {
+		return model.Project{}, errors.New("group projects always run isolated")
+	}
+	root := m.OwnerRoot(a, req.Group)
 	name := strings.TrimSpace(req.Name)
 	var path string
 	switch req.Kind {
@@ -66,6 +95,12 @@ func (m *Manager) CreateProject(req CreateProjectReq) (model.Project, error) {
 		if url == "" {
 			return model.Project{}, errors.New("repository URL is required")
 		}
+		if strings.HasPrefix(url, "-") || strings.HasPrefix(url, "file:") || strings.HasPrefix(url, "/") || strings.HasPrefix(url, ".") || strings.Contains(url, "::") {
+			return model.Project{}, errors.New("only remote repository URLs can be cloned")
+		}
+		if !a.Admin && !strings.HasPrefix(url, "https://") {
+			return model.Project{}, errors.New("use an https:// URL (private GitHub repositories work with GH_TOKEN in your account environment)")
+		}
 		if name == "" {
 			name = strings.TrimSuffix(filepath.Base(strings.TrimRight(url, "/")), ".git")
 			if i := strings.LastIndex(name, ":"); i >= 0 {
@@ -75,7 +110,7 @@ func (m *Manager) CreateProject(req CreateProjectReq) (model.Project, error) {
 		if !nameRe.MatchString(name) {
 			return model.Project{}, errors.New("invalid project name (letters, digits, . _ -)")
 		}
-		path = filepath.Join(m.cfg.ProjectRoot, name)
+		path = filepath.Join(root, name)
 		if _, err := os.Stat(path); err == nil {
 			return model.Project{}, fmt.Errorf("%s already exists", path)
 		}
@@ -83,20 +118,30 @@ func (m *Manager) CreateProject(req CreateProjectReq) (model.Project, error) {
 		if !nameRe.MatchString(name) {
 			return model.Project{}, errors.New("invalid project name (letters, digits, . _ -)")
 		}
-		path = filepath.Join(m.cfg.ProjectRoot, name)
+		path = filepath.Join(root, name)
 		if _, err := os.Stat(path); err == nil {
-			return model.Project{}, fmt.Errorf("%s already exists — use \"Open existing folder\"", path)
+			return model.Project{}, fmt.Errorf("%s already exists", path)
 		}
 	}
+	// A project must not contain, or sit inside, another project: its
+	// containers would expose the other project's files.
 	for _, p := range m.st.Projects() {
-		if p.Path == path {
-			return model.Project{}, fmt.Errorf("%s is already registered as %q", path, p.Name)
+		if within(path, p.Path) || within(p.Path, path) {
+			return model.Project{}, fmt.Errorf("%s overlaps an existing project", path)
 		}
 	}
-	if err := os.MkdirAll(m.cfg.ProjectRoot, 0o755); err != nil {
+	if within(m.cfg.ProjectRoot, path) || path == filepath.Join(m.cfg.ProjectRoot, "groups") || path == filepath.Join(m.cfg.ProjectRoot, "users") {
+		return model.Project{}, errors.New("that folder holds other people's projects")
+	}
+	if err := os.MkdirAll(root, 0o755); err != nil {
 		return model.Project{}, err
 	}
-	p := model.Project{ID: model.NewID(), Name: name, Path: path, CreatedAt: model.NowMs()}
+	p := model.Project{ID: model.NewID(), Name: name, Path: path, CreatedAt: model.NowMs(), CreatedBy: a.ID}
+	if req.Group != "" {
+		p.OwnerGroup = req.Group
+	} else {
+		p.OwnerUser = a.ID
+	}
 	switch req.Runtime {
 	case "host":
 		p.Runtime = "host"
@@ -119,8 +164,14 @@ func (m *Manager) CreateProject(req CreateProjectReq) (model.Project, error) {
 	case "clone":
 		p.Status = "cloning"
 		url := strings.TrimSpace(req.URL)
+		opts := gitutil.CloneOpts{Restricted: !a.Admin}
+		if !a.Admin {
+			if env, err := m.UserEnv(a.ID); err == nil {
+				opts.GitHubToken = envValue(env, "GH_TOKEN")
+			}
+		}
 		go func() {
-			err := gitutil.Clone(url, path)
+			err := gitutil.Clone(url, path, opts)
 			np, ok := m.st.UpdateProject(p.ID, func(x *model.Project) {
 				if err != nil {
 					x.Status, x.Error = "error", err.Error()
@@ -129,7 +180,7 @@ func (m *Manager) CreateProject(req CreateProjectReq) (model.Project, error) {
 				}
 			})
 			if ok {
-				m.broadcastProject(np)
+				m.pushProject(np)
 			}
 		}()
 	default:
@@ -144,20 +195,29 @@ func (m *Manager) CreateProject(req CreateProjectReq) (model.Project, error) {
 		}
 	}
 	m.st.PutProject(p)
-	m.broadcastProject(p)
+	m.pushProject(p)
 	return p, nil
 }
 
 // DeleteProject unregisters the project and deletes its sessions. Files on
 // disk are left untouched (except collie-created worktrees).
-func (m *Manager) DeleteProject(id string) error {
-	if _, ok := m.st.Project(id); !ok {
-		return errors.New("project not found")
+func (m *Manager) DeleteProject(a Actor, id string) error {
+	p, err := m.visibleProject(a.ID, id)
+	if err != nil {
+		return err
 	}
-	_ = m.StopProject(id, true)
+	if !m.ProjectManageable(a.ID, p) {
+		return ErrForbidden
+	}
+	m.deleteProject(id)
+	return nil
+}
+
+func (m *Manager) deleteProject(id string) {
+	_ = m.stopProject(id, true)
 	for _, s := range m.st.Sessions() {
 		if s.ProjectID == id {
-			_ = m.DeleteSession(s.ID, true)
+			_ = m.deleteSession(s.ID, true)
 		}
 	}
 	if m.sb != nil {
@@ -165,37 +225,39 @@ func (m *Manager) DeleteProject(id string) error {
 		_ = os.Remove(m.sb.WorktreeRoot(id)) // only if empty
 	}
 	m.st.DeleteProject(id)
-	m.hub.Broadcast(map[string]any{"t": "project_del", "id": id})
-	return nil
+	m.pushProjectDeleted(id)
 }
 
-func (m *Manager) ProjectChanges(id string) (*gitutil.Changes, error) {
-	p, ok := m.st.Project(id)
-	if !ok {
-		return nil, errors.New("project not found")
+func (m *Manager) ProjectChanges(a Actor, id string) (*gitutil.Changes, error) {
+	p, err := m.visibleProject(a.ID, id)
+	if err != nil {
+		return nil, err
 	}
 	ch, err := gitutil.Diff(p.Path, "")
 	if err == nil && ch.Repo != p.Git {
 		np, _ := m.st.UpdateProject(id, func(x *model.Project) { x.Git = ch.Repo })
-		m.broadcastProject(np)
+		m.pushProject(np)
 	}
 	return ch, err
 }
 
 // SuggestDirs lists directories under the project root that are not yet
-// registered as projects.
-func (m *Manager) SuggestDirs() []string {
+// registered as projects (admins only: members cannot add folders).
+func (m *Manager) SuggestDirs(a Actor) []string {
+	out := []string{}
+	if !a.Admin {
+		return out
+	}
 	entries, err := os.ReadDir(m.cfg.ProjectRoot)
 	if err != nil {
-		return []string{}
+		return out
 	}
 	known := map[string]bool{}
 	for _, p := range m.st.Projects() {
 		known[p.Path] = true
 	}
-	out := []string{}
 	for _, e := range entries {
-		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") || e.Name() == "groups" || e.Name() == "users" {
 			continue
 		}
 		full := filepath.Join(m.cfg.ProjectRoot, e.Name())
@@ -217,16 +279,26 @@ type PatchProjectReq struct {
 
 var limitRe = regexp.MustCompile(`^(|[0-9]+(\.[0-9]+)?[kmgKMG]?)$`)
 
-// PatchProject changes a project's settings. Changing where or how its
-// agents run stops them; they resume in the new environment on the next
-// message.
-func (m *Manager) PatchProject(id string, req PatchProjectReq) (model.Project, error) {
-	p, ok := m.st.Project(id)
-	if !ok {
-		return p, errors.New("project not found")
+// PatchProject changes a project's settings. Where and with which limits
+// agents run is an admin decision; changing it stops the project's agents
+// (they resume in the new environment on the next message).
+func (m *Manager) PatchProject(a Actor, id string, req PatchProjectReq) (model.Project, error) {
+	p, err := m.visibleProject(a.ID, id)
+	if err != nil {
+		return p, err
+	}
+	if !m.ProjectManageable(a.ID, p) {
+		return p, ErrForbidden
+	}
+	envReq := req.Runtime != nil || req.Memory != nil || req.CPUs != nil || req.Pids != nil
+	if envReq && !a.Admin {
+		return p, errors.New("only admins can change where agents run and their limits")
 	}
 	if req.Runtime != nil && *req.Runtime != "host" && *req.Runtime != "container" {
 		return p, fmt.Errorf("unknown runtime %q", *req.Runtime)
+	}
+	if req.Runtime != nil && *req.Runtime == "host" && p.OwnerGroup != "" {
+		return p, errors.New("group projects always run isolated")
 	}
 	if req.Runtime != nil && *req.Runtime == "container" && (m.sb == nil || !m.sb.Available()) {
 		return p, errors.New("isolated projects need podman on the server")
@@ -244,8 +316,7 @@ func (m *Manager) PatchProject(id string, req PatchProjectReq) (model.Project, e
 		(req.CPUs != nil && strings.TrimSpace(*req.CPUs) != p.CPUs) ||
 		(req.Pids != nil && *req.Pids != p.Pids)
 	if envChanged {
-		// Agents must restart to run in the new environment.
-		if err := m.StopProject(id, false); err != nil {
+		if err := m.stopProject(id, false); err != nil {
 			log.Printf("stop project %s: %v", id, err)
 		}
 	}
@@ -266,14 +337,18 @@ func (m *Manager) PatchProject(id string, req PatchProjectReq) (model.Project, e
 			x.Pids = *req.Pids
 		}
 	})
-	m.broadcastProject(np)
+	m.pushProject(np)
 	return np, nil
 }
 
 // ProjectEnv returns the project's container environment file contents.
-func (m *Manager) ProjectEnv(id string) (string, error) {
-	if _, ok := m.st.Project(id); !ok || m.sb == nil {
-		return "", errors.New("project not found")
+func (m *Manager) ProjectEnv(a Actor, id string) (string, error) {
+	p, err := m.visibleProject(a.ID, id)
+	if err != nil || m.sb == nil {
+		return "", ErrNotFound
+	}
+	if !m.ProjectManageable(a.ID, p) {
+		return "", ErrForbidden
 	}
 	b, err := os.ReadFile(m.sb.ProjectEnvPath(id))
 	if errors.Is(err, os.ErrNotExist) {
@@ -282,7 +357,20 @@ func (m *Manager) ProjectEnv(id string) (string, error) {
 	return string(b), err
 }
 
-// SharedEnv returns the env file exported in every isolated project.
+// SetProjectEnv replaces the project's container environment file. It
+// applies when the containers are next (re)created.
+func (m *Manager) SetProjectEnv(a Actor, id, content string) error {
+	p, err := m.visibleProject(a.ID, id)
+	if err != nil || m.sb == nil {
+		return ErrNotFound
+	}
+	if !m.ProjectManageable(a.ID, p) {
+		return ErrForbidden
+	}
+	return writeEnvFile(m.sb.ProjectEnvPath(id), content)
+}
+
+// SharedEnv / UserEnv: the global (admin) and personal env files.
 func (m *Manager) SharedEnv() (string, error) {
 	if m.sb == nil {
 		return "", errors.New("isolation is not available")
@@ -294,16 +382,39 @@ func (m *Manager) SharedEnv() (string, error) {
 	return string(b), err
 }
 
-// SetSharedEnv replaces the shared env file. Containers pick it up when they
-// are next (re)created; idle ones are re-created on their next use.
 func (m *Manager) SetSharedEnv(content string) error {
 	if m.sb == nil {
 		return errors.New("isolation is not available")
 	}
+	return writeEnvFile(m.sb.SharedEnvPath(), content)
+}
+
+func (m *Manager) UserEnv(uid string) (string, error) {
+	if m.sb == nil {
+		return "", errors.New("isolation is not available")
+	}
+	b, err := os.ReadFile(m.sb.UserEnvPath(uid))
+	if errors.Is(err, os.ErrNotExist) {
+		return "", nil
+	}
+	return string(b), err
+}
+
+func (m *Manager) SetUserEnv(uid, content string) error {
+	if m.sb == nil {
+		return errors.New("isolation is not available")
+	}
+	return writeEnvFile(m.sb.UserEnvPath(uid), content)
+}
+
+func writeEnvFile(path, content string) error {
 	if err := validateEnv(content); err != nil {
 		return err
 	}
-	return os.WriteFile(m.sb.SharedEnvPath(), []byte(content), 0o600)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(content), 0o600)
 }
 
 func validateEnv(content string) error {
@@ -319,20 +430,62 @@ func validateEnv(content string) error {
 	return nil
 }
 
-// SetProjectEnv replaces the project's container environment file. It
-// applies when the container is next (re)created.
-func (m *Manager) SetProjectEnv(id, content string) error {
-	if _, ok := m.st.Project(id); !ok || m.sb == nil {
-		return errors.New("project not found")
+var envKeyRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// AdoptOrphans gives projects and sessions from the single-user version an
+// owner (the first admin).
+func (m *Manager) AdoptOrphans(ownerID string) {
+	for _, p := range m.st.Projects() {
+		if p.OwnerUser == "" && p.OwnerGroup == "" {
+			m.st.UpdateProject(p.ID, func(x *model.Project) { x.OwnerUser = ownerID })
+		}
 	}
-	if err := validateEnv(content); err != nil {
-		return err
+	for _, s := range m.st.Sessions() {
+		if s.Owner == "" {
+			m.st.UpdateSession(s.ID, func(x *model.Session) { x.Owner = ownerID })
+		}
 	}
-	p := m.sb.ProjectEnvPath(id)
-	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
-		return err
-	}
-	return os.WriteFile(p, []byte(content), 0o600)
 }
 
-var envKeyRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+// PurgeUser removes a deleted user's personal projects and the sessions
+// they started (their agent identity is gone).
+func (m *Manager) PurgeUser(uid string) {
+	for _, p := range m.st.Projects() {
+		if p.OwnerUser == uid {
+			m.deleteProject(p.ID)
+		}
+	}
+	for _, s := range m.st.Sessions() {
+		if s.Owner == uid {
+			_ = m.deleteSession(s.ID, true)
+		}
+	}
+	if m.sb != nil {
+		m.sb.RemoveUser(uid)
+	}
+}
+
+// GroupProjects lists the projects owned by a group.
+func (m *Manager) GroupProjects(groupID string) []model.Project {
+	var out []model.Project
+	for _, p := range m.st.Projects() {
+		if p.OwnerGroup == groupID {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// AllProjects is for admin overviews (names and owners only).
+func (m *Manager) AllProjects() []model.Project { return m.st.Projects() }
+
+// envValue reads KEY from KEY=VALUE lines.
+func envValue(content, key string) string {
+	for _, line := range strings.Split(content, "\n") {
+		k, v, ok := strings.Cut(strings.TrimSpace(line), "=")
+		if ok && k == key {
+			return strings.Trim(strings.TrimSpace(v), `"'`)
+		}
+	}
+	return ""
+}

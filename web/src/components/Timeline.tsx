@@ -1,7 +1,7 @@
 import { memo } from 'preact/compat'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks'
 import type { Item, Session, Ask, PlanStep } from '../types'
-import { timeline, toastError } from '../store'
+import { me, timeline, toastError, userName } from '../store'
 import { api } from '../api'
 import { renderMarkdown } from '../markdown'
 import { parseDiff, snippetDiff, diffStats, type DiffLine } from '../diff'
@@ -76,8 +76,10 @@ function editLines(name: string, input: any): DiffLine[] | null {
 // ---------------------------------------------------------------- items
 
 function UserMsg({ item }: { item: Item }) {
+  const other = item.by && item.by !== me.value?.id
   return (
     <div class="msg-user">
+      {other && <div class="msg-by">{userName(item.by)}</div>}
       {item.images && item.images.length > 0 && (
         <div class="thumbs">
           {item.images.map((id) => (

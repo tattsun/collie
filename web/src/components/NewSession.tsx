@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks'
-import type { Agent, Session } from '../types'
+import type { Agent, Project, Session } from '../types'
 import { api } from '../api'
-import { agentCaps, agentsAvail, go, modes, projectById, projects, route, toastError } from '../store'
+import { agentCaps, agentsAvail, go, groupById, modes, projectById, projects, route, toastError } from '../store'
 import { cls, home, isTouch } from '../util'
 import { IBack, IBranch, IImage, IPlus, ISend, Spinner } from './icons'
 import { Segmented, Toggle } from './ui'
@@ -29,6 +29,7 @@ export function NewSession() {
   const [model, setModel] = useState(() => pref('model.' + agent))
   const [effort, setEffort] = useState(() => pref('effort.' + agent))
   const [worktree, setWorktree] = useState(() => pref('worktree') === '1')
+  const [shared, setShared] = useState(true)
   const [prompt, setPrompt] = useState(() => sessionStorage.getItem('collie.newprompt') || '')
   const [busy, setBusy] = useState(false)
   const { atts, add, remove, uploading, ids } = useAttachments()
@@ -86,6 +87,7 @@ export function NewSession() {
         prompt,
         images: ids(),
         worktree: worktree && !!project?.git,
+        shared: project?.ownerGroup ? shared : undefined,
       })
       setPref('project', projectId)
       setPref('agent', agent)
@@ -178,11 +180,15 @@ export function NewSession() {
             <span class="field-l">Project</span>
             <div class="row gap">
               <select class="select" value={projectId} onChange={(e) => setProjectId((e.target as HTMLSelectElement).value)}>
-                {plist.map((p) => (
-                  <option key={p.id} value={p.id} disabled={p.status === 'cloning'}>
-                    {p.name}
-                    {p.status === 'cloning' ? ' (cloning…)' : ''}
-                  </option>
+                {projectGroups(plist).map(([label, items]) => (
+                  <optgroup key={label} label={label}>
+                    {items.map((p) => (
+                      <option key={p.id} value={p.id} disabled={p.status === 'cloning'}>
+                        {p.name}
+                        {p.status === 'cloning' ? ' (cloning…)' : ''}
+                      </option>
+                    ))}
+                  </optgroup>
                 ))}
               </select>
               <button class="btn" onClick={() => go('#/projects?new=1')} title="New project">
@@ -191,6 +197,16 @@ export function NewSession() {
             </div>
             {project && <span class="field-h mono">{home(project.path)}</span>}
           </label>
+          {project?.ownerGroup && (
+            <div class="field">
+              <Toggle
+                checked={shared}
+                onChange={setShared}
+                label={`Share with ${groupById.value.get(project.ownerGroup)?.name || 'the group'}`}
+                hint="Members can follow and drive this session. It runs with your agent accounts."
+              />
+            </div>
+          )}
 
           <div class="field">
             <span class="field-l">Agent</span>
@@ -261,4 +277,14 @@ export function NewSession() {
       </div>
     </div>
   )
+}
+
+function projectGroups(list: Project[]): [string, Project[]][] {
+  const mine = list.filter((p) => !p.ownerGroup)
+  const out: [string, Project[]][] = []
+  if (mine.length) out.push(['Personal', mine])
+  const byGroup = new Map<string, Project[]>()
+  for (const p of list) if (p.ownerGroup) byGroup.set(p.ownerGroup, [...(byGroup.get(p.ownerGroup) || []), p])
+  for (const [gid, items] of byGroup) out.push([groupById.value.get(gid)?.name || 'Group', items])
+  return out
 }

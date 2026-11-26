@@ -18,7 +18,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"os/exec"
 	"path"
 	"path/filepath"
@@ -28,26 +27,34 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/tattsun/collie/internal/agent"
-	"github.com/tattsun/collie/internal/model"
+	"github.com/tattsun/collie/internal/auth"
 	"github.com/tattsun/collie/internal/session"
 	"github.com/tattsun/collie/internal/term"
 )
 
-const Version = "0.1.0"
+const Version = "0.2.0"
 
 type Options struct {
+	// Token is the legacy access token. It (and the Tailscale identity
+	// header) only work until the first passkey is registered.
 	Token  string
 	NoAuth bool
 	Web    fs.FS
 	// ProxyUID is the uid of the local reverse proxy whose identity headers
 	// are trusted (tailscaled runs as root).
 	ProxyUID int
+	// PublicURL pins the origin passkeys are bound to (default: the host the
+	// first passkey was registered on).
+	PublicURL string
+	// Owner is the first admin: the identity of legacy / --no-auth requests.
+	Owner string
 }
 
 type Server struct {
 	m     *session.Manager
 	terms *term.Manager
+	users *auth.Store
+	pk    *auth.Passkeys
 	opt   Options
 	mux   *http.ServeMux
 	gz    sync.Map // static path -> []byte (gzip)
@@ -56,8 +63,9 @@ type Server struct {
 	build       string
 }
 
-func New(m *session.Manager, terms *term.Manager, opt Options) *Server {
-	s := &Server{m: m, terms: terms, opt: opt, mux: http.NewServeMux(), agentsAvail: map[string]bool{}}
+func New(m *session.Manager, terms *term.Manager, users *auth.Store, opt Options) *Server {
+	s := &Server{m: m, terms: terms, users: users, pk: auth.NewPasskeys(users), opt: opt,
+		mux: http.NewServeMux(), agentsAvail: map[string]bool{}}
 	cfg := m.Config()
 	for name, bin := range map[string]string{"claude": cfg.ClaudeBin, "codex": cfg.CodexBin} {
 		_, err := exec.LookPath(bin)
@@ -69,16 +77,96 @@ func New(m *session.Manager, terms *term.Manager, opt Options) *Server {
 			s.build = hex.EncodeToString(sum[:6])
 		}
 	}
-	terms.OnChange = func() { m.Hub().Broadcast(map[string]any{"t": "terms", "terms": terms.List()}) }
+	terms.OnChange = s.pushTerms
 	m.TermsInUse = terms.InUse
 	if sb := m.Sandbox(); sb != nil {
-		sb.OnChange = func() { m.Hub().Broadcast(map[string]any{"t": "sandbox", "sandbox": sb.Status()}) }
+		sb.OnChange = func() {
+			m.Hub().Each(func(c *session.Client) {
+				u, _ := users.User(c.UserID)
+				c.Enqueue(mustJSON(map[string]any{"t": "sandbox", "sandbox": s.sandboxStatus(u.Admin)}))
+			})
+		}
 	}
+	// Users or groups changed: everyone's view may have changed.
+	users.OnChange = func() { m.Revalidate(s.stateForID) }
 	s.routes()
+	go func() {
+		for range time.Tick(5 * time.Minute) {
+			users.Flush()
+		}
+	}()
 	return s
 }
 
 func (s *Server) Handler() http.Handler { return s }
+
+// ---- identity ----
+
+type ctxKey int
+
+const (
+	userKey ctxKey = iota
+	sessKey
+	legacyKey
+)
+
+const (
+	sessionCookie = "collie_sess"
+	legacyCookie  = "collie_auth"
+)
+
+// identify resolves the signed-in user. Until the first passkey exists the
+// legacy token / Tailscale identity sign the owner in (bootstrap); after
+// that only passkey sessions count.
+func (s *Server) identify(r *http.Request) (u auth.User, sessHash string, legacy bool, ok bool) {
+	if s.opt.NoAuth {
+		u, ok = s.users.User(s.opt.Owner)
+		return u, "", true, ok
+	}
+	if c, err := r.Cookie(sessionCookie); err == nil {
+		if u, h, ok := s.users.SessionUser(c.Value); ok {
+			return u, h, false, true
+		}
+	}
+	if s.users.PasskeysExist() {
+		return auth.User{}, "", false, false
+	}
+	legacyOK := false
+	if r.Header.Get("Tailscale-User-Login") != "" && isLoopback(r.RemoteAddr) && s.fromTrustedProxy(r) {
+		legacyOK = true
+	} else if c, err := r.Cookie(legacyCookie); err == nil && s.tokenOK(c.Value) {
+		legacyOK = true
+	} else if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") && s.tokenOK(strings.TrimPrefix(h, "Bearer ")) {
+		legacyOK = true
+	}
+	if !legacyOK {
+		return auth.User{}, "", false, false
+	}
+	u, ok = s.users.User(s.opt.Owner)
+	return u, "", true, ok
+}
+
+func current(r *http.Request) auth.User {
+	u, _ := r.Context().Value(userKey).(auth.User)
+	return u
+}
+
+func actor(r *http.Request) session.Actor {
+	u := current(r)
+	return session.Actor{ID: u.ID, Name: u.Name, Admin: u.Admin}
+}
+
+// public endpoints (no signed-in user required)
+var publicAPI = map[string]bool{
+	"/api/auth/status":        true,
+	"/api/auth/login/begin":   true,
+	"/api/auth/login/finish":  true,
+	"/api/auth/invite":        true,
+	"/api/auth/invite/begin":  true,
+	"/api/auth/invite/finish": true,
+	"/api/auth/logout":        true,
+	"/api/login":              true,
+}
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -89,20 +177,34 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"img-src 'self' data: blob: https:; connect-src 'self' ws: wss:; font-src 'self' data:; object-src 'none'; "+
 		"base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
 	if strings.HasPrefix(r.URL.Path, "/api/") {
-		// Authentication may come from the Tailscale identity header, which the
-		// proxy attaches to every request from the user's browser — including
-		// ones a malicious site triggers. So every API call (WebSockets too)
-		// must be same-origin, whatever its method.
+		// Every API call (WebSockets too) must be same-origin, whatever its
+		// method: cookies and the Tailscale identity header would otherwise be
+		// usable by any site the user visits.
 		if !sameOrigin(r) {
 			httpError(w, http.StatusForbidden, "cross-origin request rejected")
 			return
 		}
-		if r.URL.Path != "/api/login" && !s.authed(r) {
+		u, h, legacy, ok := s.identify(r)
+		if !ok && !publicAPI[r.URL.Path] {
 			httpError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
+		if ok {
+			ctx := context.WithValue(r.Context(), userKey, u)
+			ctx = context.WithValue(ctx, sessKey, h)
+			ctx = context.WithValue(ctx, legacyKey, legacy)
+			r = r.WithContext(ctx)
+		}
 	}
 	s.mux.ServeHTTP(w, r)
+}
+
+func requireAdmin(w http.ResponseWriter, r *http.Request) bool {
+	if !current(r).Admin {
+		httpError(w, http.StatusForbidden, "admins only")
+		return false
+	}
+	return true
 }
 
 // allowedHosts lists the host[:port] values a same-origin browser request
@@ -144,71 +246,6 @@ func sameOrigin(r *http.Request) bool {
 	return r.Header.Get("Sec-Fetch-Site") != "cross-site"
 }
 
-func (s *Server) routes() {
-	mx := s.mux
-	mx.HandleFunc("POST /api/login", s.login)
-	mx.HandleFunc("POST /api/logout", s.logout)
-	mx.HandleFunc("GET /api/state", s.state)
-	mx.HandleFunc("GET /api/ws", s.ws)
-
-	mx.HandleFunc("POST /api/projects", s.createProject)
-	mx.HandleFunc("DELETE /api/projects/{id}", s.deleteProject)
-	mx.HandleFunc("PATCH /api/projects/{id}", s.patchProject)
-	mx.HandleFunc("POST /api/projects/{id}/stop", s.stopProject)
-	mx.HandleFunc("GET /api/projects/{id}/container", s.projectContainer)
-	mx.HandleFunc("GET /api/projects/{id}/env", s.getProjectEnv)
-	mx.HandleFunc("PUT /api/projects/{id}/env", s.putProjectEnv)
-	mx.HandleFunc("POST /api/sandbox/build", s.buildImage)
-	mx.HandleFunc("GET /api/shared/env", s.getSharedEnv)
-	mx.HandleFunc("PUT /api/shared/env", s.putSharedEnv)
-	mx.HandleFunc("GET /api/projects/{id}/changes", s.projectChanges)
-	mx.HandleFunc("GET /api/dirs", s.dirs)
-
-	mx.HandleFunc("POST /api/sessions", s.createSession)
-	mx.HandleFunc("PATCH /api/sessions/{id}", s.patchSession)
-	mx.HandleFunc("DELETE /api/sessions/{id}", s.deleteSession)
-	mx.HandleFunc("POST /api/sessions/{id}/messages", s.sendMessage)
-	mx.HandleFunc("POST /api/sessions/{id}/interrupt", s.interrupt)
-	mx.HandleFunc("POST /api/sessions/{id}/stop", s.stop)
-	mx.HandleFunc("POST /api/sessions/{id}/asks/{ask}", s.reply)
-	mx.HandleFunc("GET /api/sessions/{id}/items", s.items)
-	mx.HandleFunc("GET /api/sessions/{id}/changes", s.sessionChanges)
-
-	mx.HandleFunc("POST /api/uploads", s.upload)
-	mx.HandleFunc("GET /api/uploads/{name}", s.getUpload)
-
-	mx.HandleFunc("GET /api/terms", s.listTerms)
-	mx.HandleFunc("POST /api/terms", s.createTerm)
-	mx.HandleFunc("DELETE /api/terms/{id}", s.deleteTerm)
-	mx.HandleFunc("GET /api/terms/{id}/ws", s.termWS)
-
-	mx.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { httpError(w, 404, "not found") })
-	mx.HandleFunc("/", s.static)
-}
-
-// ---- auth ----
-
-const cookieName = "collie_auth"
-
-func (s *Server) authed(r *http.Request) bool {
-	if s.opt.NoAuth {
-		return true
-	}
-	// `tailscale serve` proxies from loopback and adds identity headers for
-	// tailnet users (never for Funnel traffic). Any local process could send
-	// that header, so it is only trusted from tailscaled's own socket.
-	if r.Header.Get("Tailscale-User-Login") != "" && isLoopback(r.RemoteAddr) && s.fromTrustedProxy(r) {
-		return true
-	}
-	if c, err := r.Cookie(cookieName); err == nil && s.tokenOK(c.Value) {
-		return true
-	}
-	if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") && s.tokenOK(strings.TrimPrefix(h, "Bearer ")) {
-		return true
-	}
-	return false
-}
-
 func (s *Server) fromTrustedProxy(r *http.Request) bool {
 	local, ok := r.Context().Value(http.LocalAddrContextKey).(net.Addr)
 	if !ok {
@@ -231,51 +268,160 @@ func isLoopback(addr string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-func (s *Server) login(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Token string `json:"token"`
+// relyingParty works out the origin passkeys are bound to for a request.
+func (s *Server) relyingParty(r *http.Request) (auth.RP, error) {
+	if s.opt.PublicURL != "" {
+		u, err := url.Parse(s.opt.PublicURL)
+		if err != nil || u.Host == "" {
+			return auth.RP{}, errors.New("invalid --public-url")
+		}
+		return auth.RP{ID: u.Hostname(), Origin: u.Scheme + "://" + u.Host}, nil
 	}
-	if err := decode(r, &req); err != nil {
-		httpError(w, 400, err.Error())
-		return
+	host := r.Host
+	if isLoopback(r.RemoteAddr) {
+		if fh := r.Header.Get("X-Forwarded-Host"); fh != "" {
+			host = fh
+		}
 	}
-	if !s.opt.NoAuth && !s.tokenOK(strings.TrimSpace(req.Token)) {
-		time.Sleep(500 * time.Millisecond)
-		httpError(w, http.StatusUnauthorized, "invalid token")
-		return
+	hostname := host
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		hostname = h
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name: cookieName, Value: strings.TrimSpace(req.Token), Path: "/", HttpOnly: true,
-		SameSite: http.SameSiteLaxMode, MaxAge: 400 * 24 * 3600,
-		Secure: r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https",
-	})
-	writeJSON(w, map[string]any{"ok": true})
+	https := r.TLS != nil || (isLoopback(r.RemoteAddr) && (r.Header.Get("X-Forwarded-Proto") == "https" || strings.HasSuffix(hostname, ".ts.net")))
+	var rp auth.RP
+	switch {
+	case hostname == "localhost":
+		scheme := "http"
+		if https {
+			scheme = "https"
+		}
+		rp = auth.RP{ID: "localhost", Origin: scheme + "://" + host}
+	case https:
+		rp = auth.RP{ID: hostname, Origin: "https://" + normHost(host)}
+	default:
+		return auth.RP{}, errors.New("passkeys need HTTPS: open Collie through `tailscale serve` (https://<machine>.<tailnet>.ts.net)")
+	}
+	if id, origin := s.users.RP(); id != "" && (id != rp.ID || origin != rp.Origin) {
+		return auth.RP{}, errors.New("passkeys are registered for " + origin + " — open Collie there")
+	}
+	return rp, nil
 }
 
-func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
-	http.SetCookie(w, &http.Cookie{Name: cookieName, Value: "", Path: "/", MaxAge: -1, HttpOnly: true})
-	writeJSON(w, map[string]any{"ok": true})
+func (s *Server) setSessionCookie(w http.ResponseWriter, r *http.Request, secret string) {
+	rp, _ := s.relyingParty(r)
+	http.SetCookie(w, &http.Cookie{
+		Name: sessionCookie, Value: secret, Path: "/", HttpOnly: true,
+		SameSite: http.SameSiteLaxMode, MaxAge: int(auth.SessionTTL.Seconds()),
+		Secure: strings.HasPrefix(rp.Origin, "https://"),
+	})
+	// The legacy token cookie is no longer needed.
+	http.SetCookie(w, &http.Cookie{Name: legacyCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true})
 }
 
 // ---- state & websocket ----
 
-func (s *Server) stateData() map[string]any {
+type userInfo struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	DisplayName string `json:"displayName"`
+	Admin       bool   `json:"admin,omitempty"`
+}
+
+type groupInfo struct {
+	ID      string            `json:"id"`
+	Name    string            `json:"name"`
+	Members map[string]string `json:"members"`
+	MyRole  string            `json:"myRole,omitempty"`
+}
+
+func (s *Server) sandboxStatus(admin bool) any {
+	sb := s.m.Sandbox()
+	if sb == nil {
+		return map[string]any{"available": false}
+	}
+	st := sb.Status()
+	if !admin {
+		st.Log, st.Shared = "", ""
+	}
+	return st
+}
+
+func (s *Server) groupsFor(u auth.User) []groupInfo {
+	out := []groupInfo{}
+	for _, g := range s.users.Groups() {
+		role := g.Members[u.ID]
+		if role == "" && !u.Admin {
+			continue
+		}
+		out = append(out, groupInfo{ID: g.ID, Name: g.Name, Members: g.Members, MyRole: role})
+	}
+	return out
+}
+
+func (s *Server) directory() []userInfo {
+	out := []userInfo{}
+	for _, x := range s.users.Users() {
+		if !x.Disabled {
+			out = append(out, userInfo{ID: x.ID, Name: x.Name, DisplayName: x.DisplayName, Admin: x.Admin})
+		}
+	}
+	return out
+}
+
+func (s *Server) stateFor(u auth.User, legacy bool) map[string]any {
 	cfg := s.m.Config()
+	a := session.Actor{ID: u.ID, Name: u.Name, Admin: u.Admin}
 	return map[string]any{
-		"projects":  s.m.Projects(),
-		"sessions":  s.m.Sessions(),
+		"t":         "state",
+		"me":        userInfo{ID: u.ID, Name: u.Name, DisplayName: u.DisplayName, Admin: u.Admin},
+		"projects":  s.m.VisibleProjects(u.ID),
+		"sessions":  s.m.VisibleSessions(u.ID),
+		"groups":    s.groupsFor(u),
+		"users":     s.directory(),
 		"agentCaps": s.m.AgentCaps(),
-		"modes":     agent.Modes,
+		"modes":     agentModes(),
 		"agents":    s.agentsAvail,
-		"root":      cfg.ProjectRoot,
-		"terms":     s.terms.List(),
-		"sandbox":   s.sandboxStatus(),
+		"root":      s.m.OwnerRoot(a, ""),
+		"rootBase":  cfg.ProjectRoot,
+		"terms":     s.termsFor(u.ID),
+		"sandbox":   s.sandboxStatus(u.Admin),
 		"version":   Version,
 		"build":     s.build,
+		"legacy":    legacy,
+		"passkeys":  len(u.Passkeys),
 	}
 }
 
-func (s *Server) state(w http.ResponseWriter, r *http.Request) { writeJSON(w, s.stateData()) }
+// stateForID is used when re-sending state after users/groups changed;
+// nil means the user is gone (the connection is closed).
+func (s *Server) stateForID(uid string) any {
+	u, ok := s.users.User(uid)
+	if !ok || u.Disabled {
+		return nil
+	}
+	return s.stateFor(u, false)
+}
+
+func (s *Server) state(w http.ResponseWriter, r *http.Request) {
+	legacy, _ := r.Context().Value(legacyKey).(bool)
+	writeJSON(w, s.stateFor(current(r), legacy))
+}
+
+func (s *Server) termsFor(uid string) []term.Info {
+	out := []term.Info{}
+	for _, t := range s.terms.List() {
+		if t.User == uid {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+func (s *Server) pushTerms() {
+	s.m.Hub().Each(func(c *session.Client) {
+		c.Enqueue(mustJSON(map[string]any{"t": "terms", "terms": s.termsFor(c.UserID)}))
+	})
+}
 
 func (s *Server) acceptWS(w http.ResponseWriter, r *http.Request) (*websocket.Conn, error) {
 	// Exact hosts only (sameOrigin has already checked this in ServeHTTP;
@@ -293,7 +439,26 @@ func (s *Server) acceptWS(w http.ResponseWriter, r *http.Request) (*websocket.Co
 
 var globEscape = strings.NewReplacer(`\`, `\\`, `*`, `\*`, `?`, `\?`, `[`, `\[`, `]`, `\]`)
 
+// stillSignedIn re-checks a connection's login (sessions can be revoked and
+// the legacy sign-in stops working once passkeys exist).
+func (s *Server) stillSignedIn(uid, sessHash string, legacy bool) bool {
+	if s.opt.NoAuth {
+		return true
+	}
+	if sessHash != "" {
+		return s.users.SessionValid(sessHash)
+	}
+	if legacy {
+		u, ok := s.users.User(uid)
+		return ok && !u.Disabled && !s.users.PasskeysExist()
+	}
+	return false
+}
+
 func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
+	u := current(r)
+	sessHash, _ := r.Context().Value(sessKey).(string)
+	legacy, _ := r.Context().Value(legacyKey).(bool)
 	c, err := s.acceptWS(w, r)
 	if err != nil {
 		return
@@ -302,21 +467,22 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 	hub := s.m.Hub()
-	client := session.NewClient(func() {
+	client := session.NewClient(u.ID, sessHash, func() {
 		cancel()
-		_ = c.Close(websocket.StatusPolicyViolation, "client too slow")
+		_ = c.Close(websocket.StatusPolicyViolation, "disconnected")
 	})
 	hub.Add(client)
 	defer hub.Remove(client)
 
-	init := s.stateData()
+	init := s.stateFor(u, legacy)
 	init["t"] = "init"
-	b, _ := json.Marshal(init)
-	client.Enqueue(b)
+	client.Init(s.m.VisibleProjects(u.ID), s.m.VisibleSessions(u.ID))
+	client.Enqueue(mustJSON(init))
 
 	go func() {
 		ping := time.NewTicker(25 * time.Second)
 		defer ping.Stop()
+		checks := 0
 		for {
 			select {
 			case <-ctx.Done():
@@ -330,6 +496,11 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 			case <-ping.C:
+				if checks++; checks%2 == 0 && !s.stillSignedIn(u.ID, sessHash, legacy) {
+					_ = c.Close(4401, "signed out")
+					cancel()
+					return
+				}
 				pctx, pcancel := context.WithTimeout(ctx, 15*time.Second)
 				err := c.Ping(pctx)
 				pcancel()
@@ -341,6 +512,7 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
+	a := session.Actor{ID: u.ID, Name: u.Name, Admin: u.Admin}
 	for {
 		_, data, err := c.Read(ctx)
 		if err != nil {
@@ -356,475 +528,24 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 		switch msg.T {
 		case "sub":
 			if err := s.m.Subscribe(client, msg.SID); err != nil {
-				b, _ := json.Marshal(map[string]any{"t": "suberr", "sid": msg.SID, "error": err.Error()})
-				client.Enqueue(b)
+				client.Enqueue(mustJSON(map[string]any{"t": "suberr", "sid": msg.SID, "error": err.Error()}))
 			}
 		case "unsub":
 			s.m.Unsubscribe(client, msg.SID)
 		case "seen":
-			s.m.Seen(msg.SID)
+			s.m.Seen(a, msg.SID)
 		}
 	}
 }
 
-// ---- projects ----
-
-func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
-	var req session.CreateProjectReq
-	if err := decode(r, &req); err != nil {
-		httpError(w, 400, err.Error())
-		return
-	}
-	p, err := s.m.CreateProject(req)
-	if err != nil {
-		httpError(w, 400, err.Error())
-		return
-	}
-	writeJSON(w, p)
-}
-
-func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
-	if err := s.m.DeleteProject(r.PathValue("id")); err != nil {
-		httpError(w, 400, err.Error())
-		return
-	}
-	writeJSON(w, map[string]any{"ok": true})
-}
-
-func (s *Server) projectChanges(w http.ResponseWriter, r *http.Request) {
-	ch, err := s.m.ProjectChanges(r.PathValue("id"))
-	if err != nil {
-		httpError(w, 400, err.Error())
-		return
-	}
-	writeJSON(w, ch)
-}
-
-func (s *Server) dirs(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, map[string]any{"root": s.m.Config().ProjectRoot, "dirs": s.m.SuggestDirs()})
-}
-
-func (s *Server) sandboxStatus() any {
-	sb := s.m.Sandbox()
-	if sb == nil {
-		return map[string]any{"available": false}
-	}
-	return sb.Status()
-}
-
-func (s *Server) patchProject(w http.ResponseWriter, r *http.Request) {
-	var req session.PatchProjectReq
-	if err := decode(r, &req); err != nil {
-		httpError(w, 400, err.Error())
-		return
-	}
-	p, err := s.m.PatchProject(r.PathValue("id"), req)
-	if err != nil {
-		httpError(w, 400, err.Error())
-		return
-	}
-	writeJSON(w, p)
-}
-
-// stopProject stops all agents and shells of a project; with kill, its
-// container is killed immediately (emergency stop).
-func (s *Server) stopProject(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Kill bool `json:"kill"`
-	}
-	if err := decode(r, &req); err != nil {
-		httpError(w, 400, err.Error())
-		return
-	}
-	id := r.PathValue("id")
-	for _, t := range s.terms.List() {
-		if t.Project == id {
-			if tt, ok := s.terms.Get(t.ID); ok {
-				tt.Close()
-			}
-		}
-	}
-	if err := s.m.StopProject(id, req.Kill); err != nil {
-		httpError(w, 500, err.Error())
-		return
-	}
-	writeJSON(w, map[string]any{"ok": true})
-}
-
-func (s *Server) projectContainer(w http.ResponseWriter, r *http.Request) {
-	sb := s.m.Sandbox()
-	if sb == nil {
-		writeJSON(w, map[string]any{})
-		return
-	}
-	writeJSON(w, sb.Inspect(r.PathValue("id")))
-}
-
-func (s *Server) getProjectEnv(w http.ResponseWriter, r *http.Request) {
-	env, err := s.m.ProjectEnv(r.PathValue("id"))
-	if err != nil {
-		httpError(w, 404, err.Error())
-		return
-	}
-	writeJSON(w, map[string]any{"env": env})
-}
-
-func (s *Server) putProjectEnv(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Env string `json:"env"`
-	}
-	if err := decode(r, &req); err != nil {
-		httpError(w, 400, err.Error())
-		return
-	}
-	if err := s.m.SetProjectEnv(r.PathValue("id"), req.Env); err != nil {
-		httpError(w, 400, err.Error())
-		return
-	}
-	writeJSON(w, map[string]any{"ok": true})
-}
-
-func (s *Server) getSharedEnv(w http.ResponseWriter, r *http.Request) {
-	env, err := s.m.SharedEnv()
-	if err != nil {
-		httpError(w, 400, err.Error())
-		return
-	}
-	writeJSON(w, map[string]any{"env": env})
-}
-
-func (s *Server) putSharedEnv(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Env string `json:"env"`
-	}
-	if err := decode(r, &req); err != nil {
-		httpError(w, 400, err.Error())
-		return
-	}
-	if err := s.m.SetSharedEnv(req.Env); err != nil {
-		httpError(w, 400, err.Error())
-		return
-	}
-	writeJSON(w, map[string]any{"ok": true})
-}
-
-func (s *Server) buildImage(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Refresh bool `json:"refresh"`
-	}
-	if err := decode(r, &req); err != nil {
-		httpError(w, 400, err.Error())
-		return
-	}
-	sb := s.m.Sandbox()
-	if sb == nil || !sb.Available() {
-		httpError(w, 400, "podman is not installed on the server")
-		return
-	}
-	if err := sb.Build(req.Refresh); err != nil {
-		httpError(w, 400, err.Error())
-		return
-	}
-	writeJSON(w, sb.Status())
-}
-
-// ---- sessions ----
-
-func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
-	var req session.CreateSessionReq
-	if err := decode(r, &req); err != nil {
-		httpError(w, 400, err.Error())
-		return
-	}
-	sess, err := s.m.CreateSession(req)
-	if err != nil && sess.ID == "" {
-		httpError(w, 400, err.Error())
-		return
-	}
-	writeJSON(w, sess)
-}
-
-func (s *Server) patchSession(w http.ResponseWriter, r *http.Request) {
-	var req session.PatchSessionReq
-	if err := decode(r, &req); err != nil {
-		httpError(w, 400, err.Error())
-		return
-	}
-	sess, err := s.m.Patch(r.PathValue("id"), req)
-	if err != nil {
-		httpError(w, 400, err.Error())
-		return
-	}
-	writeJSON(w, sess)
-}
-
-func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
-	rm := r.URL.Query().Get("worktree") != "keep"
-	if err := s.m.DeleteSession(r.PathValue("id"), rm); err != nil {
-		httpError(w, 400, err.Error())
-		return
-	}
-	writeJSON(w, map[string]any{"ok": true})
-}
-
-func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Text   string   `json:"text"`
-		Images []string `json:"images"`
-	}
-	if err := decode(r, &req); err != nil {
-		httpError(w, 400, err.Error())
-		return
-	}
-	if err := s.m.Send(r.PathValue("id"), req.Text, req.Images); err != nil {
-		httpError(w, 400, err.Error())
-		return
-	}
-	writeJSON(w, map[string]any{"ok": true})
-}
-
-func (s *Server) interrupt(w http.ResponseWriter, r *http.Request) {
-	if err := s.m.Interrupt(r.PathValue("id")); err != nil {
-		httpError(w, 400, err.Error())
-		return
-	}
-	writeJSON(w, map[string]any{"ok": true})
-}
-
-func (s *Server) stop(w http.ResponseWriter, r *http.Request) {
-	if err := s.m.Stop(r.PathValue("id")); err != nil {
-		httpError(w, 400, err.Error())
-		return
-	}
-	writeJSON(w, map[string]any{"ok": true})
-}
-
-func (s *Server) reply(w http.ResponseWriter, r *http.Request) {
-	var req agent.Reply
-	if err := decode(r, &req); err != nil {
-		httpError(w, 400, err.Error())
-		return
-	}
-	if err := s.m.Reply(r.PathValue("id"), r.PathValue("ask"), req); err != nil {
-		httpError(w, 409, err.Error())
-		return
-	}
-	writeJSON(w, map[string]any{"ok": true})
-}
-
-func (s *Server) items(w http.ResponseWriter, r *http.Request) {
-	before, _ := strconv.Atoi(r.URL.Query().Get("before"))
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	if limit <= 0 || limit > 1000 {
-		limit = 300
-	}
-	items, start, err := s.m.Items(r.PathValue("id"), before, limit)
-	if err != nil {
-		httpError(w, 404, err.Error())
-		return
-	}
-	writeJSON(w, map[string]any{"items": items, "start": start})
-}
-
-func (s *Server) sessionChanges(w http.ResponseWriter, r *http.Request) {
-	ch, err := s.m.Changes(r.PathValue("id"))
-	if err != nil {
-		httpError(w, 400, err.Error())
-		return
-	}
-	writeJSON(w, ch)
-}
-
-// ---- uploads ----
-
-func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, 25<<20)
-	f, _, err := r.FormFile("file")
-	if err != nil {
-		httpError(w, 400, "missing file")
-		return
-	}
-	defer f.Close()
-	data, err := io.ReadAll(f)
-	if err != nil {
-		httpError(w, 400, err.Error())
-		return
-	}
-	ext := ""
-	switch http.DetectContentType(data) {
-	case "image/png":
-		ext = ".png"
-	case "image/jpeg":
-		ext = ".jpg"
-	case "image/gif":
-		ext = ".gif"
-	case "image/webp":
-		ext = ".webp"
-	default:
-		httpError(w, 400, "only png, jpeg, gif and webp images are supported")
-		return
-	}
-	name := model.NewID() + ext
-	p, _ := s.m.UploadPath(name)
-	if err := os.WriteFile(p, data, 0o600); err != nil {
-		httpError(w, 500, err.Error())
-		return
-	}
-	writeJSON(w, map[string]any{"id": name, "url": "/api/uploads/" + name})
-}
-
-func (s *Server) getUpload(w http.ResponseWriter, r *http.Request) {
-	p, ok := s.m.UploadPath(r.PathValue("name"))
-	if !ok {
-		httpError(w, 404, "not found")
-		return
-	}
-	w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
-	http.ServeFile(w, r, p)
-}
-
-// ---- terminals ----
-
-func (s *Server) listTerms(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, s.terms.List())
-}
-
-func (s *Server) createTerm(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		ProjectID string `json:"projectId"`
-		SessionID string `json:"sessionId"`
-		Cols      int    `json:"cols"`
-		Rows      int    `json:"rows"`
-	}
-	if err := decode(r, &req); err != nil {
-		httpError(w, 400, err.Error())
-		return
-	}
-	sp := term.Spec{Cols: req.Cols, Rows: req.Rows}
-	projectID := req.ProjectID
-	if req.SessionID != "" {
-		sess, ok := s.m.Store().Session(req.SessionID)
-		if !ok {
-			httpError(w, 404, "session not found")
-			return
-		}
-		sp.Cwd, sp.Title, sp.Owner = sess.Cwd, sess.Title, sess.ID
-		projectID = sess.ProjectID
-	}
-	p, ok := s.m.Store().Project(projectID)
-	if !ok {
-		httpError(w, 404, "project not found")
-		return
-	}
-	if req.SessionID == "" {
-		sp.Cwd, sp.Title, sp.Owner = p.Path, p.Name, p.ID
-	}
-	sp.Project = p.ID
-	if p.Isolated() {
-		// The shell runs inside the project's container, like its agents.
-		if err := s.m.EnsureContainer(p); err != nil {
-			httpError(w, 409, err.Error())
-			return
-		}
-		sp.Argv, sp.Kill = s.m.Sandbox().Exec(p.ID, sp.Cwd, "term-"+sp.ID(), true, nil, []string{"bash", "-l"})
-	}
-	t, err := s.terms.Create(sp)
-	if err != nil {
-		httpError(w, 400, err.Error())
-		return
-	}
-	writeJSON(w, t.Info)
-}
-
-func (s *Server) deleteTerm(w http.ResponseWriter, r *http.Request) {
-	if t, ok := s.terms.Get(r.PathValue("id")); ok {
-		t.Close()
-	}
-	writeJSON(w, map[string]any{"ok": true})
-}
-
-func (s *Server) termWS(w http.ResponseWriter, r *http.Request) {
-	t, ok := s.terms.Get(r.PathValue("id"))
-	if !ok {
-		httpError(w, 404, "terminal not found")
-		return
-	}
-	c, err := s.acceptWS(w, r)
-	if err != nil {
-		return
-	}
-	c.SetReadLimit(1 << 20)
-	ctx, cancel := context.WithCancel(r.Context())
-	defer cancel()
-	replay, ch, detach := t.Attach()
-	defer detach()
-	go func() {
-		defer cancel()
-		if len(replay) > 0 {
-			if err := c.Write(ctx, websocket.MessageBinary, replay); err != nil {
-				return
-			}
-		}
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case b, ok := <-ch:
-				if !ok {
-					select {
-					case <-t.Done():
-						_ = c.Close(4000, "exited")
-					default:
-						_ = c.Close(4001, "resync")
-					}
-					return
-				}
-				// Coalesce whatever else is already queued.
-				var buf bytes.Buffer
-				buf.Write(b)
-			more:
-				for buf.Len() < 256<<10 {
-					select {
-					case nb, ok := <-ch:
-						if !ok {
-							break more
-						}
-						buf.Write(nb)
-					default:
-						break more
-					}
-				}
-				if err := c.Write(ctx, websocket.MessageBinary, buf.Bytes()); err != nil {
-					return
-				}
-			}
-		}
-	}()
-	for {
-		typ, data, err := c.Read(ctx)
-		if err != nil {
-			return
-		}
-		if typ == websocket.MessageBinary {
-			_ = t.Write(data)
-			continue
-		}
-		var msg struct {
-			T string `json:"t"`
-			D string `json:"d"`
-			C int    `json:"c"`
-			R int    `json:"r"`
-		}
-		if json.Unmarshal(data, &msg) != nil {
-			continue
-		}
-		switch msg.T {
-		case "in":
-			_ = t.Write([]byte(msg.D))
-		case "resize":
-			t.Resize(msg.C, msg.R)
-		}
-	}
+func (s *Server) routes() {
+	mx := s.mux
+	mx.HandleFunc("GET /api/state", s.state)
+	mx.HandleFunc("GET /api/ws", s.ws)
+	s.authRoutes()
+	s.apiRoutes()
+	mx.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { httpError(w, 404, "not found") })
+	mx.HandleFunc("/", s.static)
 }
 
 // ---- static ----
@@ -882,6 +603,11 @@ func (s *Server) static(w http.ResponseWriter, r *http.Request) {
 
 // ---- helpers ----
 
+func mustJSON(v any) []byte {
+	b, _ := json.Marshal(v)
+	return b
+}
+
 func decode(r *http.Request, v any) error {
 	if ct := r.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
 		return errors.New("content-type must be application/json")
@@ -902,4 +628,16 @@ func httpError(w http.ResponseWriter, code int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(map[string]any{"error": msg})
+}
+
+// fail maps manager errors to HTTP statuses.
+func fail(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, session.ErrNotFound), errors.Is(err, auth.ErrNotFound):
+		httpError(w, http.StatusNotFound, "not found")
+	case errors.Is(err, session.ErrForbidden):
+		httpError(w, http.StatusForbidden, err.Error())
+	default:
+		httpError(w, http.StatusBadRequest, err.Error())
+	}
 }

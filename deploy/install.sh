@@ -106,8 +106,9 @@ echo "Collie is running.  Logs: journalctl --user -u collie -f"
 if [[ $serve == 1 ]]; then
   dns="$(tailscale status --json 2>/dev/null | sed -n 's/.*"DNSName": *"\([^"]*\)\.".*/\1/p' | head -1)"
   echo "Open on your tailnet:  https://${dns:-<this-machine>.<tailnet>.ts.net}/"
-  echo "(tailnet users are signed in automatically; token for other access: $token)"
+  echo "Then create your passkey there (first setup: you are signed in through Tailscale; token: $token)."
 else
   ts_ip="$(tailscale ip -4 2>/dev/null | head -1 || true)"
   echo "Open:  http://${ts_ip:-<server-ip>}:$port/?token=$token"
+  echo "(passkeys need HTTPS — re-run with --serve to use them)"
 fi

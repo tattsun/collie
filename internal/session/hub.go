@@ -3,20 +3,28 @@ package session
 import (
 	"encoding/json"
 	"sync"
+
+	"github.com/tattsun/collie/internal/model"
 )
 
-// Client is one connected browser (one WebSocket).
+// Client is one connected browser (one WebSocket) of a signed-in user.
 type Client struct {
 	Send chan []byte
+	// UserID is whose view this connection gets; SessionHash identifies the
+	// login session (to disconnect it on sign-out).
+	UserID      string
+	SessionHash string
 
 	mu     sync.Mutex
 	subs   map[string]bool
+	known  map[string]bool // "p:<id>" / "s:<id>" the client has been sent
 	closed bool
 	kill   func()
 }
 
-func NewClient(kill func()) *Client {
-	return &Client{Send: make(chan []byte, 2048), subs: map[string]bool{}, kill: kill}
+func NewClient(userID, sessionHash string, kill func()) *Client {
+	return &Client{Send: make(chan []byte, 2048), UserID: userID, SessionHash: sessionHash,
+		subs: map[string]bool{}, known: map[string]bool{}, kill: kill}
 }
 
 // enqueue never blocks: a client that cannot keep up is disconnected and
@@ -44,6 +52,50 @@ func (c *Client) Close() {
 	c.mu.Unlock()
 }
 
+// Kill disconnects the client.
+func (c *Client) Kill() { go c.kill() }
+
+func (c *Client) know(key string) {
+	c.mu.Lock()
+	c.known[key] = true
+	c.mu.Unlock()
+}
+
+// forget reports whether the client knew key, and forgets it.
+func (c *Client) forget(key string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.known[key] {
+		delete(c.known, key)
+		return true
+	}
+	return false
+}
+
+func (c *Client) unsubscribe(sid string) {
+	c.mu.Lock()
+	delete(c.subs, sid)
+	c.mu.Unlock()
+}
+
+// resetKnown records what a freshly sent state contained.
+func (c *Client) resetKnown(projects []model.Project, sessions []model.Session) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.known = map[string]bool{}
+	for _, p := range projects {
+		c.known["p:"+p.ID] = true
+	}
+	for _, s := range sessions {
+		c.known["s:"+s.ID] = true
+	}
+}
+
+// Init records the state sent on connect.
+func (c *Client) Init(projects []model.Project, sessions []model.Session) {
+	c.resetKnown(projects, sessions)
+}
+
 type Hub struct {
 	mu      sync.RWMutex
 	clients map[*Client]struct{}
@@ -64,41 +116,72 @@ func (h *Hub) Remove(c *Client) {
 	c.Close()
 }
 
+func (h *Hub) each(fn func(c *Client)) {
+	h.mu.RLock()
+	list := make([]*Client, 0, len(h.clients))
+	for c := range h.clients {
+		list = append(list, c)
+	}
+	h.mu.RUnlock()
+	for _, c := range list {
+		fn(c)
+	}
+}
+
+// Each calls fn for every connected client.
+func (h *Hub) Each(fn func(c *Client)) { h.each(fn) }
+
+// Broadcast sends a message to everyone (only for data visible to all).
 func (h *Hub) Broadcast(v any) {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return
 	}
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	for c := range h.clients {
-		c.enqueue(b)
+	h.each(func(c *Client) { c.enqueue(b) })
+}
+
+// BroadcastWhere sends a message to the clients whose user matches.
+func (h *Hub) BroadcastWhere(v any, match func(userID string) bool) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return
 	}
+	h.each(func(c *Client) {
+		if match(c.UserID) {
+			c.enqueue(b)
+		}
+	})
+}
+
+// KillSession disconnects the clients of a login session (or, with
+// hash "", all clients of userID).
+func (h *Hub) KillSession(userID, hash string) {
+	h.each(func(c *Client) {
+		if (hash != "" && c.SessionHash == hash) || (hash == "" && c.UserID == userID) {
+			c.Kill()
+		}
+	})
 }
 
 func (h *Hub) publish(sid string, b []byte) {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	for c := range h.clients {
+	h.each(func(c *Client) {
 		c.mu.Lock()
 		ok := c.subs[sid]
 		c.mu.Unlock()
 		if ok {
 			c.enqueue(b)
 		}
-	}
+	})
 }
 
 func (h *Hub) subscribers(sid string) int {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
 	n := 0
-	for c := range h.clients {
+	h.each(func(c *Client) {
 		c.mu.Lock()
 		if c.subs[sid] {
 			n++
 		}
 		c.mu.Unlock()
-	}
+	})
 	return n
 }

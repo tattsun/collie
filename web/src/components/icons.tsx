@@ -114,3 +114,11 @@ export const ISettings = (p: P) =>
     </>,
     p,
   )
+export const IUsers = (p: P) =>
+  svg(
+    <>
+      <circle cx="9" cy="8" r="3.5" />
+      <path d="M2 20a7 7 0 0 1 14 0M16 4.5a3.5 3.5 0 0 1 0 7M22 20a7 7 0 0 0-4-6.3" />
+    </>,
+    p,
+  )

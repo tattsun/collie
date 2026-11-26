@@ -128,8 +128,6 @@ Done. Next, as the '$user' user:
   mise trust && mise install
   mise run install --serve            # build, install the service, publish via tailscale serve
 
-Agent logins for '$user' (once):
-  mise use -g npm:@openai/codex npm:@anthropic-ai/claude-code
-  codex login --device-auth            # shared with all project containers
-  claude setup-token                   # paste the token into Collie: Project → Settings → Shared environment
+Then open Collie, create your passkey (you become the first admin) and set
+up your Claude / Codex accounts under Account → Agent accounts.
 EOF

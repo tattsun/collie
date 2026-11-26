@@ -15,6 +15,9 @@ Tailscale 経由でスマホや別 PC からプロジェクトを作り、エー
 - **Changes** タブ: git の差分（worktree セッションは分岐元からの全変更＋コミット一覧）
 - **Terminal** タブ: ブラウザから PTY シェル（再接続でスクロールバック復元、スマホ用 Esc/Ctrl/矢印キーバー）
 - **プロジェクトごとの隔離**: 各プロジェクトのエージェントとシェルを専用の rootless Podman コンテナで実行。見えるのはそのプロジェクトだけ、リソース上限つき、LAN/tailnet へは出られない。暴走したら「Kill now」で即停止
+- **マルチユーザー**: パスキーでログイン、招待リンクでユーザー追加、管理者は複数可。各自のプロジェクト・会話は本人にしか見えず、エージェントは各自の Claude / Codex アカウントで動く
+- **グループ**: グループのプロジェクトはメンバー全員で共有。セッションもグループに共有でき、メンバーが一緒に見て指示・承認できる
+- **skill・MCP**: 全体共通（管理者）と個人用の 2 層。UI から編集でき、Playwright MCP は最初から有効
 - 画像添付（スマホのスクショ等。大きい画像は端末側で縮小してから送信）
 - 要対応セッションのバッジ・通知（HTTPS 時）、PWA としてホーム画面に追加可能
 
@@ -74,19 +77,25 @@ curl https://mise.run | sh            # ~/.bashrc で mise を有効化
 git clone <this repo> && cd collie
 mise trust && mise install
 mise run install --serve              # ビルド → エージェント用イメージ作成 → サービス登録 → tailscale serve で HTTPS 公開（推奨）
-# （--serve なしなら :7878 でトークン認証）
 ```
 
-エージェントのログイン（`collie` ユーザーで一度だけ）:
+### 3. 最初の管理者になる
 
-```bash
-mise use -g npm:@openai/codex npm:@anthropic-ai/claude-code
-codex login --device-auth             # 全プロジェクトのコンテナで共有されます
-claude setup-token                    # 表示されたトークンを Collie の Project → Settings → Shared environment に
-                                      # CLAUDE_CODE_OAUTH_TOKEN=… として保存
-```
+1. 表示された `https://<マシン名>.<tailnet>.ts.net/` を開く（初回だけ Tailscale のログイン、またはトークン `collie --print-token` で入れます）
+2. 画面上部の **Create passkey** でパスキーを作成 → あなたが最初の管理者になり、以後は**パスキーでしかログインできなく**なります（トークンも Tailscale だけのログインも無効）
+3. Account → Agent accounts で自分の Claude / Codex を設定（下記）。他の人は Admin → Users → **Invite** のリンクで招待
 
-- サービスはそのユーザーとして動くので、`claude` / `codex` のログイン状態や git の認証情報をそのまま使います
+### エージェントのアカウント（ユーザーごと）
+
+エージェントは使う人それぞれのアカウントで動きます（課金も各自）。Account → **Agent accounts** から:
+
+- **Claude Code**: 任意のプロジェクトの Terminal で `claude setup-token` → 表示されたトークンを貼り付けて保存
+- **Codex**: 任意のプロジェクトの Terminal で `codex login --device-auth`（その人の全プロジェクトで有効）
+- **GitHub**: 自分の環境変数に `GH_TOKEN=…` を入れると、push と private リポジトリの clone に使われます
+
+（ホスト実行のプロジェクト＝管理者のみ、はサーバユーザーの `claude` / `codex` / git 認証を使います）
+
+- サービスは `collie` ユーザーとして動きます
 - インストール時の `PATH` をユニットに書き込みます。mise を使っていれば shims を先頭に入れるので、mise で入れた CLI はアップグレード後も見つかり、各プロジェクトの `mise.toml` のバージョンもエージェントからそのまま使われます。PATH を変えたら再実行
 - `loginctl enable-linger` でログアウト後・再起動後も動き続けます
 - ログ: `journalctl --user -u collie -f`
@@ -108,26 +117,45 @@ mise run install --serve      # 初回と同じオプションで（--serve な�
 
 `https://<マシン名>.<tailnet>.ts.net/` で HTTPS になり、
 
-- tailnet のユーザーは **トークン入力なし**で入れる（Tailscale のアイデンティティヘッダで認証。Funnel 経由のアクセスは対象外）
+- **パスキーが使える**（パスキーは HTTPS のドメインに紐づくため、`http://100.x.x.x` では使えません）
 - ブラウザ通知・PWA・クリップボードなど HTTPS 必須の機能が使える
+- 最初のパスキーを作るまでは、tailnet のユーザーはトークンなしで入れます（初期設定用）
 
 初回は `sudo tailscale set --operator=$USER` が必要な場合があります。
 
 ## 使い方
 
-1. **Projects → New project**
-   - *New folder*: `~/projects/<name>` を作成（git init 付き）
-   - *Clone repo*: サーバ上で `git clone`（サーバユーザーの SSH 鍵/認証を使用）
-   - *Existing folder*: サーバ上の既存ディレクトリを登録
+1. **Projects → New project**（Owner で「自分」か「グループ」を選択）
+   - *New folder*: `~/projects/users/<ユーザー名>/<name>`（グループなら `~/projects/groups/<グループ名>/<name>`）を作成（git init 付き）
+   - *Clone repo*: サーバ上で `git clone`。管理者はサーバユーザーの認証で、メンバーは `https://` のみ（private な GitHub は自分の `GH_TOKEN`）
+   - *Existing folder*（管理者のみ）: サーバ上の既存ディレクトリを登録
 2. **New** → やりたいことを書き、プロジェクト・エージェント（Claude Code / Codex）・権限モード・モデルを選んで開始
 3. 一覧の **Needs you** に承認待ちが上がってくるので、タップして Allow / Deny
 4. **Changes** で差分を確認、必要なら **Terminal** で `git push` など
+
+## ユーザーとグループ
+
+| | 管理者 | メンバー |
+|---|---|---|
+| 自分のプロジェクト・セッション | ✓ | ✓ |
+| 他人の個人プロジェクト・会話を見る | ✗ | ✗ |
+| グループを作る・メンバー管理（グループの owner として） | ✓ | ✓ |
+| ユーザー招待・管理者の付与・無効化・削除 | ✓ | ✗ |
+| 全コンテナの使用量確認・強制停止 | ✓（中身は見えない） | ✗ |
+| 全体共通の skill・MCP・環境変数 | ✓ | ✗ |
+| 既存フォルダの登録・ホスト実行・リソース上限の変更 | ✓ | ✗ |
+
+- **パスキー**: 端末ごとに追加可能。別の端末を追加するときは Account → **Add another device** で 1 回限りのリンクを発行。ログインは 30 日有効（使うたびに延長）
+- **パスキーを全部なくしたら**: 管理者が Admin → Users → **Passkey recovery link**。管理者自身ならサーバで `collie link`（`--user NAME` で他の人も）
+- **グループのプロジェクト**: メンバー全員がファイル・Changes を共有。各メンバーのエージェントは**自分専用のコンテナ**で自分のアカウントで動き、Claude のプロジェクトメモリーはメンバー間で共有
+- **共有セッション**: グループのプロジェクトで作ったセッションは既定でグループに共有（作成時やメニューで「Make private」可）。メンバーは会話を見て、指示・承認・中断ができます。エージェントは**セッションを始めた人のアカウント**で動きます（指示した人ではありません）。始めた人がグループを抜けると読み取り専用になります
+- ターミナルは開いた本人にしか見えません
 
 ## プロジェクトの隔離（コンテナ実行）
 
 新しいプロジェクトは既定で **Isolated container** になります（Project → Settings で切替可）。
 
-- プロジェクトごとに rootless Podman コンテナを1つ立て、そのプロジェクトのエージェント・ターミナルはすべてその中で動きます
+- (プロジェクト, ユーザー) ごとに rootless Podman コンテナを1つ立て、その人のエージェント・ターミナルはすべてその中で動きます
 - マウントされるのは **そのプロジェクトのディレクトリと、その worktree だけ**。Collie のデータ（トークン等）や他のプロジェクトは見えません。ファイルはサーバユーザーの所有のまま
 - メモリ / CPU / プロセス数の上限（既定: 4GB / 半分のコア / 4096。プロジェクトごとに変更可）。上限の適用には systemd のユーザーセッションが必要です（`setup-host.sh` + `install.sh` 構成なら OK。そうでない環境では UI に警告が出ます）
 - 暴走したら Project → Settings の **Kill now**（セッション画面のメニューからも可）。コンテナごと即停止し、会話は次のメッセージで再開できます
@@ -135,23 +163,27 @@ mise run install --serve      # 初回と同じオプションで（--serve な�
 - 箱の中なので、Claude の **Bypass** や Codex の **Full access** で承認なしに任せる運用もしやすくなります
 - エージェント用イメージ（Ubuntu 26.04 + Claude Code + Codex + mise + gh + Playwright/Chromium、約 3.4GB）は初回に自動ビルドされます。エージェントの更新はイメージ詳細の「Rebuild」または `collie --build-image`
 
-### 共通プロファイル（全プロジェクト共通の設定）
+### skill・MCP・指示（全体共通 + 個人）
 
-ホストの `~/.claude` は渡しません（認証情報と全プロジェクトの会話履歴が入っているため）。代わりに `~/.collie/shared/` を全コンテナに読み取り専用で配ります:
+ホストの `~/.claude` は渡しません（認証情報と全プロジェクトの会話履歴が入っているため）。代わりに 2 層のプロファイルを使います:
 
-```
-~/.collie/shared/
-  claude/CLAUDE.md  claude/skills/  claude/agents/  claude/commands/
-  claude/mcp.json      ← 初期状態で Playwright MCP が有効
-  claude/settings.json
-  codex/AGENTS.md  codex/skills/  codex/config.toml   ← 同じく Playwright MCP
-  gitconfig            ← コンテナ内の ~/.gitconfig
-  env                  ← 全コンテナに渡す環境変数（CLAUDE_CODE_OAUTH_TOKEN など。UI からも編集可）
-```
+- **全体共通**（管理者が Admin → Global skills & MCP で編集、実体は `~/.collie/shared/`）
+- **個人**（各自が Account → My skills & MCP で編集）
 
-設定の優先順位は「共通プロファイル < リポジトリ内の `.claude/`・`.mcp.json`・`AGENTS.md`」。プロジェクト専用の秘密情報（そのリポジトリだけの `GH_TOKEN` など）は Project → Settings → Secrets に。
+エージェント起動時に「全体 + 個人」を合成してコンテナへ読み取り専用で渡します:
 
-**メモリー（auto memory）**: エージェントのホームはプロジェクト単位なので、同じプロジェクトの全セッション（worktree セッションを含む）でメモリーが共有されます。既存プロジェクトをコンテナに切り替えると、ホスト側の Claude Code のメモリーと会話は初回に引き継がれます（Codex の会話は引き継がれません）。
+| ファイル | 合成のしかた |
+|---|---|
+| `claude/CLAUDE.md`・`codex/AGENTS.md` | 全体の後に個人を追記 |
+| `claude/skills/`・`agents/`・`commands/`・`codex/skills/` | 和集合（同名なら個人が優先） |
+| `claude/mcp.json` | MCP サーバを合成（同名なら個人が優先）。初期状態で Playwright MCP が有効 |
+| `claude/settings.json` | ディープマージ（個人が優先、配列は結合） |
+| `codex/config.toml` | テーブル単位で合成（個人が優先） |
+| `gitconfig` | 全体の後に個人（個人の `[user]` でコミット作者が各自になります） |
+
+その上に、リポジトリ内の `.claude/`・`.mcp.json`・`AGENTS.md` が効きます。環境変数は「全体 < 個人 < プロジェクト」の順で上書き。
+
+**メモリー（auto memory）**: 同じプロジェクトの自分のセッション（worktree セッションを含む）で共有されます。グループのプロジェクトではメンバー全員で共有されます。既存プロジェクトをコンテナに切り替えると、最初の管理者（サーバの持ち主）だけはホスト側の Claude Code のメモリーと会話が引き継がれます。
 
 ### 権限モード
 
@@ -186,13 +218,26 @@ mise run install --serve      # 初回と同じオプションで（--serve な�
 | `--container-pids` | | `4096` | コンテナのプロセス数上限の既定値 |
 | `--trusted-proxy-uid` | | `0` | Tailscale のアイデンティティヘッダを信用するプロキシの uid（tailscaled = root） |
 | `--build-image` | | | エージェント用イメージをビルド（エージェント更新）して終了 |
+| `--public-url` | `COLLIE_PUBLIC_URL` | 最初の登録時のホスト | パスキーを紐づける URL（マシン名を変えたときなど） |
+
+サブコマンド（サーバ上で `collie` ユーザーとして実行）:
+
+| コマンド | |
+|---|---|
+| `collie link [--user NAME]` | パスキーを追加する 1 回限りのリンク（30 分有効）を表示。パスキーを失くしたときの復旧用 |
+| `collie users` | ユーザー一覧 |
+| `collie make-admin NAME` | 管理者にする |
 
 ## セキュリティ
 
 Collie はブラウザから**サーバ上で任意のコマンドを実行できる**ツールです。
 
 - 公開インターネットには出さないでください（Tailscale / LAN 内での利用を想定）
-- 既定でトークン認証が有効です。`--no-auth` は信頼できる環境でのみ
+- ログインはパスキーのみ（最初のパスキーができるまでは、初期設定用にトークン / Tailscale のログインで入れます）。`--no-auth` は信頼できる環境でのみ
+- 権限チェックはすべてサーバ側で行い、見えないものは「存在しない」として扱います（管理者も他人の会話は見られません）
+- グループのプロジェクトは必ずコンテナ実行。ホスト実行のプロジェクトのエージェントを動かせる（指示・承認できる）のは管理者だけです
+- プロジェクトのフォルダは互いに入れ子にできません（コンテナから他のプロジェクトが見えないように）
+- メンバーはサーバ上の任意フォルダの登録・ホスト実行ができず、clone も `https://` のみ（サーバユーザーの SSH 鍵や git 認証は使われません）
 - API と WebSocket は同一オリジンからのリクエストのみ受け付けます（他サイトからのクロスサイト操作・WebSocket 乗っ取りを拒否）
 - `tailscale serve` のアイデンティティヘッダは、接続元ソケットの所有者が tailscaled（root）の場合だけ信用します。同じマシン上の他プロセス（エージェントを含む）がヘッダを偽装しても通りません
 - 隔離プロジェクトのコンテナは `--cap-drop all`・`no-new-privileges` で、ホストへの近道（loopback・`host.containers.internal`）を塞いで起動します。さらに `setup-host.sh` のファイアウォールで、サーバ自身のアドレス（LAN・tailnet・グローバル IP）と Collie のポートへの接続を拒否します
@@ -206,10 +251,13 @@ Collie はブラウザから**サーバ上で任意のコマンドを実行で�
   state.json          プロジェクト・セッション
   sessions/<id>.jsonl 各セッションのタイムライン
   uploads/            添付画像
+  auth.json           ユーザー・パスキー・ログインセッション・招待・グループ
   worktrees/<project>/<session>/  Isolated worktree のチェックアウト
-  homes/<project>/    隔離プロジェクトのコンテナ内ホーム（~/.claude・~/.codex・メモリー・会話）
+  homes/<project>/<user>/  コンテナ内ホーム（~/.claude・会話）
   homes/<project>.env プロジェクト専用の環境変数（秘密情報）
-  shared/             共通プロファイル
+  users/<user>/       個人のプロファイル・合成済みプロファイル・環境変数・Codex（~/.codex）
+  projmem/<project>/  グループプロジェクトで共有する Claude のメモリー
+  shared/             全体共通のプロファイル・環境変数
   caps.json           エージェントのモデル一覧キャッシュ
   token               アクセストークン
 ```
@@ -233,7 +281,8 @@ internal/store/          state.json / JSONL 永続化
 internal/server/         HTTP API・WebSocket・認証・静的配信
 internal/term/           PTY ターミナル
 internal/gitutil/        worktree・diff
-internal/sandbox/        プロジェクト単位の Podman コンテナ・エージェント用イメージ（image/Containerfile）
+internal/sandbox/        (プロジェクト, ユーザー) 単位の Podman コンテナ・プロファイル合成・エージェント用イメージ（image/Containerfile）
+internal/auth/           ユーザー・パスキー（WebAuthn）・ログインセッション・招待・グループ
 deploy/setup-host.sh     ホスト準備（専用ユーザー・podman・nftables）
 web/                     Preact + Vite フロントエンド
 deploy/install.sh        systemd ユーザーサービス導入

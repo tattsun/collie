@@ -213,9 +213,13 @@ func (r *Runtime) startDriver(flip bool) (agent.Driver, error) {
 
 	proj, _ := r.m.st.Project(sess.ProjectID)
 	isolated := proj.Isolated()
+	if !isolated && !r.m.isAdmin(sess.Owner) {
+		// Defense in depth: a non-admin's agent never runs outside a container.
+		return nil, setupError{errHostOnly}
+	}
 	if isolated {
 		r.m.setStatus(r.id, model.StatusStarting)
-		if err := r.m.ensureContainer(proj, func() {
+		if err := r.m.ensureContainer(proj, sess.Owner, func() {
 			r.sinkPut(&model.Item{ID: model.NewID(), Kind: model.KindNotice, Done: true,
 				Text: "Building the agent container image (first time only — this takes a few minutes)…"})
 		}); err != nil {
@@ -232,8 +236,9 @@ func (r *Runtime) startDriver(flip bool) (agent.Driver, error) {
 	if isolated {
 		sb := r.m.sb
 		execID := fmt.Sprintf("%s-%d", r.id, gen)
+		owner := sess.Owner
 		cfg.Wrap = func(argv []string, dir string) ([]string, func(string)) {
-			return sb.Exec(proj.ID, dir, execID, false, nil, argv)
+			return sb.Exec(proj.ID, owner, dir, execID, false, nil, argv)
 		}
 	}
 	var d agent.Driver
@@ -241,7 +246,7 @@ func (r *Runtime) startDriver(flip bool) (agent.Driver, error) {
 		cfg.Bin = r.m.cfg.CodexBin
 		if isolated {
 			cfg.Bin = "codex"
-			if err := r.m.sb.PrepareCodex(proj.ID); err != nil {
+			if err := r.m.sb.PrepareCodex(sess.Owner); err != nil {
 				log.Printf("session %s: prepare codex config: %v", r.id, err)
 			}
 		}
@@ -250,7 +255,7 @@ func (r *Runtime) startDriver(flip bool) (agent.Driver, error) {
 		cfg.Bin = r.m.cfg.ClaudeBin
 		if isolated {
 			cfg.Bin = "claude"
-			cfg.ExtraArgs = r.m.sb.ClaudeArgs()
+			cfg.ExtraArgs = r.m.sb.ClaudeArgs(sess.Owner)
 		}
 		d = agent.NewClaude(cfg, s)
 	}

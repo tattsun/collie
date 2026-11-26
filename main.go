@@ -20,6 +20,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/tattsun/collie/internal/auth"
 	"github.com/tattsun/collie/internal/sandbox"
 	"github.com/tattsun/collie/internal/server"
 	"github.com/tattsun/collie/internal/session"
@@ -36,6 +37,10 @@ func env(k, def string) string {
 }
 
 func main() {
+	// Subcommands for the server owner (run on the server, as Collie's user).
+	if len(os.Args) > 1 && !strings.HasPrefix(os.Args[1], "-") {
+		os.Exit(subcommand(os.Args[1], os.Args[2:]))
+	}
 	home, _ := os.UserHomeDir()
 	addr := flag.String("addr", env("COLLIE_ADDR", ":7878"), "listen address (e.g. 127.0.0.1:7878 behind `tailscale serve`)")
 	dataDir := flag.String("data", env("COLLIE_DATA", filepath.Join(home, ".collie")), "data directory")
@@ -53,6 +58,8 @@ func main() {
 	showToken := flag.Bool("print-token", false, "print the access token and exit")
 	loginURL := flag.Bool("login-url", false, "print sign-in links (containing the access token) and exit")
 	buildImage := flag.Bool("build-image", false, "build (or update) the agent container image and exit")
+	publicURL := flag.String("public-url", os.Getenv("COLLIE_PUBLIC_URL"), "URL users open (passkeys are bound to it; default: the host of the first registration)")
+	flag.Usage = usage
 	flag.Parse()
 
 	st, err := store.Open(*dataDir)
@@ -99,12 +106,25 @@ func main() {
 		}
 		return
 	}
+	users, err := auth.Open(*dataDir)
+	if err != nil {
+		log.Fatalf("users: %v", err)
+	}
+	owner, err := users.EnsureBootstrapAdmin(os.Getenv("USER"))
+	if err != nil {
+		log.Fatalf("users: %v", err)
+	}
+	if ou, ok := users.User(owner); ok {
+		_ = sb.SeedPersonal(ou.ID, ou.Name, ou.DisplayName)
+	}
 	hub := session.NewHub()
 	mgr := session.NewManager(session.Config{
-		ClaudeBin: *claudeBin, CodexBin: *codexBin, ProjectRoot: absRoot, IdleTimeout: *idle,
+		ClaudeBin: *claudeBin, CodexBin: *codexBin, ProjectRoot: absRoot, IdleTimeout: *idle, HostOwner: owner,
 	}, st, hub, sb)
+	mgr.SetAccess(users)
 	terms := term.NewManager()
-	srv := server.New(mgr, terms, server.Options{Token: *token, NoAuth: *noAuth, Web: web.FS(), ProxyUID: *proxyUID})
+	srv := server.New(mgr, terms, users, server.Options{Token: *token, NoAuth: *noAuth, Web: web.FS(),
+		ProxyUID: *proxyUID, PublicURL: *publicURL, Owner: owner})
 	if web.FS() == nil {
 		log.Printf("warning: web UI is not built (run `make`); only the API is available")
 	}
@@ -119,11 +139,18 @@ func main() {
 	// persistent log (e.g. the systemd journal).
 	interactive := isTerminal(os.Stderr)
 	log.Printf("collie %s listening on %s", server.Version, ln.Addr())
-	for _, u := range signInURLs(ln.Addr().(*net.TCPAddr), *token, *noAuth, interactive) {
-		log.Printf("  open: %s", u)
-	}
-	if !interactive && !*noAuth {
-		log.Printf("  sign in with the token from `collie --print-token` (or get links with `collie --login-url`)")
+	if users.PasskeysExist() {
+		for _, u := range signInURLs(ln.Addr().(*net.TCPAddr), "", true, false) {
+			log.Printf("  open: %s", u)
+		}
+		log.Printf("  sign in with a passkey (lost them? run `collie link` on the server)")
+	} else {
+		for _, u := range signInURLs(ln.Addr().(*net.TCPAddr), *token, *noAuth, interactive) {
+			log.Printf("  open: %s", u)
+		}
+		if !interactive && !*noAuth {
+			log.Printf("  sign in with the token from `collie --print-token` (or get links with `collie --login-url`), then add a passkey")
+		}
 	}
 	log.Printf("projects root: %s · data: %s", absRoot, *dataDir)
 
@@ -142,6 +169,7 @@ func main() {
 	cancel()
 	terms.CloseAll()
 	mgr.Shutdown()
+	users.Flush()
 }
 
 func loadToken(path string) (string, error) {
@@ -208,4 +236,97 @@ func signInURLs(a *net.TCPAddr, token string, noAuth, withToken bool) []string {
 func isTailscale(ip net.IP) bool {
 	_, cgnat, _ := net.ParseCIDR("100.64.0.0/10")
 	return cgnat.Contains(ip)
+}
+
+func usage() {
+	fmt.Fprintf(os.Stderr, `Usage:
+  collie [flags]                 run the server
+  collie link [--user NAME]      print a one-time link to add a passkey (recovery)
+  collie users                   list users
+  collie make-admin NAME         make a user an admin
+
+Flags:
+`)
+	flag.PrintDefaults()
+}
+
+// subcommand implements the owner's recovery tools. They edit
+// <data>/auth.json directly (under its file lock); a running server picks
+// the change up immediately.
+func subcommand(name string, args []string) int {
+	home, _ := os.UserHomeDir()
+	fs := flag.NewFlagSet(name, flag.ExitOnError)
+	dataDir := fs.String("data", env("COLLIE_DATA", filepath.Join(home, ".collie")), "data directory")
+	user := fs.String("user", "", "user name (default: the first admin)")
+	_ = fs.Parse(args)
+	users, err := auth.Open(*dataDir)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	switch name {
+	case "users":
+		for _, u := range users.Users() {
+			role := "member"
+			if u.Admin {
+				role = "admin"
+			}
+			if u.Disabled {
+				role += ", disabled"
+			}
+			fmt.Printf("%-20s %-24s %-16s %d passkey(s)\n", u.Name, u.DisplayName, role, len(u.Passkeys))
+		}
+		return 0
+	case "link":
+		var target auth.User
+		if *user != "" {
+			u, ok := users.UserByName(*user)
+			if !ok {
+				fmt.Fprintf(os.Stderr, "no user %q\n", *user)
+				return 1
+			}
+			target = u
+		} else {
+			for _, u := range users.Users() {
+				if u.Admin && !u.Disabled {
+					target = u
+					break
+				}
+			}
+		}
+		if target.ID == "" {
+			fmt.Fprintln(os.Stderr, "no users yet: start the server first")
+			return 1
+		}
+		secret, err := users.CreateInvite(auth.Invite{UserID: target.ID, Note: "cli recovery"}, auth.LinkTTL)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		_, origin := users.RP()
+		if origin == "" {
+			origin = "https://<your collie address>"
+		}
+		fmt.Printf("Open within %d minutes to add a passkey for %s:\n\n  %s/?invite=%s\n\n", int(auth.LinkTTL.Minutes()), target.Name, origin, secret)
+		return 0
+	case "make-admin":
+		if fs.NArg() != 1 {
+			fmt.Fprintln(os.Stderr, "usage: collie make-admin NAME")
+			return 2
+		}
+		u, ok := users.UserByName(fs.Arg(0))
+		if !ok {
+			fmt.Fprintf(os.Stderr, "no user %q\n", fs.Arg(0))
+			return 1
+		}
+		yes := true
+		if _, err := users.UpdateUser(u.ID, nil, &yes, nil); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		fmt.Printf("%s is now an admin\n", u.Name)
+		return 0
+	}
+	usage()
+	return 2
 }

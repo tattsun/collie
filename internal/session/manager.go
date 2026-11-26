@@ -30,6 +30,9 @@ type Config struct {
 	CodexBin    string
 	ProjectRoot string
 	IdleTimeout time.Duration
+	// HostOwner is the user who owns the server user's own agent state (the
+	// first admin); legacy data is assigned to them.
+	HostOwner string
 }
 
 type Manager struct {
@@ -37,12 +40,16 @@ type Manager struct {
 	st  *store.Store
 	hub *Hub
 	sb  *sandbox.Manager
+	acc Access
+	// hostOwner owns the server user's own agent state (the first admin);
+	// only their isolated homes inherit it.
+	hostOwner string
 
-	// TermsInUse reports whether a project has open terminals (set by the
-	// server, which owns terminals).
-	TermsInUse func(projectID string) bool
+	// TermsInUse reports whether a user has terminals open in a project
+	// (set by the server, which owns terminals).
+	TermsInUse func(projectID, userID string) bool
 	ctrMu      sync.Mutex
-	ctrActive  map[string]time.Time // project containers started by this process
+	ctrActive  map[string]time.Time // "project/user" containers started by this process
 
 	mu   sync.Mutex
 	rts  map[string]*Runtime
@@ -52,7 +59,10 @@ type Manager struct {
 
 func NewManager(cfg Config, st *store.Store, hub *Hub, sb *sandbox.Manager) *Manager {
 	m := &Manager{cfg: cfg, st: st, hub: hub, sb: sb, rts: map[string]*Runtime{}, caps: map[string]model.Caps{},
-		ctrActive: map[string]time.Time{}}
+		ctrActive: map[string]time.Time{}, hostOwner: cfg.HostOwner}
+	if cfg.HostOwner != "" {
+		m.AdoptOrphans(cfg.HostOwner)
+	}
 	// Nothing is running after a restart.
 	for _, s := range st.Sessions() {
 		if s.Status != model.StatusStopped && s.Status != model.StatusError {
@@ -79,19 +89,18 @@ func (m *Manager) stopStaleContainers() {
 	if m.sb == nil || !m.sb.Available() {
 		return
 	}
-	for _, p := range m.st.Projects() {
-		if p.Isolated() {
-			if info := m.sb.Inspect(p.ID); info.Running {
-				_ = m.sb.Stop(p.ID, false)
-			}
+	m.sb.MigrateLayout(m.hostOwner)
+	for _, c := range m.sb.All() {
+		if c.Running {
+			_ = m.sb.Stop(c.ProjectID, c.UserID, false)
 		}
 	}
 }
 
-// ensureContainer makes sure the project's container (and its image) is up.
-// The container is only re-created for configuration changes when nothing
-// else in the project is using it.
-func (m *Manager) ensureContainer(p model.Project, onBuild func()) error {
+// ensureContainer makes sure the user's container for the project (and
+// the image) is up. The container is only re-created for configuration
+// changes when nothing in it is in use.
+func (m *Manager) ensureContainer(p model.Project, uid string, onBuild func()) error {
 	if m.sb == nil || !m.sb.Available() {
 		return errors.New("this project runs isolated, but podman is not installed on the server")
 	}
@@ -104,18 +113,19 @@ func (m *Manager) ensureContainer(p model.Project, onBuild func()) error {
 			dirs = append(dirs, s.Cwd)
 		}
 	}
-	if err := m.sb.Ensure(p, !m.projectBusy(p.ID), dirs); err != nil {
+	sp := sandbox.Spec{Project: p, UserID: uid, SessionDirs: dirs, MigrateHostState: uid == m.hostOwner && m.hostOwner != ""}
+	if err := m.sb.Ensure(sp, !m.projectBusy(p.ID, uid)); err != nil {
 		return fmt.Errorf("start project container: %w", err)
 	}
 	m.ctrMu.Lock()
-	m.ctrActive[p.ID] = time.Now()
+	m.ctrActive[p.ID+"/"+uid] = time.Now()
 	m.ctrMu.Unlock()
 	return nil
 }
 
-// EnsureContainer is ensureContainer for callers outside the session
-// package (terminals); it does not wait for an image build.
-func (m *Manager) EnsureContainer(p model.Project) error {
+// EnsureContainer is ensureContainer for terminals; it does not wait for
+// an image build.
+func (m *Manager) EnsureContainer(p model.Project, uid string) error {
 	if m.sb == nil || !m.sb.Available() {
 		return errors.New("podman is not installed on the server")
 	}
@@ -123,13 +133,13 @@ func (m *Manager) EnsureContainer(p model.Project) error {
 		_ = m.sb.Build(false)
 		return errors.New("the agent container image is being built (first run, a few minutes) — try again shortly")
 	}
-	return m.ensureContainer(p, nil)
+	return m.ensureContainer(p, uid, nil)
 }
 
-// projectBusy reports whether any agent process or terminal of the project
-// is running.
-func (m *Manager) projectBusy(projectID string) bool {
-	if m.TermsInUse != nil && m.TermsInUse(projectID) {
+// projectBusy reports whether any of the user's agent processes or
+// terminals in the project is running.
+func (m *Manager) projectBusy(projectID, uid string) bool {
+	if m.TermsInUse != nil && m.TermsInUse(projectID, uid) {
 		return true
 	}
 	m.mu.Lock()
@@ -140,7 +150,7 @@ func (m *Manager) projectBusy(projectID string) bool {
 	m.mu.Unlock()
 	for _, r := range rts {
 		s, ok := m.st.Session(r.id)
-		if !ok || s.ProjectID != projectID {
+		if !ok || s.ProjectID != projectID || s.Owner != uid {
 			continue
 		}
 		if r.driver() != nil {
@@ -166,13 +176,21 @@ func (m *Manager) projectRuntimes(projectID string) []*Runtime {
 	return out
 }
 
-// StopProject stops every agent of the project. With kill, an isolated
-// project's container is killed outright (the emergency stop); otherwise
-// agents are asked to exit and the container is stopped.
-func (m *Manager) StopProject(projectID string, kill bool) error {
+// StopProject stops every agent of the project (all users). With kill, an
+// isolated project's containers are killed outright (the emergency stop).
+// Any member of the project — or an admin — may do this.
+func (m *Manager) StopProject(a Actor, projectID string, kill bool) error {
+	p, ok := m.st.Project(projectID)
+	if !ok || (!m.ProjectVisible(a.ID, p) && !a.Admin) {
+		return ErrNotFound
+	}
+	return m.stopProject(projectID, kill)
+}
+
+func (m *Manager) stopProject(projectID string, kill bool) error {
 	p, ok := m.st.Project(projectID)
 	if !ok {
-		return errors.New("project not found")
+		return ErrNotFound
 	}
 	rts := m.projectRuntimes(projectID)
 	for _, r := range rts {
@@ -181,10 +199,8 @@ func (m *Manager) StopProject(projectID string, kill bool) error {
 		r.mu.Unlock()
 	}
 	var err error
-	if p.Isolated() && m.sb != nil {
-		if kill {
-			err = m.sb.Stop(projectID, true)
-		}
+	if p.Isolated() && m.sb != nil && kill {
+		err = m.sb.Stop(projectID, "", true)
 	}
 	var wg sync.WaitGroup
 	for _, r := range rts {
@@ -193,12 +209,31 @@ func (m *Manager) StopProject(projectID string, kill bool) error {
 	}
 	wg.Wait()
 	if p.Isolated() && m.sb != nil && !kill {
-		err = m.sb.Stop(projectID, false)
+		err = m.sb.Stop(projectID, "", false)
 	}
 	m.ctrMu.Lock()
-	delete(m.ctrActive, projectID)
+	for k := range m.ctrActive {
+		if strings.HasPrefix(k, projectID+"/") {
+			delete(m.ctrActive, k)
+		}
+	}
 	m.ctrMu.Unlock()
 	return err
+}
+
+// KillContainer is the admin's emergency stop for one container.
+func (m *Manager) KillContainer(projectID, uid string) error {
+	for _, r := range m.projectRuntimes(projectID) {
+		if s, ok := m.st.Session(r.id); ok && s.Owner == uid {
+			r.mu.Lock()
+			r.closing = true
+			r.mu.Unlock()
+		}
+	}
+	if m.sb == nil {
+		return nil
+	}
+	return m.sb.Stop(projectID, uid, true)
 }
 
 func (m *Manager) capsPath() string { return filepath.Join(m.st.Dir(), "caps.json") }
@@ -246,15 +281,9 @@ func (m *Manager) probeCaps() {
 	}
 }
 
-func (m *Manager) Hub() *Hub                 { return m.hub }
-func (m *Manager) Store() *store.Store       { return m.st }
-func (m *Manager) Config() Config            { return m.cfg }
-func (m *Manager) Projects() []model.Project { return m.st.Projects() }
-
-func (m *Manager) Sessions() []model.Session {
-	all := m.st.Sessions()
-	return all
-}
+func (m *Manager) Hub() *Hub           { return m.hub }
+func (m *Manager) Store() *store.Store { return m.st }
+func (m *Manager) Config() Config      { return m.cfg }
 
 func (m *Manager) AgentCaps() map[string]model.Caps {
 	m.mu.Lock()
@@ -301,7 +330,7 @@ func (m *Manager) updateSession(sid string, fn func(*model.Session)) (model.Sess
 	before, _ := m.st.Session(sid)
 	s, ok := m.st.UpdateSession(sid, fn)
 	if ok && s != before {
-		m.hub.Broadcast(map[string]any{"t": "session", "session": s})
+		m.pushSession(s)
 	}
 	return s, ok
 }
@@ -325,6 +354,7 @@ func (m *Manager) setStatus(sid, status string) {
 
 type CreateSessionReq struct {
 	ProjectID string   `json:"projectId"`
+	Shared    *bool    `json:"shared"` // group projects: visible to the group (default true)
 	Agent     string   `json:"agent"`
 	Mode      string   `json:"mode"`
 	Model     string   `json:"model"`
@@ -335,10 +365,13 @@ type CreateSessionReq struct {
 	Worktree  bool     `json:"worktree"`
 }
 
-func (m *Manager) CreateSession(req CreateSessionReq) (model.Session, error) {
-	p, ok := m.st.Project(req.ProjectID)
-	if !ok {
-		return model.Session{}, errors.New("project not found")
+func (m *Manager) CreateSession(a Actor, req CreateSessionReq) (model.Session, error) {
+	p, err := m.visibleProject(a.ID, req.ProjectID)
+	if err != nil {
+		return model.Session{}, err
+	}
+	if !p.Isolated() && !a.Admin {
+		return model.Session{}, errHostOnly
 	}
 	if p.Status == "cloning" {
 		return model.Session{}, errors.New("project is still being cloned")
@@ -358,7 +391,10 @@ func (m *Manager) CreateSession(req CreateSessionReq) (model.Session, error) {
 		ID: sid, ProjectID: p.ID, Agent: req.Agent, Mode: req.Mode,
 		Model: strings.TrimSpace(req.Model), Effort: strings.TrimSpace(req.Effort),
 		Cwd: p.Path, Status: model.StatusStopped, CreatedAt: now, UpdatedAt: now,
-		Title: strings.TrimSpace(req.Title),
+		Title: strings.TrimSpace(req.Title), Owner: a.ID,
+	}
+	if p.OwnerGroup != "" {
+		s.Shared = req.Shared == nil || *req.Shared
 	}
 	if s.Title == "" {
 		s.Title = deriveTitle(req.Prompt)
@@ -386,9 +422,9 @@ func (m *Manager) CreateSession(req CreateSessionReq) (model.Session, error) {
 		s.AgentRef = model.NewUUID()
 	}
 	m.st.PutSession(s)
-	m.hub.Broadcast(map[string]any{"t": "session", "session": s})
+	m.pushSession(s)
 	if strings.TrimSpace(req.Prompt) != "" || len(req.Images) > 0 {
-		if err := m.Send(sid, req.Prompt, req.Images); err != nil {
+		if err := m.Send(a, sid, req.Prompt, req.Images); err != nil {
 			return s, err
 		}
 	}
@@ -420,7 +456,7 @@ func validMode(agentName, mode string) bool {
 	return agentName == "claude" && mode == "dontAsk"
 }
 
-var uploadRe = regexp.MustCompile(`^[0-9a-f]{16}\.(png|jpe?g|gif|webp)$`)
+var uploadRe = regexp.MustCompile(`^[0-9a-f]{16}([0-9a-f]{16})?\.(png|jpe?g|gif|webp)$`)
 
 func (m *Manager) UploadPath(id string) (string, bool) {
 	if !uploadRe.MatchString(id) {
@@ -429,7 +465,17 @@ func (m *Manager) UploadPath(id string) (string, bool) {
 	return filepath.Join(m.st.UploadsDir(), id), true
 }
 
-func (m *Manager) Send(sid, text string, imageIDs []string) error {
+func (m *Manager) Send(a Actor, sid, text string, imageIDs []string) error {
+	sess, err := m.visibleSession(a.ID, sid)
+	if err != nil {
+		return err
+	}
+	if !m.sessionDrivable(sess) {
+		return errOwnerGone
+	}
+	if err := m.hostCheck(a, sess); err != nil {
+		return err
+	}
 	r, err := m.runtime(sid)
 	if err != nil {
 		return err
@@ -445,11 +491,11 @@ func (m *Manager) Send(sid, text string, imageIDs []string) error {
 		}
 		imgs = append(imgs, agent.Image{Path: p, Mime: mime.TypeByExtension(filepath.Ext(p))})
 	}
-	if sess, ok := m.st.Session(sid); ok && sess.Agent == "codex" && len(imgs) > 0 {
+	if sess.Agent == "codex" && len(imgs) > 0 {
 		// Codex takes image paths: make them visible inside the container.
 		if proj, ok := m.st.Project(sess.ProjectID); ok && proj.Isolated() && m.sb != nil {
 			for i := range imgs {
-				ap, err := m.sb.StageUpload(proj.ID, imgs[i].Path)
+				ap, err := m.sb.StageUpload(proj.ID, sess.Owner, imgs[i].Path)
 				if err != nil {
 					return err
 				}
@@ -461,7 +507,7 @@ func (m *Manager) Send(sid, text string, imageIDs []string) error {
 	if text == "" && len(imgs) == 0 {
 		return errors.New("empty message")
 	}
-	it := &model.Item{ID: "u-" + model.NewID(), Kind: model.KindUser, Text: text, Images: imageIDs, Done: true}
+	it := &model.Item{ID: "u-" + model.NewID(), Kind: model.KindUser, Text: text, Images: imageIDs, Done: true, By: a.ID}
 	r.mu.Lock()
 	r.ensureLoaded()
 	r.put(it)
@@ -476,7 +522,22 @@ func (m *Manager) Send(sid, text string, imageIDs []string) error {
 	return nil
 }
 
-func (m *Manager) Interrupt(sid string) error {
+// hostCheck refuses non-admins commanding an agent that runs directly on
+// the server (that would hand them Collie's own user account).
+func (m *Manager) hostCheck(a Actor, s model.Session) error {
+	p, ok := m.st.Project(s.ProjectID)
+	if ok && !p.Isolated() && !a.Admin {
+		return errHostOnly
+	}
+	return nil
+}
+
+var errOwnerGone = errors.New("the person who started this session no longer has access to the project, so it is read-only")
+
+func (m *Manager) Interrupt(a Actor, sid string) error {
+	if _, err := m.visibleSession(a.ID, sid); err != nil {
+		return err
+	}
 	r, err := m.runtime(sid)
 	if err != nil {
 		return err
@@ -488,7 +549,17 @@ func (m *Manager) Interrupt(sid string) error {
 	return d.Interrupt()
 }
 
-func (m *Manager) Reply(sid, askID string, rep agent.Reply) error {
+func (m *Manager) Reply(a Actor, sid, askID string, rep agent.Reply) error {
+	sess, err := m.visibleSession(a.ID, sid)
+	if err != nil {
+		return err
+	}
+	if !m.sessionDrivable(sess) {
+		return errOwnerGone
+	}
+	if err := m.hostCheck(a, sess); err != nil {
+		return err
+	}
 	r, err := m.runtime(sid)
 	if err != nil {
 		return err
@@ -501,6 +572,7 @@ func (m *Manager) Reply(sid, askID string, rep agent.Reply) error {
 }
 
 type PatchSessionReq struct {
+	Shared   *bool   `json:"shared"`
 	Title    *string `json:"title"`
 	Mode     *string `json:"mode"`
 	Model    *string `json:"model"`
@@ -509,10 +581,22 @@ type PatchSessionReq struct {
 
 type modelSetter interface{ SetModel(string) error }
 
-func (m *Manager) Patch(sid string, req PatchSessionReq) (model.Session, error) {
-	s, ok := m.st.Session(sid)
-	if !ok {
-		return s, errSessionGone
+func (m *Manager) Patch(a Actor, sid string, req PatchSessionReq) (model.Session, error) {
+	s, err := m.visibleSession(a.ID, sid)
+	if err != nil {
+		return s, err
+	}
+	if !m.sessionAdmin(a.ID, s) {
+		return s, ErrForbidden
+	}
+	if req.Shared != nil {
+		p, _ := m.st.Project(s.ProjectID)
+		if p.OwnerGroup == "" {
+			return s, errors.New("only sessions in group projects can be shared")
+		}
+		if s.Owner != a.ID {
+			return s, errors.New("only the person who started the session can change who sees it")
+		}
 	}
 	r, err := m.runtime(sid)
 	if err != nil {
@@ -548,17 +632,27 @@ func (m *Manager) Patch(sid string, req PatchSessionReq) (model.Session, error) 
 		if req.Archived != nil {
 			x.Archived = *req.Archived
 		}
+		if req.Shared != nil {
+			x.Shared = *req.Shared
+		}
 	})
 	return s, nil
 }
 
-func (m *Manager) Seen(sid string) {
-	if s, ok := m.st.Session(sid); ok && s.Unread {
+func (m *Manager) Seen(a Actor, sid string) {
+	if s, err := m.visibleSession(a.ID, sid); err == nil && s.Unread {
 		m.updateSession(sid, func(x *model.Session) { x.Unread = false })
 	}
 }
 
-func (m *Manager) Stop(sid string) error {
+func (m *Manager) Stop(a Actor, sid string) error {
+	s, err := m.visibleSession(a.ID, sid)
+	if err != nil {
+		return err
+	}
+	if !m.sessionAdmin(a.ID, s) {
+		return ErrForbidden
+	}
 	r, err := m.runtime(sid)
 	if err != nil {
 		return err
@@ -567,7 +661,18 @@ func (m *Manager) Stop(sid string) error {
 	return nil
 }
 
-func (m *Manager) DeleteSession(sid string, removeWorktree bool) error {
+func (m *Manager) DeleteSession(a Actor, sid string, removeWorktree bool) error {
+	s, err := m.visibleSession(a.ID, sid)
+	if err != nil {
+		return err
+	}
+	if !m.sessionAdmin(a.ID, s) {
+		return ErrForbidden
+	}
+	return m.deleteSession(sid, removeWorktree)
+}
+
+func (m *Manager) deleteSession(sid string, removeWorktree bool) error {
 	s, ok := m.st.Session(sid)
 	if !ok {
 		return errSessionGone
@@ -586,11 +691,14 @@ func (m *Manager) DeleteSession(sid string, removeWorktree bool) error {
 	delete(m.rts, sid)
 	m.mu.Unlock()
 	m.st.DeleteSession(sid)
-	m.hub.Broadcast(map[string]any{"t": "session_del", "id": sid})
+	m.pushSessionDeleted(sid)
 	return nil
 }
 
-func (m *Manager) Items(sid string, before, limit int) ([]*model.Item, int, error) {
+func (m *Manager) Items(a Actor, sid string, before, limit int) ([]*model.Item, int, error) {
+	if _, err := m.visibleSession(a.ID, sid); err != nil {
+		return nil, 0, err
+	}
 	r, err := m.runtime(sid)
 	if err != nil {
 		return nil, 0, err
@@ -599,10 +707,10 @@ func (m *Manager) Items(sid string, before, limit int) ([]*model.Item, int, erro
 	return items, start, nil
 }
 
-func (m *Manager) Changes(sid string) (*gitutil.Changes, error) {
-	s, ok := m.st.Session(sid)
-	if !ok {
-		return nil, errSessionGone
+func (m *Manager) Changes(a Actor, sid string) (*gitutil.Changes, error) {
+	s, err := m.visibleSession(a.ID, sid)
+	if err != nil {
+		return nil, err
 	}
 	return gitutil.Diff(s.Cwd, s.Base)
 }
@@ -610,6 +718,9 @@ func (m *Manager) Changes(sid string) (*gitutil.Changes, error) {
 // Subscribe registers the client for a session's live events and queues a
 // snapshot first, atomically, so no event is lost or duplicated.
 func (m *Manager) Subscribe(c *Client, sid string) error {
+	if _, err := m.visibleSession(c.UserID, sid); err != nil {
+		return err
+	}
 	r, err := m.runtime(sid)
 	if err != nil {
 		return err
@@ -695,7 +806,7 @@ func (m *Manager) reapContainers() {
 	}
 	m.ctrMu.Unlock()
 	for _, id := range ids {
-		if m.projectBusy(id) {
+		if pid, uid, _ := strings.Cut(id, "/"); m.projectBusy(pid, uid) {
 			m.ctrMu.Lock()
 			m.ctrActive[id] = time.Now()
 			m.ctrMu.Unlock()
@@ -707,8 +818,9 @@ func (m *Manager) reapContainers() {
 		if time.Since(last) < m.cfg.IdleTimeout {
 			continue
 		}
-		if err := m.sb.Stop(id, false); err != nil {
-			log.Printf("stop idle container for project %s: %v", id, err)
+		pid, uid, _ := strings.Cut(id, "/")
+		if err := m.sb.Stop(pid, uid, false); err != nil {
+			log.Printf("stop idle container %s: %v", id, err)
 		}
 		m.ctrMu.Lock()
 		delete(m.ctrActive, id)

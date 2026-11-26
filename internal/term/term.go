@@ -24,14 +24,15 @@ type Info struct {
 	Title     string `json:"title"`
 	Owner     string `json:"owner,omitempty"`   // project or session id
 	Project   string `json:"project,omitempty"` // project id
+	User      string `json:"user,omitempty"`    // the user who opened it (only they see it)
 	Isolated  bool   `json:"isolated,omitempty"`
 	CreatedAt int64  `json:"createdAt"`
 }
 
 // Spec describes the shell to start.
 type Spec struct {
-	Cwd, Title, Owner, Project string
-	Cols, Rows                 int
+	Cwd, Title, Owner, Project, User string
+	Cols, Rows                       int
 	// Argv overrides the local login shell (e.g. a shell inside a
 	// container); Kill then signals what it started.
 	Argv []string
@@ -82,12 +83,12 @@ func (m *Manager) Get(id string) (*Term, bool) {
 	return t, ok
 }
 
-// InUse reports whether any terminal belongs to the project.
-func (m *Manager) InUse(projectID string) bool {
+// InUse reports whether the user has a terminal open in the project.
+func (m *Manager) InUse(projectID, userID string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, t := range m.terms {
-		if t.Project == projectID {
+		if t.Project == projectID && t.User == userID {
 			return true
 		}
 	}
@@ -119,7 +120,7 @@ func (m *Manager) Create(sp Spec) (*Term, error) {
 		return nil, err
 	}
 	t := &Term{
-		Info: Info{ID: sp.ID(), Cwd: cwd, Title: sp.Title, Owner: sp.Owner, Project: sp.Project,
+		Info: Info{ID: sp.ID(), Cwd: cwd, Title: sp.Title, Owner: sp.Owner, Project: sp.Project, User: sp.User,
 			Isolated: len(sp.Argv) > 0, CreatedAt: model.NowMs()},
 		kill: sp.Kill, cmd: cmd, pty: f, subs: map[chan []byte]struct{}{}, done: make(chan struct{}),
 	}

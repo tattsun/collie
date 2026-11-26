@@ -7,6 +7,11 @@ export function ago(ms: number): string {
   return new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
 
+/** Time left until ms (future), e.g. "6d". */
+export function until(ms: number): string {
+  return ago(Date.now() - (ms - Date.now()))
+}
+
 export function duration(ms?: number): string {
   if (!ms) return ''
   const s = ms / 1000

@@ -2,12 +2,12 @@ import { lazy, Suspense } from 'preact/compat'
 import { useEffect, useState } from 'preact/hooks'
 import type { Session } from '../types'
 import { api } from '../api'
-import { go, markSeen, projectById, route, sessionById, subscribe, timeline, toastError, agentCaps } from '../store'
+import { go, groupById, markSeen, me, projectById, route, sessionById, subscribe, timeline, toastError, agentCaps, userName } from '../store'
 import { Timeline } from './Timeline'
 import { Composer } from './Composer'
 import { ChangesView } from './Changes'
 import { AgentBadge, Menu, Modal, StatusPill } from './ui'
-import { IBack, IBox, IBranch, IChat, IDiff, IMore, ITerminal, Spinner } from './icons'
+import { IBack, IBox, IBranch, IChat, IDiff, IMore, ITerminal, IUsers, Spinner } from './icons'
 import { cls, home, money, shortMode, tokens } from '../util'
 
 const TerminalView = lazy(() => import('./Terminal').then((m) => ({ default: m.TerminalView })))
@@ -142,6 +142,11 @@ export function SessionView({ id }: { id: string }) {
           </button>
           <div class="sess-sub">
             <AgentBadge agent={s.agent} small />
+            {s.shared && (
+              <span class="sub-item shared" title={`Shared with ${groupById.value.get(project?.ownerGroup || '')?.name || 'the group'}`}>
+                <IUsers size={11} /> {s.owner === me.value?.id ? 'shared' : userName(s.owner)}
+              </span>
+            )}
             {project?.runtime === 'container' && (
               <span class="sub-item iso" title="Runs in the project's isolated container">
                 <IBox size={11} />
@@ -173,6 +178,14 @@ export function SessionView({ id }: { id: string }) {
           trigger={<IMore size={18} />}
           items={[
             { label: 'Settings…', onClick: () => setSettings(true) },
+            ...(project?.ownerGroup && s.owner === me.value?.id
+              ? [
+                  {
+                    label: s.shared ? 'Make private' : `Share with ${groupById.value.get(project.ownerGroup)?.name || 'group'}`,
+                    onClick: act(() => api('PATCH', `/api/sessions/${id}`, { shared: !s.shared })),
+                  },
+                ]
+              : []),
             ...(s.status === 'running' || s.status === 'waiting' ? [{ label: 'Interrupt', hint: 'Esc', onClick: act(() => api('POST', `/api/sessions/${id}/interrupt`)) }] : []),
             ...(s.status !== 'stopped' ? [{ label: 'Stop agent process', onClick: act(() => api('POST', `/api/sessions/${id}/stop`)) }] : []),
             ...(project?.runtime === 'container'

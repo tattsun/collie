@@ -14,6 +14,10 @@ type Project struct {
 	Name      string `json:"name"`
 	Path      string `json:"path"`
 	CreatedAt int64  `json:"createdAt"`
+	// Owner: exactly one of OwnerUser / OwnerGroup is set.
+	OwnerUser  string `json:"ownerUser,omitempty"`
+	OwnerGroup string `json:"ownerGroup,omitempty"`
+	CreatedBy  string `json:"createdBy,omitempty"`
 	// Runtime is where agents run: "container" (isolated, one rootless
 	// Podman container per project) or "host" ("" = host, for projects
 	// created before isolation existed).
@@ -65,6 +69,11 @@ type Session struct {
 	Archived  bool    `json:"archived,omitempty"`
 	CreatedAt int64   `json:"createdAt"`
 	UpdatedAt int64   `json:"updatedAt"`
+	// Owner started the session; its agent runs with the owner's agent
+	// accounts. In group projects a Shared session is visible to, and can
+	// be driven by, every member of the group.
+	Owner  string `json:"owner,omitempty"`
+	Shared bool   `json:"shared,omitempty"`
 }
 
 // Item kinds.
@@ -94,6 +103,7 @@ type Item struct {
 	Plan   []PlanStep `json:"plan,omitempty"`
 	Result *Result    `json:"result,omitempty"`
 	Images []string   `json:"images,omitempty"`
+	By     string     `json:"by,omitempty"` // user who sent a user message
 }
 
 type Tool struct {

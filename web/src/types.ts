@@ -5,6 +5,9 @@ export interface Project {
   name: string
   path: string
   createdAt: number
+  ownerUser?: string
+  ownerGroup?: string
+  createdBy?: string
   runtime?: '' | 'host' | 'container'
   memory?: string
   cpus?: string
@@ -29,6 +32,8 @@ export interface SandboxStatus {
 }
 
 export interface ContainerInfo {
+  userId?: string
+  projectId?: string
   running?: boolean
   exists?: boolean
   mem?: string
@@ -61,6 +66,8 @@ export interface Session {
   archived?: boolean
   createdAt: number
   updatedAt: number
+  owner?: string
+  shared?: boolean
 }
 
 export interface Tool {
@@ -131,6 +138,7 @@ export interface Item {
   plan?: PlanStep[]
   result?: Result
   images?: string[]
+  by?: string
 }
 
 export interface Command {
@@ -178,4 +186,24 @@ export interface Changes {
   files: FileChange[]
   commits?: string[]
   base?: string
+}
+
+export interface UserInfo {
+  id: string
+  name: string
+  displayName: string
+  admin?: boolean
+}
+
+export interface GroupInfo {
+  id: string
+  name: string
+  members: Record<string, 'owner' | 'member'>
+  myRole?: 'owner' | 'member' | ''
+}
+
+export interface ProfileFile {
+  path: string
+  size: number
+  dir?: boolean
 }

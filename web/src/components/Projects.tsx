@@ -2,7 +2,7 @@ import { lazy, Suspense } from 'preact/compat'
 import { useEffect, useMemo, useState } from 'preact/hooks'
 import type { Project } from '../types'
 import { api } from '../api'
-import { go, projectById, projects, root, route, sandbox, sessions, toastError } from '../store'
+import { go, groupById, groups, me, ownerLabel, projectById, projects, root, rootBase, route, sandbox, sessions, toastError } from '../store'
 import { ago, cls, home } from '../util'
 import { ChangesView } from './Changes'
 import { AgentBadge, Segmented, StatusDot, Toggle } from './ui'
@@ -15,6 +15,10 @@ type Kind = 'empty' | 'clone' | 'existing'
 
 export function NewProjectForm({ onDone }: { onDone?: (p: Project) => void }) {
   const [kind, setKind] = useState<Kind>('empty')
+  const admin = !!me.value?.admin
+  const myGroups = groups.value.filter((g) => g.myRole)
+  const [group, setGroup] = useState(() => route.value.query.get('group') || '')
+  const base = group ? `${rootBase.value}/groups/${groupById.value.get(group)?.name || ''}` : root.value
   const [name, setName] = useState('')
   const [url, setUrl] = useState('')
   const [path, setPath] = useState('')
@@ -31,7 +35,7 @@ export function NewProjectForm({ onDone }: { onDone?: (p: Project) => void }) {
     e.preventDefault()
     setBusy(true)
     try {
-      const p = await api<Project>('POST', '/api/projects', { kind, name, url, path, git, runtime: isolated ? 'container' : 'host' })
+      const p = await api<Project>('POST', '/api/projects', { kind, name, url, path, git, group, runtime: isolated || !admin ? 'container' : 'host' })
       setName('')
       setUrl('')
       setPath('')
@@ -51,14 +55,14 @@ export function NewProjectForm({ onDone }: { onDone?: (p: Project) => void }) {
         options={[
           { value: 'empty', label: 'New folder' },
           { value: 'clone', label: 'Clone repo' },
-          { value: 'existing', label: 'Existing folder' },
+          ...(admin ? [{ value: 'existing' as Kind, label: 'Existing folder' }] : []),
         ]}
       />
       {kind === 'clone' && (
         <label class="field">
           <span class="field-l">Repository URL</span>
           <input class="input mono" value={url} placeholder="git@github.com:you/repo.git" autoCapitalize="off" autoCorrect="off" spellcheck={false} onInput={(e) => setUrl((e.target as HTMLInputElement).value)} />
-          <span class="field-h">Cloned with the server user's git credentials.</span>
+          <span class="field-h">{admin ? "Cloned with the server user's git credentials." : 'https:// only; private GitHub repositories use the GH_TOKEN in your account environment.'}</span>
         </label>
       )}
       {kind === 'existing' ? (
@@ -85,12 +89,26 @@ export function NewProjectForm({ onDone }: { onDone?: (p: Project) => void }) {
           <span class="field-l">Name {kind === 'clone' && <span class="dim">(optional)</span>}</span>
           <input class="input" value={name} placeholder={kind === 'clone' ? 'derived from the URL' : 'my-app'} autoCapitalize="off" autoCorrect="off" spellcheck={false} onInput={(e) => setName((e.target as HTMLInputElement).value)} />
           <span class="field-h mono">
-            {home(root.value)}/{name || (kind === 'clone' ? '<repo>' : '<name>')}
+            {home(base)}/{name || (kind === 'clone' ? '<repo>' : '<name>')}
           </span>
         </label>
       )}
       {kind === 'empty' && <Toggle checked={git} onChange={setGit} label="Initialize a git repository" />}
-      <Toggle
+      {myGroups.length > 0 && (
+        <label class="field">
+          <span class="field-l">Owner</span>
+          <select class="select" value={group} onChange={(e) => setGroup((e.target as HTMLSelectElement).value)}>
+            <option value="">Me (personal)</option>
+            {myGroups.map((g) => (
+              <option key={g.id} value={g.id}>
+                Group: {g.name}
+              </option>
+            ))}
+          </select>
+          {group && <span class="field-h">Shared with every member of the group.</span>}
+        </label>
+      )}
+      {admin && <Toggle
         checked={isolated && sandbox.value.available}
         disabled={!sandbox.value.available}
         onChange={setIsolated}
@@ -100,7 +118,7 @@ export function NewProjectForm({ onDone }: { onDone?: (p: Project) => void }) {
             ? 'Its own sandbox with resource limits, only this folder visible, no LAN/tailnet access.'
             : 'Needs podman on the server.'
         }
-      />
+      />}
       <div class="modal-actions">
         <button class="btn primary" type="submit" disabled={busy}>
           {busy && <Spinner size={12} />}
@@ -196,6 +214,7 @@ export function ProjectPage({ id }: { id: string }) {
                 'host'
               )}
             </span>
+            {ownerLabel(p) && <span class="sub-item">{ownerLabel(p)}</span>}
             <span class="sub-item mono">{home(p.path)}</span>
             {p.status === 'cloning' && (
               <span class="sub-item">

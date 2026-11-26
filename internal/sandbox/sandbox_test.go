@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/tattsun/collie/internal/model"
@@ -12,7 +14,7 @@ import (
 func newTestManager(t *testing.T) *Manager {
 	t.Helper()
 	data := t.TempDir()
-	m := &Manager{cfg: Config{DataDir: data}}
+	m := &Manager{cfg: Config{DataDir: data}, locks: map[string]*sync.Mutex{}}
 	if err := SeedShared(m.SharedPath()); err != nil {
 		t.Fatal(err)
 	}
@@ -58,33 +60,38 @@ func TestHostWritesStayInsideHome(t *testing.T) {
 	outside := t.TempDir()
 	victim := filepath.Join(outside, "victim")
 	os.WriteFile(victim, []byte("original"), 0o600)
-	home := m.HomeDir("p1")
-	os.MkdirAll(filepath.Join(home, ".codex"), 0o700)
+	home := m.HomeDir("p1", "u1")
+	codex := m.CodexDir("u1")
+	os.MkdirAll(home, 0o700)
+	os.MkdirAll(codex, 0o700)
+	if err := m.BuildEffective("u1"); err != nil {
+		t.Fatal(err)
+	}
 
-	// 1. temp file planted as a symlink to a server file
-	os.Symlink(victim, filepath.Join(home, ".codex", "config.toml.collie-tmp"))
-	if err := m.PrepareCodex("p1"); err != nil {
+	// 1. temp file planted (by the agent, in its CODEX_HOME) as a symlink to a server file
+	os.Symlink(victim, filepath.Join(codex, "config.toml.collie-tmp"))
+	if err := m.PrepareCodex("u1"); err != nil {
 		t.Fatalf("PrepareCodex: %v", err)
 	}
 	if b, _ := os.ReadFile(victim); string(b) != "original" {
 		t.Fatalf("victim overwritten through planted temp symlink: %q", b)
 	}
 
-	// 2. directory replaced by a symlink pointing outside the home
-	os.RemoveAll(filepath.Join(home, ".codex"))
-	os.Symlink(outside, filepath.Join(home, ".codex"))
-	if err := m.PrepareCodex("p1"); err == nil {
-		t.Fatal("expected PrepareCodex to refuse writing through a symlinked directory")
+	// 2. the config file itself replaced by a symlink pointing outside
+	os.Remove(filepath.Join(codex, "config.toml"))
+	os.Symlink(victim, filepath.Join(codex, "config.toml"))
+	if err := m.PrepareCodex("u1"); err != nil {
+		t.Fatalf("PrepareCodex: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(outside, "config.toml")); err == nil {
-		t.Fatal("config.toml was written outside the home")
+	if b, _ := os.ReadFile(victim); string(b) != "original" {
+		t.Fatalf("victim overwritten through planted config symlink: %q", b)
 	}
 
 	// 3. uploads directory symlinked outside
 	os.Symlink(outside, filepath.Join(home, ".collie-uploads"))
 	img := filepath.Join(t.TempDir(), "0123456789abcdef.png")
 	os.WriteFile(img, []byte("png"), 0o600)
-	if _, err := m.StageUpload("p1", img); err == nil {
+	if _, err := m.StageUpload("p1", "u1", img); err == nil {
 		t.Fatal("expected StageUpload to refuse a symlinked uploads dir")
 	}
 	if _, err := os.Stat(filepath.Join(outside, "0123456789abcdef.png")); err == nil {
@@ -103,5 +110,92 @@ func TestExtraMountsForLegacyWorktrees(t *testing.T) {
 	got := m.extraMounts(p, []string{p.Path, filepath.Join(p.Path, "sub"), current, legacy, legacy, "/does/not/exist"})
 	if !slices.Equal(got, []string{legacy}) {
 		t.Fatalf("extra mounts = %v, want [%s]", got, legacy)
+	}
+}
+
+func TestProfileMerge(t *testing.T) {
+	m := newTestManager(t)
+	g := m.SharedPath()
+	if err := m.SeedPersonal("u1", "alice", "Alice"); err != nil {
+		t.Fatal(err)
+	}
+	u := m.PersonalDir("u1")
+	w := func(root, rel, c string) {
+		os.MkdirAll(filepath.Dir(filepath.Join(root, rel)), 0o755)
+		os.WriteFile(filepath.Join(root, rel), []byte(c), 0o644)
+	}
+	w(g, "claude/CLAUDE.md", "global rules")
+	w(u, "claude/CLAUDE.md", "my rules")
+	w(g, "claude/skills/shared/SKILL.md", "global skill")
+	w(g, "claude/skills/both/SKILL.md", "global version")
+	w(u, "claude/skills/both/SKILL.md", "personal version")
+	w(u, "claude/skills/mine/SKILL.md", "my skill")
+	w(u, "claude/mcp.json", `{"mcpServers":{"github":{"command":"gh-mcp"}}}`)
+	w(g, "claude/settings.json", `{"permissions":{"allow":["Bash(ls)"]},"model":"a"}`)
+	w(u, "claude/settings.json", `{"permissions":{"allow":["Bash(git status)"]},"model":"b"}`)
+	w(u, "codex/config.toml", "model = \"x\"\n\n[mcp_servers.playwright]\ncommand = \"mine\"\n")
+	if err := m.BuildEffective("u1"); err != nil {
+		t.Fatal(err)
+	}
+	e := m.EffectiveDir("u1")
+	read := func(rel string) string { b, _ := os.ReadFile(filepath.Join(e, rel)); return string(b) }
+	if c := read("claude/CLAUDE.md"); c != "global rules\n\nmy rules\n" {
+		t.Errorf("CLAUDE.md = %q", c)
+	}
+	if read("claude/skills/shared/SKILL.md") != "global skill" || read("claude/skills/mine/SKILL.md") != "my skill" || read("claude/skills/both/SKILL.md") != "personal version" {
+		t.Errorf("skills not unioned with personal priority")
+	}
+	mcp := read("claude/mcp.json")
+	if !strings.Contains(mcp, "playwright") || !strings.Contains(mcp, "github") {
+		t.Errorf("mcp.json = %s", mcp)
+	}
+	st := read("claude/settings.json")
+	if !strings.Contains(st, "Bash(ls)") || !strings.Contains(st, "Bash(git status)") || !strings.Contains(st, `"model": "b"`) {
+		t.Errorf("settings.json = %s", st)
+	}
+	toml := read("codex/config.toml")
+	if strings.Count(toml, "[mcp_servers.playwright]") != 1 || !strings.Contains(toml, `command = "mine"`) || !strings.Contains(toml, `model = "x"`) {
+		t.Errorf("config.toml = %s", toml)
+	}
+	if gc := read("gitconfig"); !strings.Contains(gc, "name = Alice") || !strings.Contains(gc, "defaultBranch") {
+		t.Errorf("gitconfig = %s", gc)
+	}
+	// rebuilding keeps directory identity (bind mounts) and drops removed skills
+	before, _ := os.Stat(filepath.Join(e, "claude", "skills"))
+	os.RemoveAll(filepath.Join(u, "claude", "skills", "mine"))
+	m.BuildEffective("u1")
+	after, _ := os.Stat(filepath.Join(e, "claude", "skills"))
+	if !os.SameFile(before, after) {
+		t.Error("skills directory was replaced (would break running containers' mounts)")
+	}
+	if _, err := os.Stat(filepath.Join(e, "claude", "skills", "mine")); err == nil {
+		t.Error("removed personal skill still present")
+	}
+}
+
+func TestProfileEditorPaths(t *testing.T) {
+	dir := t.TempDir()
+	for _, bad := range []string{"env", "x.collie-tmp", "", "a b", "~/x"} {
+		if err := WriteProfileFile(dir, bad, "x"); err == nil {
+			t.Errorf("write %q accepted", bad)
+		}
+	}
+	// ".." and absolute paths are confined to the profile directory
+	for _, p := range []string{"../x", "/etc/passwd", "a/../../b"} {
+		_ = WriteProfileFile(dir, p, "x")
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(dir), "x")); err == nil {
+		t.Error("write escaped the profile directory")
+	}
+	if err := WriteProfileFile(dir, "claude/skills/demo/SKILL.md", "hi"); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteProfileFile(dir, "claude/mcp.json", "{not json"); err == nil {
+		t.Error("invalid JSON accepted")
+	}
+	outside := t.TempDir()
+	os.Symlink(outside, filepath.Join(dir, "link"))
+	if err := WriteProfileFile(dir, "link/x", "y"); err == nil {
+		t.Error("write through symlink accepted")
 	}
 }

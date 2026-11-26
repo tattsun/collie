@@ -1,5 +1,5 @@
 import { signal, computed, batch } from '@preact/signals'
-import type { Caps, Item, ModeInfo, Project, SandboxStatus, Session, TermInfo } from './types'
+import type { Caps, GroupInfo, Item, ModeInfo, Project, SandboxStatus, Session, TermInfo, UserInfo } from './types'
 
 // ---------------------------------------------------------------- state
 
@@ -13,7 +13,29 @@ export const agentsAvail = signal<Record<string, boolean>>({})
 export const terms = signal<TermInfo[]>([])
 export const sandbox = signal<SandboxStatus>({ available: false })
 export const root = signal('')
+export const rootBase = signal('')
 export const version = signal('')
+export const me = signal<UserInfo | null>(null)
+export const users = signal<UserInfo[]>([])
+export const groups = signal<GroupInfo[]>([])
+// signed in with the legacy token (no passkey yet): prompt to add one
+export const legacyLogin = signal(false)
+export const passkeyCount = signal(0)
+
+export const userById = computed(() => new Map(users.value.map((u) => [u.id, u])))
+export const groupById = computed(() => new Map(groups.value.map((g) => [g.id, g])))
+
+export function userName(id?: string): string {
+  if (!id) return ''
+  return userById.value.get(id)?.displayName || '(former member)'
+}
+
+/** Owner label of a project: "" for my own, else the group name. */
+export function ownerLabel(p: Project): string {
+  if (p.ownerGroup) return groupById.value.get(p.ownerGroup)?.name || 'group'
+  if (p.ownerUser && p.ownerUser !== me.value?.id) return userName(p.ownerUser)
+  return ''
+}
 
 export const projectById = computed(() => new Map(projects.value.map((p) => [p.id, p])))
 export const sessionById = computed(() => new Map(sessions.value.map((s) => [s.id, s])))
@@ -25,7 +47,7 @@ export const attention = computed(() =>
 // ---------------------------------------------------------------- routing
 
 export interface Route {
-  name: 'home' | 'new' | 'session' | 'projects' | 'project'
+  name: 'home' | 'new' | 'session' | 'projects' | 'project' | 'account' | 'groups' | 'admin'
   id?: string
   tab?: string
   query: URLSearchParams
@@ -39,6 +61,9 @@ function parseHash(): Route {
   if (parts[0] === 's' && parts[1]) return { name: 'session', id: parts[1], tab: parts[2] || 'chat', query }
   if (parts[0] === 'p' && parts[1]) return { name: 'project', id: parts[1], tab: parts[2] || 'sessions', query }
   if (parts[0] === 'projects') return { name: 'projects', query }
+  if (parts[0] === 'account') return { name: 'account', tab: parts[1], query }
+  if (parts[0] === 'groups') return { name: 'groups', id: parts[1], query }
+  if (parts[0] === 'admin') return { name: 'admin', tab: parts[1] || 'users', query }
   if (parts[0] === 'new') return { name: 'new', query }
   return { name: 'home', query }
 }
@@ -178,8 +203,14 @@ export function connect() {
     retry = 0
   }
   sock.onmessage = (ev) => onMessage(JSON.parse(ev.data))
-  sock.onclose = () => {
+  sock.onclose = (ev) => {
     if (ws !== sock) return
+    if (ev.code === 4401) {
+      // signed out elsewhere / session revoked
+      ws = null
+      authed.value = false
+      return
+    }
     ws = null
     ready = false
     conn.value = 'offline'
@@ -247,7 +278,13 @@ export function applyState(d: any) {
     agentsAvail.value = d.agents || {}
     terms.value = d.terms || []
     sandbox.value = d.sandbox || { available: false }
+    me.value = d.me || null
+    users.value = d.users || []
+    groups.value = d.groups || []
+    legacyLogin.value = !!d.legacy
+    passkeyCount.value = d.passkeys || 0
     root.value = d.root || ''
+    rootBase.value = d.rootBase || ''
     version.value = d.version || ''
   })
 }
@@ -272,6 +309,11 @@ function onMessage(m: any) {
   }
   if (!ready) return
   switch (m.t) {
+    case 'state':
+      // users / groups changed: a fresh view
+      applyState(m)
+      if (subscribed && !sessionById.value.has(subscribed)) subscribed = null
+      break
     case 'session':
       upsertSession(m.session)
       break

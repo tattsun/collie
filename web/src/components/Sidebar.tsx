@@ -4,8 +4,9 @@ import { useMemo } from 'preact/hooks'
 import type { Session } from '../types'
 import { attention, conn, go, notifyEnabled, projectById, projects, route, sessions, setNotify, version } from '../store'
 import { ago, cls, home } from '../util'
-import { IBell, IFolder, IPlus, IBranch, Spinner } from './icons'
+import { IBell, IBox, IFolder, IPlus, IBranch, Spinner } from './icons'
 import { AgentBadge, StatusDot } from './ui'
+import { ImageIndicator } from './ProjectSettings'
 
 export const listTab = signal<'sessions' | 'projects'>((localStorage.getItem('collie.tab') as any) || 'sessions')
 export const projectFilter = signal<string>(localStorage.getItem('collie.filter') || '')
@@ -123,7 +124,7 @@ function ProjectList() {
         const c = counts.get(p.id)
         return (
           <a key={p.id} href={`#/p/${p.id}`} class={cls('prow', r.name === 'project' && r.id === p.id && 'active')}>
-            <IFolder size={16} />
+            {p.runtime === 'container' ? <IBox size={16} /> : <IFolder size={16} />}
             <div class="srow-main">
               <div class="srow-top">
                 <span class="srow-title">{p.name}</span>
@@ -175,6 +176,7 @@ export function Sidebar() {
         <button class={cls('foot-btn', notifyEnabled.value && 'on')} onClick={() => setNotify(!notifyEnabled.value)} title="Notifications">
           <IBell size={14} /> {notifyEnabled.value ? 'Notifications on' : 'Notifications off'}
         </button>
+        <ImageIndicator />
         <span class="grow" />
         <span class="dim small">v{version.value}</span>
       </footer>

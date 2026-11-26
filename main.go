@@ -15,10 +15,12 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/tattsun/collie/internal/sandbox"
 	"github.com/tattsun/collie/internal/server"
 	"github.com/tattsun/collie/internal/session"
 	"github.com/tattsun/collie/internal/store"
@@ -42,9 +44,15 @@ func main() {
 	noAuth := flag.Bool("no-auth", os.Getenv("COLLIE_NO_AUTH") == "1", "disable authentication (trusted networks only)")
 	claudeBin := flag.String("claude", env("COLLIE_CLAUDE", "claude"), "Claude Code executable")
 	codexBin := flag.String("codex", env("COLLIE_CODEX", "codex"), "Codex executable")
+	podmanBin := flag.String("podman", env("COLLIE_PODMAN", "podman"), "Podman executable (for isolated projects)")
+	ctrMemory := flag.String("container-memory", env("COLLIE_CONTAINER_MEMORY", "4g"), "default memory limit per project container")
+	ctrCPUs := flag.String("container-cpus", env("COLLIE_CONTAINER_CPUS", defaultCPUs()), "default CPU limit per project container")
+	ctrPids := flag.Int("container-pids", 4096, "default process limit per project container")
+	proxyUID := flag.Int("trusted-proxy-uid", 0, "uid of the local proxy whose Tailscale identity headers are trusted (tailscaled: 0)")
 	idle := flag.Duration("idle-timeout", 30*time.Minute, "stop idle agent processes after this long (they resume on the next message; 0 = never)")
 	showToken := flag.Bool("print-token", false, "print the access token and exit")
 	loginURL := flag.Bool("login-url", false, "print sign-in links (containing the access token) and exit")
+	buildImage := flag.Bool("build-image", false, "build (or update) the agent container image and exit")
 	flag.Parse()
 
 	st, err := store.Open(*dataDir)
@@ -73,12 +81,30 @@ func main() {
 	}
 	absRoot, _ := filepath.Abs(*root)
 
+	sb := sandbox.New(sandbox.Config{
+		Podman: *podmanBin, DataDir: *dataDir, Memory: *ctrMemory, CPUs: *ctrCPUs, Pids: *ctrPids,
+	})
+	if !sb.Available() {
+		log.Printf("note: podman not found — new projects will run agents directly on this host")
+	} else if !sb.LimitsSupported() {
+		log.Printf("warning: no systemd user session — memory/CPU/process limits for isolated projects are NOT enforced (run `loginctl enable-linger %s` and start collie as a user service)", os.Getenv("USER"))
+	}
+	if *buildImage {
+		if !sb.Available() {
+			log.Fatal("podman is not installed")
+		}
+		log.Printf("building %s …", sb.Status().Image)
+		if err := sb.BuildSync(os.Stderr); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	hub := session.NewHub()
 	mgr := session.NewManager(session.Config{
 		ClaudeBin: *claudeBin, CodexBin: *codexBin, ProjectRoot: absRoot, IdleTimeout: *idle,
-	}, st, hub)
+	}, st, hub, sb)
 	terms := term.NewManager()
-	srv := server.New(mgr, terms, server.Options{Token: *token, NoAuth: *noAuth, Web: web.FS()})
+	srv := server.New(mgr, terms, server.Options{Token: *token, NoAuth: *noAuth, Web: web.FS(), ProxyUID: *proxyUID})
 	if web.FS() == nil {
 		log.Printf("warning: web UI is not built (run `make`); only the API is available")
 	}
@@ -130,6 +156,15 @@ func loadToken(path string) (string, error) {
 	}
 	t := hex.EncodeToString(b[:])
 	return t, os.WriteFile(path, []byte(t+"\n"), 0o600)
+}
+
+// defaultCPUs gives each project container half the machine (at least 1).
+func defaultCPUs() string {
+	n := runtime.NumCPU() / 2
+	if n < 1 {
+		n = 1
+	}
+	return fmt.Sprint(n)
 }
 
 func isTerminal(f *os.File) bool {

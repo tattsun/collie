@@ -5,9 +5,36 @@ export interface Project {
   name: string
   path: string
   createdAt: number
+  runtime?: '' | 'host' | 'container'
+  memory?: string
+  cpus?: string
+  pids?: number
   git: boolean
   status?: '' | 'cloning' | 'error'
   error?: string
+}
+
+export interface SandboxStatus {
+  available: boolean
+  limits?: boolean
+  image?: string
+  ready?: boolean
+  building?: boolean
+  error?: string
+  log?: string
+  shared?: string
+  memory?: string
+  cpus?: string
+  pids?: number
+}
+
+export interface ContainerInfo {
+  running?: boolean
+  exists?: boolean
+  mem?: string
+  cpu?: string
+  pids?: string
+  limitsEnforced?: boolean
 }
 
 export type Status = 'starting' | 'running' | 'waiting' | 'idle' | 'stopped' | 'error'
@@ -133,6 +160,8 @@ export interface TermInfo {
   cwd: string
   title: string
   owner?: string
+  project?: string
+  isolated?: boolean
   createdAt: number
 }
 

@@ -2,11 +2,12 @@ import { lazy, Suspense } from 'preact/compat'
 import { useEffect, useMemo, useState } from 'preact/hooks'
 import type { Project } from '../types'
 import { api } from '../api'
-import { go, projectById, projects, root, route, sessions, toastError } from '../store'
+import { go, projectById, projects, root, route, sandbox, sessions, toastError } from '../store'
 import { ago, cls, home } from '../util'
 import { ChangesView } from './Changes'
 import { AgentBadge, Segmented, StatusDot, Toggle } from './ui'
-import { IBack, IDiff, IFolder, IList, IPlus, ITerminal, ITrash, Spinner } from './icons'
+import { IBack, IBox, IDiff, IFolder, IList, IPlus, ISettings, ITerminal, ITrash, Spinner } from './icons'
+import { ProjectSettings } from './ProjectSettings'
 
 const TerminalView = lazy(() => import('./Terminal').then((m) => ({ default: m.TerminalView })))
 
@@ -18,6 +19,7 @@ export function NewProjectForm({ onDone }: { onDone?: (p: Project) => void }) {
   const [url, setUrl] = useState('')
   const [path, setPath] = useState('')
   const [git, setGit] = useState(true)
+  const [isolated, setIsolated] = useState(sandbox.value.available)
   const [busy, setBusy] = useState(false)
   const [dirs, setDirs] = useState<string[]>([])
 
@@ -29,7 +31,7 @@ export function NewProjectForm({ onDone }: { onDone?: (p: Project) => void }) {
     e.preventDefault()
     setBusy(true)
     try {
-      const p = await api<Project>('POST', '/api/projects', { kind, name, url, path, git })
+      const p = await api<Project>('POST', '/api/projects', { kind, name, url, path, git, runtime: isolated ? 'container' : 'host' })
       setName('')
       setUrl('')
       setPath('')
@@ -88,6 +90,17 @@ export function NewProjectForm({ onDone }: { onDone?: (p: Project) => void }) {
         </label>
       )}
       {kind === 'empty' && <Toggle checked={git} onChange={setGit} label="Initialize a git repository" />}
+      <Toggle
+        checked={isolated && sandbox.value.available}
+        disabled={!sandbox.value.available}
+        onChange={setIsolated}
+        label="Run agents in an isolated container (recommended)"
+        hint={
+          sandbox.value.available
+            ? 'Its own sandbox with resource limits, only this folder visible, no LAN/tailnet access.'
+            : 'Needs podman on the server.'
+        }
+      />
       <div class="modal-actions">
         <button class="btn primary" type="submit" disabled={busy}>
           {busy && <Spinner size={12} />}
@@ -128,6 +141,11 @@ export function ProjectsPage() {
               <div class="dim small mono">{home(p.path)}</div>
               {p.status === 'error' && <div class="err small">{p.error}</div>}
             </div>
+            {p.runtime === 'container' && (
+              <span class="chip" title="Isolated container">
+                <IBox size={12} />
+              </span>
+            )}
             {p.status === 'cloning' ? <Spinner /> : p.git ? <span class="chip">git</span> : null}
           </a>
         ))}
@@ -169,6 +187,15 @@ export function ProjectPage({ id }: { id: string }) {
         <div class="sess-title-wrap">
           <div class="sess-title static">{p.name}</div>
           <div class="sess-sub">
+            <span class={cls('sub-item', p.runtime === 'container' && 'iso')}>
+              {p.runtime === 'container' ? (
+                <>
+                  <IBox size={11} /> isolated
+                </>
+              ) : (
+                'host'
+              )}
+            </span>
             <span class="sub-item mono">{home(p.path)}</span>
             {p.status === 'cloning' && (
               <span class="sub-item">
@@ -190,6 +217,9 @@ export function ProjectPage({ id }: { id: string }) {
         </a>
         <a href={`#/p/${id}/term`} class={cls('tab', tab === 'term' && 'on')}>
           <ITerminal size={14} /> Terminal
+        </a>
+        <a href={`#/p/${id}/settings`} class={cls('tab', tab === 'settings' && 'on')}>
+          <ISettings size={14} /> Settings
         </a>
       </nav>
       {tab === 'sessions' && (
@@ -225,6 +255,11 @@ export function ProjectPage({ id }: { id: string }) {
         <Suspense fallback={<div class="center pad"><Spinner /></div>}>
           <TerminalView owner={id} projectId={id} />
         </Suspense>
+      )}
+      {tab === 'settings' && (
+        <div class="tab-body">
+          <ProjectSettings p={p} />
+        </div>
       )}
     </div>
   )

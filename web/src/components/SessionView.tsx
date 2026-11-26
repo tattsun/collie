@@ -7,7 +7,7 @@ import { Timeline } from './Timeline'
 import { Composer } from './Composer'
 import { ChangesView } from './Changes'
 import { AgentBadge, Menu, Modal, StatusPill } from './ui'
-import { IBack, IBranch, IChat, IDiff, IMore, ITerminal, Spinner } from './icons'
+import { IBack, IBox, IBranch, IChat, IDiff, IMore, ITerminal, Spinner } from './icons'
 import { cls, home, money, shortMode, tokens } from '../util'
 
 const TerminalView = lazy(() => import('./Terminal').then((m) => ({ default: m.TerminalView })))
@@ -142,6 +142,11 @@ export function SessionView({ id }: { id: string }) {
           </button>
           <div class="sess-sub">
             <AgentBadge agent={s.agent} small />
+            {project?.runtime === 'container' && (
+              <span class="sub-item iso" title="Runs in the project's isolated container">
+                <IBox size={11} />
+              </span>
+            )}
             {project && (
               <a class="sub-link" href={`#/p/${project.id}`}>
                 {project.name}
@@ -170,6 +175,18 @@ export function SessionView({ id }: { id: string }) {
             { label: 'Settings…', onClick: () => setSettings(true) },
             ...(s.status === 'running' || s.status === 'waiting' ? [{ label: 'Interrupt', hint: 'Esc', onClick: act(() => api('POST', `/api/sessions/${id}/interrupt`)) }] : []),
             ...(s.status !== 'stopped' ? [{ label: 'Stop agent process', onClick: act(() => api('POST', `/api/sessions/${id}/stop`)) }] : []),
+            ...(project?.runtime === 'container'
+              ? [
+                  {
+                    label: 'Kill project container',
+                    danger: true,
+                    onClick: () => {
+                      if (confirm(`Kill everything running in “${project.name}” now?`))
+                        api('POST', `/api/projects/${project.id}/stop`, { kill: true }).catch(toastError)
+                    },
+                  },
+                ]
+              : []),
             { label: s.archived ? 'Unarchive' : 'Archive', onClick: act(() => api('PATCH', `/api/sessions/${id}`, { archived: !s.archived })) },
             { label: 'Delete session', danger: true, onClick: del },
           ]}

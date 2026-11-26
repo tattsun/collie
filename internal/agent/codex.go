@@ -85,7 +85,7 @@ func codexPolicy(mode, cwd string) (approval, sandbox string, policy map[string]
 }
 
 func (c *Codex) Start() error {
-	p, err := startProc(c.cfg.Bin, []string{"app-server"}, c.cfg.Cwd, c.onLine)
+	p, err := startProc(c.cfg, c.cfg.Bin, append([]string{"app-server"}, c.cfg.ExtraArgs...), c.onLine)
 	if err != nil {
 		return err
 	}
@@ -280,7 +280,11 @@ func (c *Codex) Send(in Input) error {
 		input = append(input, map[string]any{"type": "text", "text": in.Text, "text_elements": []any{}})
 	}
 	for _, img := range in.Images {
-		input = append(input, map[string]any{"type": "localImage", "path": img.Path})
+		path := img.Path
+		if img.AgentPath != "" {
+			path = img.AgentPath
+		}
+		input = append(input, map[string]any{"type": "localImage", "path": path})
 	}
 	if len(input) == 0 {
 		return nil
@@ -922,7 +926,7 @@ func ProbeCodex(bin, cwd string) (model.Caps, error) {
 	var caps model.Caps
 	s := &capsSink{}
 	c := NewCodex(Config{Bin: bin, Cwd: cwd}, s)
-	p, err := startProc(bin, []string{"app-server"}, cwd, c.onLine)
+	p, err := startProc(Config{Cwd: cwd}, bin, []string{"app-server"}, c.onLine)
 	if err != nil {
 		return caps, err
 	}

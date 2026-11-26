@@ -376,7 +376,7 @@ function ResultLine({ item }: { item: Item }) {
     <div class={cls('result', bad && 'bad')}>
       <span class="line" />
       <span>
-        {interrupted ? 'Interrupted' : bad ? `Stopped · ${st.replace(/_/g, ' ')}` : 'Done'}
+        {interrupted ? 'Interrupted' : bad ? (st && st !== 'success' && st !== 'completed' ? `Stopped · ${st.replace(/_/g, ' ')}` : 'Error') : 'Done'}
         {parts.length > 0 && ' · ' + parts.join(' · ')}
       </span>
       <span class="line" />

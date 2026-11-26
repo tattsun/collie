@@ -46,11 +46,18 @@ type Config struct {
 	Mode   string
 	Ref    string // agent conversation id to create / resume
 	Resume bool
+	// Wrap, when set, rewrites the command line to run elsewhere (inside the
+	// project's container) and returns a function that signals the real
+	// process there; signals to the local client would not reach it.
+	Wrap func(argv []string, dir string) ([]string, func(sig string))
+	// ExtraArgs are appended to the agent's command line.
+	ExtraArgs []string
 }
 
 type Image struct {
-	Path string
-	Mime string
+	Path      string // on the server
+	AgentPath string // as seen by the agent, if different (container)
+	Mime      string
 }
 
 type Input struct {
@@ -113,11 +120,20 @@ type proc struct {
 	done   chan struct{}
 	stderr *tailBuffer
 	err    error
+	kill   func(sig string) // remote signaller (container), may be nil
 }
 
-func startProc(bin string, args []string, cwd string, onLine func([]byte)) (*proc, error) {
-	cmd := exec.Command(bin, args...)
-	cmd.Dir = cwd
+func startProc(cfg Config, bin string, args []string, onLine func([]byte)) (*proc, error) {
+	argv := append([]string{bin}, args...)
+	var kill func(string)
+	if cfg.Wrap != nil {
+		argv, kill = cfg.Wrap(argv, cfg.Cwd)
+	}
+	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd.Dir = cfg.Cwd
+	if _, err := os.Stat(cfg.Cwd); err != nil {
+		cmd.Dir = ""
+	}
 	cmd.Env = append(os.Environ(), "NO_COLOR=1")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pdeathsig: syscall.SIGTERM}
 	stdin, err := cmd.StdinPipe()
@@ -128,10 +144,10 @@ func startProc(bin string, args []string, cwd string, onLine func([]byte)) (*pro
 	if err != nil {
 		return nil, err
 	}
-	p := &proc{cmd: cmd, stdin: stdin, done: make(chan struct{}), stderr: &tailBuffer{max: 8 << 10}}
+	p := &proc{cmd: cmd, stdin: stdin, done: make(chan struct{}), stderr: &tailBuffer{max: 8 << 10}, kill: kill}
 	cmd.Stderr = p.stderr
 	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("start %s: %w", bin, err)
+		return nil, fmt.Errorf("start %s: %w", argv[0], err)
 	}
 	go func() {
 		r := bufio.NewReaderSize(stdout, 1<<16)
@@ -177,18 +193,26 @@ func (p *proc) close() {
 		return
 	case <-time.After(2 * time.Second):
 	}
-	if p.cmd.Process != nil {
-		_ = syscall.Kill(-p.cmd.Process.Pid, syscall.SIGTERM)
-	}
+	p.signal("TERM", syscall.SIGTERM)
 	select {
 	case <-p.done:
 		return
 	case <-time.After(3 * time.Second):
 	}
-	if p.cmd.Process != nil {
-		_ = syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL)
+	p.signal("KILL", syscall.SIGKILL)
+	select {
+	case <-p.done:
+	case <-time.After(10 * time.Second):
 	}
-	<-p.done
+}
+
+func (p *proc) signal(name string, sig syscall.Signal) {
+	if p.kill != nil {
+		p.kill(name)
+	}
+	if p.cmd.Process != nil {
+		_ = syscall.Kill(-p.cmd.Process.Pid, sig)
+	}
 }
 
 func (p *proc) exitError() error {

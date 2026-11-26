@@ -1,0 +1,8 @@
+#!/bin/bash
+# collie-exec <id> <command...>
+# Runs the command in its own session/process group and records the group id
+# so that `collie-kill <id>` can stop it together with everything it spawned
+# (signals sent to the `podman exec` client are not forwarded).
+id="$1"; shift
+mkdir -p /tmp/collie-pg
+exec setsid --wait bash -c 'echo $$ > "/tmp/collie-pg/$0"; exec "$@"' "$id" "$@"

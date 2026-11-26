@@ -2149,3 +2149,55 @@ pre.out.error-box {
   font-size: 12px;
   box-shadow: var(--shadow);
 }
+
+/* ---------------------------------------------------------------- isolation */
+.sub-item.iso {
+  color: var(--codex);
+}
+.psettings {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.psettings .card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.psettings h3 {
+  margin: 0;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.psettings p {
+  margin: 0;
+}
+.limits {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+.env-edit {
+  resize: vertical;
+  font-size: 12.5px;
+}
+.link-btn {
+  border: 0;
+  background: none;
+  color: var(--accent);
+  padding: 0;
+  cursor: pointer;
+  font-size: inherit;
+}
+.build-log {
+  max-height: 50vh;
+  font-size: 11px;
+}
+.foot-btn.err {
+  color: var(--red);
+}
+.modal.wide {
+  width: min(760px, 100%);
+}

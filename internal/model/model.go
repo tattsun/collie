@@ -14,11 +14,21 @@ type Project struct {
 	Name      string `json:"name"`
 	Path      string `json:"path"`
 	CreatedAt int64  `json:"createdAt"`
+	// Runtime is where agents run: "container" (isolated, one rootless
+	// Podman container per project) or "host" ("" = host, for projects
+	// created before isolation existed).
+	Runtime string `json:"runtime,omitempty"`
+	Memory  string `json:"memory,omitempty"` // container limits; "" = server default
+	CPUs    string `json:"cpus,omitempty"`
+	Pids    int    `json:"pids,omitempty"`
 	// Runtime-only fields.
 	Git    bool   `json:"git"`
 	Status string `json:"status,omitempty"` // "", "cloning", "error"
 	Error  string `json:"error,omitempty"`
 }
+
+// Isolated reports whether the project's agents run in a container.
+func (p *Project) Isolated() bool { return p.Runtime == "container" }
 
 // Session statuses.
 const (

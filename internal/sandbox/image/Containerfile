@@ -1,0 +1,41 @@
+# Collie agent image: the toolbox every isolated project runs in.
+# Built by `collie image build` (or from the UI); rebuild to update the agents.
+FROM docker.io/library/ubuntu:26.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
+    DISABLE_AUTOUPDATER=1 \
+    MISE_YES=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates curl wget gnupg git git-lfs openssh-client gh \
+      build-essential pkg-config python3 python3-pip python3-venv python-is-python3 \
+      nodejs npm \
+      ripgrep fd-find jq less nano vim-tiny unzip zip xz-utils file tree \
+      procps psmisc lsof iproute2 sqlite3 bash-completion tzdata util-linux \
+    && ln -sf /usr/bin/fdfind /usr/local/bin/fd \
+    && rm -rf /var/lib/apt/lists/*
+
+# mise, so each project can pin its own toolchains in its mise.toml.
+RUN curl -fsSL https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh
+
+# The agents and the Playwright MCP server (with Chromium). AGENTS_REV is
+# bumped by "rebuild" to pull the latest versions without a full rebuild.
+ARG AGENTS_REV=0
+RUN echo "agents rev ${AGENTS_REV}" \
+    && npm install -g --no-audit --no-fund @anthropic-ai/claude-code @openai/codex @playwright/mcp \
+    && pw="$(npm root -g)/@playwright/mcp/node_modules/playwright/cli.js" \
+    && { [ -f "$pw" ] || pw="$(npm root -g)/playwright/cli.js"; } \
+    && node "$pw" install --with-deps chromium \
+    && chmod -R a+rX /opt/ms-playwright \
+    && npm cache clean --force && rm -rf /var/lib/apt/lists/* /root/.cache
+
+COPY collie-exec collie-kill /usr/local/bin/
+RUN chmod 755 /usr/local/bin/collie-exec /usr/local/bin/collie-kill \
+    && mkdir -p /home/agent && chmod 777 /home/agent
+
+ENV HOME=/home/agent
+WORKDIR /home/agent
+CMD ["sleep", "infinity"]

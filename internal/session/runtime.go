@@ -2,6 +2,8 @@ package session
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log"
 	"strings"
 	"sync"
@@ -171,7 +173,8 @@ func (r *Runtime) ensureDriver() (agent.Driver, error) {
 		return d, nil
 	}
 	sess, _ := r.m.st.Session(r.id)
-	if sess.Agent != "claude" {
+	var se setupError
+	if sess.Agent != "claude" || errors.As(err, &se) {
 		return nil, err
 	}
 	// Claude: the conversation file may be missing (never written) or
@@ -208,18 +211,47 @@ func (r *Runtime) startDriver(flip bool) (agent.Driver, error) {
 		r.m.updateSession(r.id, func(s *model.Session) { s.AgentRef = ref })
 	}
 
+	proj, _ := r.m.st.Project(sess.ProjectID)
+	isolated := proj.Isolated()
+	if isolated {
+		r.m.setStatus(r.id, model.StatusStarting)
+		if err := r.m.ensureContainer(proj, func() {
+			r.sinkPut(&model.Item{ID: model.NewID(), Kind: model.KindNotice, Done: true,
+				Text: "Building the agent container image (first time only — this takes a few minutes)…"})
+		}); err != nil {
+			return nil, setupError{err}
+		}
+	}
+
 	r.mu.Lock()
 	r.gen++
 	gen := r.gen
 	r.startGen = gen
 	r.closing = false
 	s := &sink{r: r, gen: gen}
+	if isolated {
+		sb := r.m.sb
+		execID := fmt.Sprintf("%s-%d", r.id, gen)
+		cfg.Wrap = func(argv []string, dir string) ([]string, func(string)) {
+			return sb.Exec(proj.ID, dir, execID, false, nil, argv)
+		}
+	}
 	var d agent.Driver
 	if sess.Agent == "codex" {
 		cfg.Bin = r.m.cfg.CodexBin
+		if isolated {
+			cfg.Bin = "codex"
+			if err := r.m.sb.PrepareCodex(proj.ID); err != nil {
+				log.Printf("session %s: prepare codex config: %v", r.id, err)
+			}
+		}
 		d = agent.NewCodex(cfg, s)
 	} else {
 		cfg.Bin = r.m.cfg.ClaudeBin
+		if isolated {
+			cfg.Bin = "claude"
+			cfg.ExtraArgs = r.m.sb.ClaudeArgs()
+		}
 		d = agent.NewClaude(cfg, s)
 	}
 	r.drv = d
@@ -241,6 +273,13 @@ func (r *Runtime) startDriver(flip bool) (agent.Driver, error) {
 	}
 	return d, nil
 }
+
+// setupError is a failure to prepare the environment (e.g. the container),
+// as opposed to the agent itself failing to start.
+type setupError struct{ err error }
+
+func (e setupError) Error() string { return e.err.Error() }
+func (e setupError) Unwrap() error { return e.err }
 
 func (r *Runtime) sinkPut(it *model.Item) {
 	r.mu.Lock()

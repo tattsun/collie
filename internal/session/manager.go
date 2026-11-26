@@ -19,6 +19,7 @@ import (
 	"github.com/tattsun/collie/internal/agent"
 	"github.com/tattsun/collie/internal/gitutil"
 	"github.com/tattsun/collie/internal/model"
+	"github.com/tattsun/collie/internal/sandbox"
 	"github.com/tattsun/collie/internal/store"
 )
 
@@ -35,6 +36,13 @@ type Manager struct {
 	cfg Config
 	st  *store.Store
 	hub *Hub
+	sb  *sandbox.Manager
+
+	// TermsInUse reports whether a project has open terminals (set by the
+	// server, which owns terminals).
+	TermsInUse func(projectID string) bool
+	ctrMu      sync.Mutex
+	ctrActive  map[string]time.Time // project containers started by this process
 
 	mu   sync.Mutex
 	rts  map[string]*Runtime
@@ -42,8 +50,9 @@ type Manager struct {
 	bmu  sync.Mutex // serializes session update+broadcast so clients never see stale order
 }
 
-func NewManager(cfg Config, st *store.Store, hub *Hub) *Manager {
-	m := &Manager{cfg: cfg, st: st, hub: hub, rts: map[string]*Runtime{}, caps: map[string]model.Caps{}}
+func NewManager(cfg Config, st *store.Store, hub *Hub, sb *sandbox.Manager) *Manager {
+	m := &Manager{cfg: cfg, st: st, hub: hub, sb: sb, rts: map[string]*Runtime{}, caps: map[string]model.Caps{},
+		ctrActive: map[string]time.Time{}}
 	// Nothing is running after a restart.
 	for _, s := range st.Sessions() {
 		if s.Status != model.StatusStopped && s.Status != model.StatusError {
@@ -57,7 +66,133 @@ func NewManager(cfg Config, st *store.Store, hub *Hub) *Manager {
 	m.loadCaps()
 	go m.reaper()
 	go m.probeCaps()
+	go m.stopStaleContainers()
 	return m
+}
+
+func (m *Manager) Sandbox() *sandbox.Manager { return m.sb }
+
+// stopStaleContainers stops project containers left running by a previous
+// collie process: nothing in them is attached any more, and the next start
+// picks up configuration changes.
+func (m *Manager) stopStaleContainers() {
+	if m.sb == nil || !m.sb.Available() {
+		return
+	}
+	for _, p := range m.st.Projects() {
+		if p.Isolated() {
+			if info := m.sb.Inspect(p.ID); info.Running {
+				_ = m.sb.Stop(p.ID, false)
+			}
+		}
+	}
+}
+
+// ensureContainer makes sure the project's container (and its image) is up.
+// The container is only re-created for configuration changes when nothing
+// else in the project is using it.
+func (m *Manager) ensureContainer(p model.Project, onBuild func()) error {
+	if m.sb == nil || !m.sb.Available() {
+		return errors.New("this project runs isolated, but podman is not installed on the server")
+	}
+	if err := m.sb.WaitImage(45*time.Minute, onBuild); err != nil {
+		return err
+	}
+	if err := m.sb.Ensure(p, !m.projectBusy(p.ID)); err != nil {
+		return fmt.Errorf("start project container: %w", err)
+	}
+	m.ctrMu.Lock()
+	m.ctrActive[p.ID] = time.Now()
+	m.ctrMu.Unlock()
+	return nil
+}
+
+// EnsureContainer is ensureContainer for callers outside the session
+// package (terminals); it does not wait for an image build.
+func (m *Manager) EnsureContainer(p model.Project) error {
+	if m.sb == nil || !m.sb.Available() {
+		return errors.New("podman is not installed on the server")
+	}
+	if !m.sb.Status().Ready {
+		_ = m.sb.Build(false)
+		return errors.New("the agent container image is being built (first run, a few minutes) — try again shortly")
+	}
+	return m.ensureContainer(p, nil)
+}
+
+// projectBusy reports whether any agent process or terminal of the project
+// is running.
+func (m *Manager) projectBusy(projectID string) bool {
+	if m.TermsInUse != nil && m.TermsInUse(projectID) {
+		return true
+	}
+	m.mu.Lock()
+	rts := make([]*Runtime, 0, len(m.rts))
+	for _, r := range m.rts {
+		rts = append(rts, r)
+	}
+	m.mu.Unlock()
+	for _, r := range rts {
+		s, ok := m.st.Session(r.id)
+		if !ok || s.ProjectID != projectID {
+			continue
+		}
+		if r.driver() != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *Manager) projectRuntimes(projectID string) []*Runtime {
+	var out []*Runtime
+	for _, s := range m.st.Sessions() {
+		if s.ProjectID != projectID {
+			continue
+		}
+		m.mu.Lock()
+		r := m.rts[s.ID]
+		m.mu.Unlock()
+		if r != nil {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// StopProject stops every agent of the project. With kill, an isolated
+// project's container is killed outright (the emergency stop); otherwise
+// agents are asked to exit and the container is stopped.
+func (m *Manager) StopProject(projectID string, kill bool) error {
+	p, ok := m.st.Project(projectID)
+	if !ok {
+		return errors.New("project not found")
+	}
+	rts := m.projectRuntimes(projectID)
+	for _, r := range rts {
+		r.mu.Lock()
+		r.closing = true
+		r.mu.Unlock()
+	}
+	var err error
+	if p.Isolated() && m.sb != nil {
+		if kill {
+			err = m.sb.Stop(projectID, true)
+		}
+	}
+	var wg sync.WaitGroup
+	for _, r := range rts {
+		wg.Add(1)
+		go func() { defer wg.Done(); r.stop() }()
+	}
+	wg.Wait()
+	if p.Isolated() && m.sb != nil && !kill {
+		err = m.sb.Stop(projectID, false)
+	}
+	m.ctrMu.Lock()
+	delete(m.ctrActive, projectID)
+	m.ctrMu.Unlock()
+	return err
 }
 
 func (m *Manager) capsPath() string { return filepath.Join(m.st.Dir(), "caps.json") }
@@ -226,7 +361,12 @@ func (m *Manager) CreateSession(req CreateSessionReq) (model.Session, error) {
 		if !gitutil.IsRepo(p.Path) || !gitutil.HasCommits(p.Path) {
 			return model.Session{}, errors.New("an isolated worktree needs a git repository with at least one commit")
 		}
-		wt := filepath.Join(m.st.WorktreesDir(), sid)
+		// Grouped per project so an isolated project's container can mount
+		// all of its worktrees at once.
+		wt := filepath.Join(m.st.WorktreesDir(), p.ID, sid)
+		if err := os.MkdirAll(filepath.Dir(wt), 0o700); err != nil {
+			return model.Session{}, err
+		}
 		branch := "collie/" + sid[:8]
 		base := gitutil.HeadCommit(p.Path)
 		if err := gitutil.AddWorktree(p.Path, wt, branch); err != nil {
@@ -298,6 +438,18 @@ func (m *Manager) Send(sid, text string, imageIDs []string) error {
 			return fmt.Errorf("image %q not found", id)
 		}
 		imgs = append(imgs, agent.Image{Path: p, Mime: mime.TypeByExtension(filepath.Ext(p))})
+	}
+	if sess, ok := m.st.Session(sid); ok && sess.Agent == "codex" && len(imgs) > 0 {
+		// Codex takes image paths: make them visible inside the container.
+		if proj, ok := m.st.Project(sess.ProjectID); ok && proj.Isolated() && m.sb != nil {
+			for i := range imgs {
+				ap, err := m.sb.StageUpload(proj.ID, imgs[i].Path)
+				if err != nil {
+					return err
+				}
+				imgs[i].AgentPath = ap
+			}
+		}
 	}
 	text = strings.TrimRight(text, " \t\r\n")
 	if text == "" && len(imgs) == 0 {
@@ -521,5 +673,39 @@ func (m *Manager) reaper() {
 			}
 			r.mu.Unlock()
 		}
+		m.reapContainers()
+	}
+}
+
+// reapContainers stops project containers nothing has used for a while.
+func (m *Manager) reapContainers() {
+	if m.sb == nil || m.cfg.IdleTimeout <= 0 {
+		return
+	}
+	m.ctrMu.Lock()
+	ids := make([]string, 0, len(m.ctrActive))
+	for id := range m.ctrActive {
+		ids = append(ids, id)
+	}
+	m.ctrMu.Unlock()
+	for _, id := range ids {
+		if m.projectBusy(id) {
+			m.ctrMu.Lock()
+			m.ctrActive[id] = time.Now()
+			m.ctrMu.Unlock()
+			continue
+		}
+		m.ctrMu.Lock()
+		last := m.ctrActive[id]
+		m.ctrMu.Unlock()
+		if time.Since(last) < m.cfg.IdleTimeout {
+			continue
+		}
+		if err := m.sb.Stop(id, false); err != nil {
+			log.Printf("stop idle container for project %s: %v", id, err)
+		}
+		m.ctrMu.Lock()
+		delete(m.ctrActive, id)
+		m.ctrMu.Unlock()
 	}
 }

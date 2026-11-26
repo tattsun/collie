@@ -40,6 +40,9 @@ type Options struct {
 	Token  string
 	NoAuth bool
 	Web    fs.FS
+	// ProxyUID is the uid of the local reverse proxy whose identity headers
+	// are trusted (tailscaled runs as root).
+	ProxyUID int
 }
 
 type Server struct {
@@ -67,6 +70,10 @@ func New(m *session.Manager, terms *term.Manager, opt Options) *Server {
 		}
 	}
 	terms.OnChange = func() { m.Hub().Broadcast(map[string]any{"t": "terms", "terms": terms.List()}) }
+	m.TermsInUse = terms.InUse
+	if sb := m.Sandbox(); sb != nil {
+		sb.OnChange = func() { m.Hub().Broadcast(map[string]any{"t": "sandbox", "sandbox": sb.Status()}) }
+	}
 	s.routes()
 	return s
 }
@@ -146,6 +153,14 @@ func (s *Server) routes() {
 
 	mx.HandleFunc("POST /api/projects", s.createProject)
 	mx.HandleFunc("DELETE /api/projects/{id}", s.deleteProject)
+	mx.HandleFunc("PATCH /api/projects/{id}", s.patchProject)
+	mx.HandleFunc("POST /api/projects/{id}/stop", s.stopProject)
+	mx.HandleFunc("GET /api/projects/{id}/container", s.projectContainer)
+	mx.HandleFunc("GET /api/projects/{id}/env", s.getProjectEnv)
+	mx.HandleFunc("PUT /api/projects/{id}/env", s.putProjectEnv)
+	mx.HandleFunc("POST /api/sandbox/build", s.buildImage)
+	mx.HandleFunc("GET /api/shared/env", s.getSharedEnv)
+	mx.HandleFunc("PUT /api/shared/env", s.putSharedEnv)
 	mx.HandleFunc("GET /api/projects/{id}/changes", s.projectChanges)
 	mx.HandleFunc("GET /api/dirs", s.dirs)
 
@@ -180,8 +195,9 @@ func (s *Server) authed(r *http.Request) bool {
 		return true
 	}
 	// `tailscale serve` proxies from loopback and adds identity headers for
-	// tailnet users (never for Funnel traffic).
-	if r.Header.Get("Tailscale-User-Login") != "" && isLoopback(r.RemoteAddr) {
+	// tailnet users (never for Funnel traffic). Any local process could send
+	// that header, so it is only trusted from tailscaled's own socket.
+	if r.Header.Get("Tailscale-User-Login") != "" && isLoopback(r.RemoteAddr) && s.fromTrustedProxy(r) {
 		return true
 	}
 	if c, err := r.Cookie(cookieName); err == nil && s.tokenOK(c.Value) {
@@ -191,6 +207,15 @@ func (s *Server) authed(r *http.Request) bool {
 		return true
 	}
 	return false
+}
+
+func (s *Server) fromTrustedProxy(r *http.Request) bool {
+	local, ok := r.Context().Value(http.LocalAddrContextKey).(net.Addr)
+	if !ok {
+		return false
+	}
+	uid, err := loopbackPeerUID(r.RemoteAddr, local.String())
+	return err == nil && uid == s.opt.ProxyUID
 }
 
 func (s *Server) tokenOK(t string) bool {
@@ -244,6 +269,7 @@ func (s *Server) stateData() map[string]any {
 		"agents":    s.agentsAvail,
 		"root":      cfg.ProjectRoot,
 		"terms":     s.terms.List(),
+		"sandbox":   s.sandboxStatus(),
 		"version":   Version,
 		"build":     s.build,
 	}
@@ -376,6 +402,130 @@ func (s *Server) projectChanges(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) dirs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"root": s.m.Config().ProjectRoot, "dirs": s.m.SuggestDirs()})
+}
+
+func (s *Server) sandboxStatus() any {
+	sb := s.m.Sandbox()
+	if sb == nil {
+		return map[string]any{"available": false}
+	}
+	return sb.Status()
+}
+
+func (s *Server) patchProject(w http.ResponseWriter, r *http.Request) {
+	var req session.PatchProjectReq
+	if err := decode(r, &req); err != nil {
+		httpError(w, 400, err.Error())
+		return
+	}
+	p, err := s.m.PatchProject(r.PathValue("id"), req)
+	if err != nil {
+		httpError(w, 400, err.Error())
+		return
+	}
+	writeJSON(w, p)
+}
+
+// stopProject stops all agents and shells of a project; with kill, its
+// container is killed immediately (emergency stop).
+func (s *Server) stopProject(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Kill bool `json:"kill"`
+	}
+	if err := decode(r, &req); err != nil {
+		httpError(w, 400, err.Error())
+		return
+	}
+	id := r.PathValue("id")
+	for _, t := range s.terms.List() {
+		if t.Project == id {
+			if tt, ok := s.terms.Get(t.ID); ok {
+				tt.Close()
+			}
+		}
+	}
+	if err := s.m.StopProject(id, req.Kill); err != nil {
+		httpError(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true})
+}
+
+func (s *Server) projectContainer(w http.ResponseWriter, r *http.Request) {
+	sb := s.m.Sandbox()
+	if sb == nil {
+		writeJSON(w, map[string]any{})
+		return
+	}
+	writeJSON(w, sb.Inspect(r.PathValue("id")))
+}
+
+func (s *Server) getProjectEnv(w http.ResponseWriter, r *http.Request) {
+	env, err := s.m.ProjectEnv(r.PathValue("id"))
+	if err != nil {
+		httpError(w, 404, err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{"env": env})
+}
+
+func (s *Server) putProjectEnv(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Env string `json:"env"`
+	}
+	if err := decode(r, &req); err != nil {
+		httpError(w, 400, err.Error())
+		return
+	}
+	if err := s.m.SetProjectEnv(r.PathValue("id"), req.Env); err != nil {
+		httpError(w, 400, err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true})
+}
+
+func (s *Server) getSharedEnv(w http.ResponseWriter, r *http.Request) {
+	env, err := s.m.SharedEnv()
+	if err != nil {
+		httpError(w, 400, err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{"env": env})
+}
+
+func (s *Server) putSharedEnv(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Env string `json:"env"`
+	}
+	if err := decode(r, &req); err != nil {
+		httpError(w, 400, err.Error())
+		return
+	}
+	if err := s.m.SetSharedEnv(req.Env); err != nil {
+		httpError(w, 400, err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true})
+}
+
+func (s *Server) buildImage(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Refresh bool `json:"refresh"`
+	}
+	if err := decode(r, &req); err != nil {
+		httpError(w, 400, err.Error())
+		return
+	}
+	sb := s.m.Sandbox()
+	if sb == nil || !sb.Available() {
+		httpError(w, 400, "podman is not installed on the server")
+		return
+	}
+	if err := sb.Build(req.Refresh); err != nil {
+		httpError(w, 400, err.Error())
+		return
+	}
+	writeJSON(w, sb.Status())
 }
 
 // ---- sessions ----
@@ -550,23 +700,35 @@ func (s *Server) createTerm(w http.ResponseWriter, r *http.Request) {
 		httpError(w, 400, err.Error())
 		return
 	}
-	var cwd, title, owner string
+	sp := term.Spec{Cols: req.Cols, Rows: req.Rows}
+	projectID := req.ProjectID
 	if req.SessionID != "" {
 		sess, ok := s.m.Store().Session(req.SessionID)
 		if !ok {
 			httpError(w, 404, "session not found")
 			return
 		}
-		cwd, title, owner = sess.Cwd, sess.Title, sess.ID
-	} else {
-		p, ok := s.m.Store().Project(req.ProjectID)
-		if !ok {
-			httpError(w, 404, "project not found")
+		sp.Cwd, sp.Title, sp.Owner = sess.Cwd, sess.Title, sess.ID
+		projectID = sess.ProjectID
+	}
+	p, ok := s.m.Store().Project(projectID)
+	if !ok {
+		httpError(w, 404, "project not found")
+		return
+	}
+	if req.SessionID == "" {
+		sp.Cwd, sp.Title, sp.Owner = p.Path, p.Name, p.ID
+	}
+	sp.Project = p.ID
+	if p.Isolated() {
+		// The shell runs inside the project's container, like its agents.
+		if err := s.m.EnsureContainer(p); err != nil {
+			httpError(w, 409, err.Error())
 			return
 		}
-		cwd, title, owner = p.Path, p.Name, p.ID
+		sp.Argv, sp.Kill = s.m.Sandbox().Exec(p.ID, sp.Cwd, "term-"+sp.ID(), true, nil, []string{"bash", "-l"})
 	}
-	t, err := s.terms.Create(cwd, title, owner, req.Cols, req.Rows)
+	t, err := s.terms.Create(sp)
 	if err != nil {
 		httpError(w, 400, err.Error())
 		return

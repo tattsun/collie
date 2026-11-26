@@ -22,12 +22,26 @@ type Info struct {
 	ID        string `json:"id"`
 	Cwd       string `json:"cwd"`
 	Title     string `json:"title"`
-	Owner     string `json:"owner,omitempty"` // project or session id
+	Owner     string `json:"owner,omitempty"`   // project or session id
+	Project   string `json:"project,omitempty"` // project id
+	Isolated  bool   `json:"isolated,omitempty"`
 	CreatedAt int64  `json:"createdAt"`
+}
+
+// Spec describes the shell to start.
+type Spec struct {
+	Cwd, Title, Owner, Project string
+	Cols, Rows                 int
+	// Argv overrides the local login shell (e.g. a shell inside a
+	// container); Kill then signals what it started.
+	Argv []string
+	Kill func(sig string)
+	id   string
 }
 
 type Term struct {
 	Info
+	kill func(sig string)
 	cmd  *exec.Cmd
 	pty  *os.File
 	mu   sync.Mutex
@@ -68,16 +82,33 @@ func (m *Manager) Get(id string) (*Term, bool) {
 	return t, ok
 }
 
-func (m *Manager) Create(cwd, title, owner string, cols, rows int) (*Term, error) {
+// InUse reports whether any terminal belongs to the project.
+func (m *Manager) InUse(projectID string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, t := range m.terms {
+		if t.Project == projectID {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *Manager) Create(sp Spec) (*Term, error) {
+	cwd, cols, rows := sp.Cwd, sp.Cols, sp.Rows
 	st, err := os.Stat(cwd)
 	if err != nil || !st.IsDir() {
 		return nil, errors.New("directory not found: " + cwd)
 	}
-	shell := os.Getenv("SHELL")
-	if shell == "" {
-		shell = "/bin/bash"
+	argv := sp.Argv
+	if len(argv) == 0 {
+		shell := os.Getenv("SHELL")
+		if shell == "" {
+			shell = "/bin/bash"
+		}
+		argv = []string{shell, "-l"}
 	}
-	cmd := exec.Command(shell, "-l")
+	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Dir = cwd
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color", "COLORTERM=truecolor")
 	if cols <= 0 || rows <= 0 {
@@ -88,8 +119,9 @@ func (m *Manager) Create(cwd, title, owner string, cols, rows int) (*Term, error
 		return nil, err
 	}
 	t := &Term{
-		Info: Info{ID: model.NewID(), Cwd: cwd, Title: title, Owner: owner, CreatedAt: model.NowMs()},
-		cmd:  cmd, pty: f, subs: map[chan []byte]struct{}{}, done: make(chan struct{}),
+		Info: Info{ID: sp.ID(), Cwd: cwd, Title: sp.Title, Owner: sp.Owner, Project: sp.Project,
+			Isolated: len(sp.Argv) > 0, CreatedAt: model.NowMs()},
+		kill: sp.Kill, cmd: cmd, pty: f, subs: map[chan []byte]struct{}{}, done: make(chan struct{}),
 	}
 	m.mu.Lock()
 	m.terms[t.ID] = t
@@ -182,7 +214,26 @@ func (t *Term) Resize(cols, rows int) {
 
 func (t *Term) Done() <-chan struct{} { return t.done }
 
+// ID returns the id the terminal will get (fixed up front so a container
+// shell can be tagged with it).
+func (sp *Spec) ID() string {
+	if sp.id == "" {
+		sp.id = model.NewID()
+	}
+	return sp.id
+}
+
 func (t *Term) Close() {
+	if t.kill != nil {
+		go func() {
+			t.kill("HUP")
+			select {
+			case <-t.done:
+			case <-time.After(3 * time.Second):
+				t.kill("KILL")
+			}
+		}()
+	}
 	if t.cmd.Process != nil {
 		pid := t.cmd.Process.Pid
 		_ = syscall.Kill(-pid, syscall.SIGHUP)

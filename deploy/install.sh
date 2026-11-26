@@ -33,6 +33,14 @@ done
 install -Dm755 "$bin_src" "$prefix/collie"
 echo "installed $prefix/collie"
 
+if command -v podman >/dev/null 2>&1; then
+  echo "building the agent container image (first time takes a few minutes)…"
+  "$prefix/collie" --build-image ${COLLIE_DATA:+--data "$COLLIE_DATA"} || \
+    echo "warning: image build failed; Collie retries when an isolated project first runs."
+else
+  echo "note: podman not found — projects will run agents directly on this host (see deploy/setup-host.sh)."
+fi
+
 addr=":$port"
 [[ $serve == 1 ]] && addr="127.0.0.1:$port"
 

@@ -88,7 +88,8 @@ func (c *Claude) Start() error {
 	} else {
 		args = append(args, "--session-id", c.cfg.Ref)
 	}
-	p, err := startProc(c.cfg.Bin, args, c.cfg.Cwd, c.onLine)
+	args = append(args, c.cfg.ExtraArgs...)
+	p, err := startProc(c.cfg, c.cfg.Bin, args, c.onLine)
 	if err != nil {
 		return err
 	}
@@ -635,6 +636,10 @@ func (c *Claude) onResult(o map[string]any) {
 		it.Text = text
 	}
 	c.sink.Put(it)
+	if isErr && strings.Contains(str(o, "result"), "Not logged in") {
+		c.sink.Put(&model.Item{ID: model.NewID(), Kind: model.KindNotice, TS: model.NowMs(), Done: true,
+			Text: "Claude Code is not logged in here. For isolated projects: run `claude setup-token` (e.g. in a project terminal) and add CLAUDE_CODE_OAUTH_TOKEN=… under Project → Settings → Shared environment."})
+	}
 	c.sink.Meta(func(s *model.Session) {
 		s.CostUSD += delta
 		if win > 0 {

@@ -1,5 +1,5 @@
 import { signal, computed, batch } from '@preact/signals'
-import type { Caps, Item, ModeInfo, Project, Session, TermInfo } from './types'
+import type { Caps, Item, ModeInfo, Project, SandboxStatus, Session, TermInfo } from './types'
 
 // ---------------------------------------------------------------- state
 
@@ -11,6 +11,7 @@ export const agentCaps = signal<Record<string, Caps>>({})
 export const modes = signal<Record<string, ModeInfo[]>>({})
 export const agentsAvail = signal<Record<string, boolean>>({})
 export const terms = signal<TermInfo[]>([])
+export const sandbox = signal<SandboxStatus>({ available: false })
 export const root = signal('')
 export const version = signal('')
 
@@ -245,6 +246,7 @@ export function applyState(d: any) {
     modes.value = d.modes || {}
     agentsAvail.value = d.agents || {}
     terms.value = d.terms || []
+    sandbox.value = d.sandbox || { available: false }
     root.value = d.root || ''
     version.value = d.version || ''
   })
@@ -292,6 +294,9 @@ function onMessage(m: any) {
       break
     case 'terms':
       terms.value = m.terms || []
+      break
+    case 'sandbox':
+      sandbox.value = m.sandbox || { available: false }
       break
     case 'snap': {
       pending.delete(m.sid)

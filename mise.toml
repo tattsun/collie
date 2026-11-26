@@ -1,0 +1,45 @@
+# Toolchain and build tasks. On a fresh server:
+#   mise trust && mise install && mise run build
+[tools]
+go = "1.27.3"
+node = "26.13.1"
+
+[env]
+CGO_ENABLED = "0"
+
+[tasks.web]
+description = "Build the web UI into web/dist"
+dir = "{{config_root}}/web"
+run = [
+  "npm ci --no-audit --no-fund",
+  "npm run build",
+  "touch dist/.keep",
+]
+
+[tasks.build]
+description = "Build bin/collie (web UI embedded)"
+depends = ["web"]
+run = "go build -trimpath -ldflags '-s -w' -o bin/collie ."
+
+[tasks.cross]
+description = "Cross-compile for another architecture, e.g. `mise run cross arm64`"
+depends = ["web"]
+usage = 'arg "<arch>" help="GOARCH, e.g. amd64 or arm64"'
+run = "GOOS=linux GOARCH=${usage_arch} go build -trimpath -ldflags '-s -w' -o bin/collie-linux-${usage_arch} ."
+
+[tasks.test]
+description = "Run Go tests and the frontend type check"
+run = [
+  "go vet ./...",
+  "go test ./...",
+  "cd web && npx tsc --noEmit -p .",
+]
+
+[tasks.install]
+description = "Build and install as a systemd user service (pass --serve to publish via tailscale serve)"
+depends = ["build"]
+run = "./deploy/install.sh"
+
+[tasks.dev]
+description = "Run the API on :7878 without auth (pair with `cd web && npm run dev`)"
+run = "go run . --no-auth --addr 127.0.0.1:7878"

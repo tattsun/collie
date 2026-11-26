@@ -2,8 +2,8 @@
 # Install Collie as a systemd *user* service (runs as you, so it uses your
 # existing `claude` / `codex` logins and git credentials).
 #
-#   ./deploy/install.sh               # listen on :7878 (all interfaces, token auth)
-#   ./deploy/install.sh --serve       # listen on 127.0.0.1 and publish via `tailscale serve` (HTTPS)
+#   mise run install             (or ./deploy/install.sh)      # listen on :7878 (all interfaces, token auth)
+#   mise run install --serve     (or ./deploy/install.sh --serve) # listen on 127.0.0.1 and publish via `tailscale serve` (HTTPS)
 #
 # Env overrides: PREFIX (default ~/.local/bin), COLLIE_PORT (7878), COLLIE_ROOT, COLLIE_DATA
 set -euo pipefail
@@ -22,7 +22,7 @@ for a in "$@"; do
 done
 
 if [[ ! -x "$bin_src" ]]; then
-  echo "bin/collie not found — run 'make' first (or copy a prebuilt binary to bin/collie)." >&2
+  echo "bin/collie not found — run 'mise run build' first (or copy a prebuilt binary to bin/collie)." >&2
   exit 1
 fi
 
@@ -35,6 +35,15 @@ echo "installed $prefix/collie"
 
 addr=":$port"
 [[ $serve == 1 ]] && addr="127.0.0.1:$port"
+
+# PATH for the service: if mise is in use, put its shims first so tools it
+# manages (and per-project versions in each project's mise.toml) resolve the
+# same way they do in your shell, even after upgrades.
+unit_path="$PATH"
+shims="${MISE_DATA_DIR:-$HOME/.local/share/mise}/shims"
+if command -v mise >/dev/null 2>&1 && [[ -d "$shims" ]]; then
+  unit_path="$shims:$PATH"
+fi
 
 extra=()
 [[ -n "${COLLIE_ROOT:-}" ]] && extra+=("--root" "$COLLIE_ROOT")
@@ -51,7 +60,7 @@ After=network-online.target
 ExecStart=$prefix/collie --addr $addr ${extra[*]}
 # The agents (claude, codex, git, language toolchains) are found through the
 # PATH captured at install time. Re-run install.sh after changing it.
-Environment="PATH=$PATH"
+Environment="PATH=$unit_path"
 Restart=on-failure
 RestartSec=3
 # Stopping the service also stops agent processes and terminal shells.
@@ -83,6 +92,7 @@ fi
 
 sleep 1
 token="$("$prefix/collie" --print-token ${extra[*]})"
+# (Shown here once on your terminal; the service log never contains it.)
 echo
 echo "Collie is running.  Logs: journalctl --user -u collie -f"
 if [[ $serve == 1 ]]; then

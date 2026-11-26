@@ -20,17 +20,25 @@ Tailscale 経由でスマホや別 PC からプロジェクトを作り、エー
 ## 必要なもの
 
 - Linux（Ubuntu 22.04+ 推奨）
+- [mise](https://mise.jdx.dev/)（Go / Node.js はプロジェクトの `mise.toml` で固定しているので、別途入れる必要なし）
 - `claude`（Claude Code）および/または `codex` CLI が**サーバのユーザーでログイン済み**であること
 - `git`
-- ビルドする場合: Go 1.22+ / Node.js 20+
 
 ## ビルド
 
 ```bash
-make            # web/ をビルドして bin/collie を生成
-# 別アーキテクチャ向け（例: Raspberry Pi / ARM サーバ）
-make cross GOARCH=arm64
+mise trust && mise install   # mise.toml の Go / Node を導入（初回のみ）
+mise run build               # web/ をビルドして bin/collie を生成
 ```
+
+その他のタスク（`mise tasks` で一覧）:
+
+| タスク | 内容 |
+|---|---|
+| `mise run cross arm64` | 別アーキテクチャ向けにビルド（例: Raspberry Pi / ARM サーバ） |
+| `mise run test` | Go のテスト・vet とフロントの型チェック |
+| `mise run install [--serve]` | ビルドして systemd ユーザーサービスとして導入 |
+| `mise run dev` | 開発用 API サーバ（認証なし・:7878） |
 
 ## 起動（お試し）
 
@@ -40,20 +48,22 @@ make cross GOARCH=arm64
 # 2026/..   open: http://100.x.y.z:7878/?token=…   ← tailscale
 ```
 
-表示された URL をスマホで開けばそのデバイスはログイン済みになります（Cookie は約 1 年有効）。
-トークンは `~/.collie/token` に保存され、`collie --print-token` でいつでも表示できます。
+ターミナルで起動すると、トークン付きの URL が表示されます。スマホで開けばそのデバイスはログイン済みになります（Cookie は約 1 年有効）。
+トークンは `~/.collie/token` に保存され、`collie --print-token`（トークンのみ）や `collie --login-url`（ログイン用 URL）でいつでも表示できます。
+systemd などで動かしているときは、トークンはログ（journal）に出しません。
 
 ## サーバに常駐させる（systemd ユーザーサービス）
 
 ```bash
-make
-./deploy/install.sh           # :7878 で待ち受け（トークン認証）
+git clone <this repo> && cd collie
+mise trust && mise install
+mise run install              # :7878 で待ち受け（トークン認証）
 # あるいは
-./deploy/install.sh --serve   # 127.0.0.1 で待ち受け、tailscale serve で HTTPS 公開（推奨）
+mise run install --serve      # 127.0.0.1 で待ち受け、tailscale serve で HTTPS 公開（推奨）
 ```
 
 - サービスはあなたのユーザーとして動くので、`claude` / `codex` のログイン状態や git の認証情報をそのまま使います
-- インストール時の `PATH` をユニットに書き込みます（mise / nvm などで入れた CLI も見つかるように）。PATH を変えたら再実行
+- インストール時の `PATH` をユニットに書き込みます。mise を使っていれば shims を先頭に入れるので、mise で入れた CLI はアップグレード後も見つかり、各プロジェクトの `mise.toml` のバージョンもエージェントからそのまま使われます。PATH を変えたら再実行
 - `loginctl enable-linger` でログアウト後・再起動後も動き続けます
 - ログ: `journalctl --user -u collie -f`
 
@@ -110,6 +120,7 @@ Collie はブラウザから**サーバ上で任意のコマンドを実行で�
 
 - 公開インターネットには出さないでください（Tailscale / LAN 内での利用を想定）
 - 既定でトークン認証が有効です。`--no-auth` は信頼できる環境でのみ
+- API と WebSocket は同一オリジンからのリクエストのみ受け付けます（他サイトからのクロスサイト操作・WebSocket 乗っ取りを拒否）
 - エージェント出力の Markdown は生 HTML を無効化して描画し、さらに CSP でスクリプト実行を禁止しています
 - プロジェクトを削除しても**ディスク上のファイルは削除しません**（Collie が作った worktree のみ削除。ブランチは残ります）
 
@@ -130,8 +141,8 @@ Collie はブラウザから**サーバ上で任意のコマンドを実行で�
 ## 開発
 
 ```bash
-go run . --no-auth --addr 127.0.0.1:7878   # API
-cd web && npm run dev                      # http://localhost:5173（/api を 7878 にプロキシ）
+mise run dev                 # API（認証なし・127.0.0.1:7878）
+cd web && npm run dev        # http://localhost:5173（/api を 7878 にプロキシ）
 ```
 
 構成:
@@ -146,4 +157,5 @@ internal/term/           PTY ターミナル
 internal/gitutil/        worktree・diff
 web/                     Preact + Vite フロントエンド
 deploy/install.sh        systemd ユーザーサービス導入
+mise.toml                ツールチェーン（Go / Node）とビルドタスク
 ```

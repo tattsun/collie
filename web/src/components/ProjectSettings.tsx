@@ -5,7 +5,7 @@ import { groupById, me, sandbox, sessions, toast, toastError } from '../store'
 import { EnvEditor } from './Editors'
 import { cls } from '../util'
 import { IAlert, IBox, IRefresh, Spinner } from './icons'
-import { Modal, Segmented, rich } from './ui'
+import { Modal, Segmented, rich, ContainerUsage } from './ui'
 import { t, ts } from '../i18n'
 
 /** Substitute JSX parts for {key} placeholders in an already-translated string. */
@@ -167,7 +167,14 @@ export function ProjectSettings({ p }: { p: Project }) {
               <span class={cls('dot', c.running ? 'running' : 'stopped')} />
               <span class="grow small">
                 {c.mine ? t('You') : c.userName}
-                {c.running ? <span class="dim mono"> · {c.mem} · {c.cpu} · {t('{n} procs', { n: c.pids })}</span> : <span class="dim"> · {t('stopped')}</span>}
+                {c.running ? (
+                  <>
+                    {' · '}
+                    <ContainerUsage mem={c.mem} cpu={c.cpu} pids={c.pids} limited={c.limitsEnforced} />
+                  </>
+                ) : (
+                  <span class="dim"> · {t('stopped')}</span>
+                )}
               </span>
             </div>
           ))}

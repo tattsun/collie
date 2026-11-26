@@ -153,6 +153,32 @@ export function Toggle({ checked, onChange, label, hint, disabled }: { checked: 
   )
 }
 
+const UNIT: Record<string, number> = { B: 1, kB: 1e3, KB: 1e3, MB: 1e6, GB: 1e9, TB: 1e12, KiB: 2 ** 10, MiB: 2 ** 20, GiB: 2 ** 30, TiB: 2 ** 40 }
+
+/** Parse podman's "173MB" into bytes. */
+function bytes(s: string | undefined): number | null {
+  const m = /^([\d.]+)\s*([kKMGT]?i?B)$/.exec((s || '').trim())
+  return m && UNIT[m[2]] ? parseFloat(m[1]) * UNIT[m[2]] : null
+}
+
+/** Bytes in the units limits are configured with (4g = 4 GiB). */
+function size(b: number): string {
+  if (b < 2 ** 30) return `${Math.max(1, Math.round(b / 2 ** 20))}MB`
+  const g = b / 2 ** 30
+  return `${g < 10 ? Math.round(g * 10) / 10 : Math.round(g)}GB`
+}
+
+/** "Memory 165MB of 4GB · CPU 1.7% · 21 processes" from podman stats. */
+export function ContainerUsage({ mem, cpu, pids, limited }: { mem?: string; cpu?: string; pids?: string; limited?: boolean }) {
+  const [u, l] = (mem || '').split('/')
+  const used = bytes(u)
+  const limit = limited !== false ? bytes(l) : null
+  const usedText = used !== null ? size(used) : (u || '').trim()
+  const memText = limit ? t('Memory {used} of {limit}', { used: usedText, limit: size(limit) }) : t('Memory {used}', { used: usedText })
+  const parts = [memText, cpu && t('CPU {pct}', { pct: cpu }), pids && t('{n} procs', { n: pids })].filter(Boolean)
+  return <span class="dim">{parts.join(' · ')}</span>
+}
+
 /** Fill a translated sentence's {key} placeholders with elements (code, links…). */
 export function rich(s: string, parts: Record<string, ComponentChildren>) {
   return s.split(/\{(\w+)\}/).map((x, i) => <Fragment key={i}>{i % 2 ? parts[x] : x}</Fragment>)

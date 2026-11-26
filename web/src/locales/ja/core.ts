@@ -56,6 +56,11 @@ const ja: Record<string, string> = {
   'View image': '画像を表示',
   'Find tools': 'ツールを探す',
 
+  // container usage
+  'Memory {used} of {limit}': 'メモリ {used}（上限 {limit}）',
+  'Memory {used}': 'メモリ {used}',
+  'CPU {pct}': 'CPU {pct}',
+
   // ---- from the server: permission modes (labels)
   'Ask before edits & commands': '編集・コマンド実行の前に確認',
   'Auto-accept edits': 'ファイル編集は自動で承認',

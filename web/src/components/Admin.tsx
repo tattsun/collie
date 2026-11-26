@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'preact/hooks'
+import { ContainerUsage } from './ui'
 import { api } from '../api'
 import { t } from '../i18n'
 import { go, me, route, toast, toastError } from '../store'
@@ -158,10 +159,10 @@ export function AdminPage() {
               <span class="grow small">
                 <b>{c.project || c.projectId}</b> · {c.user}
                 {c.running && (
-                  <span class="dim mono">
-                    {' '}
-                    · {c.mem} · {c.cpu} · {t('{n} procs', { n: c.pids })}
-                    {c.limitsEnforced === false ? ' · ' + t('limits NOT enforced') : ''}
+                  <span>
+                    {' · '}
+                    <ContainerUsage mem={c.mem} cpu={c.cpu} pids={c.pids} limited={c.limitsEnforced} />
+                    {c.limitsEnforced === false && <span class="warn">{' · ' + t('limits NOT enforced')}</span>}
                   </span>
                 )}
               </span>

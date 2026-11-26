@@ -582,6 +582,22 @@ func (m *Manager) withStats(ctx context.Context, c ContainerInfo) ContainerInfo 
 			c.Mem, c.CPU, c.Pids = strings.TrimSpace(f[0]), strings.TrimSpace(f[1]), strings.TrimSpace(f[2])
 		}
 	}
+	if !c.LimitsEnforced {
+		// Without its own cgroup, podman reports the parent's usage (the
+		// whole service or host); add up the container's processes instead.
+		// CPU usage has no per-container figure there; leave it out.
+		c.CPU, c.Pids = "", ""
+		if out, err := m.podman(ctx, "exec", c.Name, "ps", "-eo", "rss="); err == nil {
+			var kb int64
+			procs := strings.Fields(out)
+			for _, f := range procs {
+				n, _ := strconv.ParseInt(f, 10, 64)
+				kb += n
+			}
+			// minus the ps process itself
+			c.Mem, c.Pids = fmt.Sprintf("%.1fMB", float64(kb)*1024/1e6), strconv.Itoa(max(len(procs)-1, 0))
+		}
+	}
 	return c
 }
 

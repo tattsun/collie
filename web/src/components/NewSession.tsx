@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import type { Agent, Project, Session } from '../types'
 import { api } from '../api'
-import { agentCaps, agentsAvail, go, groupById, modes, projectById, projects, route, toastError } from '../store'
+import { agentCaps, agentsAvail, go, groupById, homeProject, modes, projectById, projects, route, toastError } from '../store'
 import { cls, home, isTouch } from '../util'
-import { IBack, IBranch, IImage, IPlus, ISend, Spinner } from './icons'
+import { IBack, IBranch, IHome, IImage, IPlus, ISend, Spinner } from './icons'
 import { Segmented, Toggle } from './ui'
 import { Thumbs, pastedImages, useAttachments } from './attach'
 import { t, ts } from '../i18n'
@@ -118,7 +118,8 @@ export function NewSession() {
     return opts
   }, [models, model])
 
-  if (!plist.length) {
+  const homeId = homeProject.value?.id
+  if (!plist.length && !(homeId && projectId === homeId)) {
     return (
       <div class="page center-page">
         <div class="hero">
@@ -128,6 +129,11 @@ export function NewSession() {
           <button class="btn primary big" onClick={() => go('#/projects?new=1')}>
             <IPlus size={16} /> {t('Create a project')}
           </button>
+          {homeId && (
+            <button class="btn big" onClick={() => go(`#/new?project=${homeId}`)}>
+              <IHome size={16} /> {t('Talk to your Home agent')}
+            </button>
+          )}
         </div>
       </div>
     )
@@ -187,6 +193,7 @@ export function NewSession() {
             <span class="field-l">{t('Project')}</span>
             <div class="row gap">
               <select class="select" value={projectId} onChange={(e) => setProjectId((e.target as HTMLSelectElement).value)}>
+                {homeId && <option value={homeId}>{t('Home')}</option>}
                 {projectGroups(plist).map(([label, items]) => (
                   <optgroup key={label} label={label}>
                     {items.map((p) => (
@@ -201,7 +208,12 @@ export function NewSession() {
                 <IPlus size={15} />
               </button>
             </div>
-            {project && <span class="field-h mono">{home(project.path)}</span>}
+            {project &&
+              (project.home ? (
+                <span class="field-h">{t('Talk about anything · coordinate your projects')}</span>
+              ) : (
+                <span class="field-h mono">{home(project.path)}</span>
+              ))}
           </label>
           {project?.ownerGroup && (
             <div class="field">

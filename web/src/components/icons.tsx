@@ -105,6 +105,14 @@ export const IBox = (p: P) =>
     </>,
     p,
   )
+export const IHome = (p: P) =>
+  svg(
+    <>
+      <path d="M3 10.5L12 3l9 7.5" />
+      <path d="M5 9v11h5v-6h4v6h5V9" />
+    </>,
+    p,
+  )
 export const IAlert = (p: P) => svg(<path d="M12 9v4M12 17h.01M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" />, p)
 export const ISettings = (p: P) =>
   svg(

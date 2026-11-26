@@ -6,7 +6,7 @@ import { go, groupById, groups, me, ownerLabel, projectById, projects, root, roo
 import { ago, cls, home } from '../util'
 import { ChangesView } from './Changes'
 import { AgentBadge, Segmented, StatusDot, Toggle } from './ui'
-import { IBack, IBox, IDiff, IFolder, IList, IPlus, ISettings, ITerminal, ITrash, Spinner } from './icons'
+import { IBack, IBox, IDiff, IFolder, IHome, IList, IPlus, ISettings, ITerminal, ITrash, Spinner } from './icons'
 import { ProjectSettings } from './ProjectSettings'
 import { t, ts } from '../i18n'
 
@@ -200,9 +200,19 @@ export function ProjectPage({ id }: { id: string }) {
   return (
     <div class="session">
       <header class="sess-head">
-        <button class="icon-btn back" onClick={() => go('#/projects')} aria-label={t('Back')}>
+        <button class="icon-btn back" onClick={() => go(p.home ? '#/' : '#/projects')} aria-label={t('Back')}>
           <IBack size={20} />
         </button>
+        {p.home ? (
+          <div class="sess-title-wrap">
+            <div class="sess-title static">
+              <IHome size={16} /> {t('Home')}
+            </div>
+            <div class="sess-sub">
+              <span class="sub-item">{t('Talk about anything · coordinate your projects')}</span>
+            </div>
+          </div>
+        ) : (
         <div class="sess-title-wrap">
           <div class="sess-title static">{p.name}</div>
           <div class="sess-sub">
@@ -224,28 +234,44 @@ export function ProjectPage({ id }: { id: string }) {
             )}
           </div>
         </div>
+        )}
         <button class="btn primary small" onClick={() => go(`#/new?project=${id}`)} disabled={p.status === 'cloning'}>
-          <IPlus size={15} /> {t('Session')}
+          <IPlus size={15} /> {p.home ? t('New chat') : t('Session')}
         </button>
       </header>
       <nav class="tabs">
         <a href={`#/p/${id}`} class={cls('tab', tab === 'sessions' && 'on')}>
           <IList size={14} /> {t('Sessions')}
         </a>
-        <a href={`#/p/${id}/changes`} class={cls('tab', tab === 'changes' && 'on')}>
-          <IDiff size={14} /> {t('Changes')}
-        </a>
+        {!p.home && (
+          <a href={`#/p/${id}/changes`} class={cls('tab', tab === 'changes' && 'on')}>
+            <IDiff size={14} /> {t('Changes')}
+          </a>
+        )}
         <a href={`#/p/${id}/term`} class={cls('tab', tab === 'term' && 'on')}>
           <ITerminal size={14} /> {t('Terminal')}
         </a>
-        <a href={`#/p/${id}/settings`} class={cls('tab', tab === 'settings' && 'on')}>
-          <ISettings size={14} /> {t('Settings')}
-        </a>
+        {!p.home && (
+          <a href={`#/p/${id}/settings`} class={cls('tab', tab === 'settings' && 'on')}>
+            <ISettings size={14} /> {t('Settings')}
+          </a>
+        )}
       </nav>
       {tab === 'sessions' && (
         <div class="tab-body page-pad">
           {p.status === 'error' && <div class="error-box">{ts(p.error || '')}</div>}
-          {list.length === 0 && <div class="dim pad">{t('No sessions in this project yet.')}</div>}
+          {p.home && list.length === 0 && (
+            <div class="card home-intro">
+              <p>{t('Your Home agent is for anything that is not tied to one project:')}</p>
+              <ul>
+                <li>{t('everyday questions and consultations')}</li>
+                <li>{t('“What happened in my projects this week?” — it reads your sessions and code')}</li>
+                <li>{t('“Have sample2 fix its tests” — it starts or instructs sessions in your projects')}</li>
+              </ul>
+              <p class="dim small">{t('It reads your projects but does not edit them; the sessions it starts do, and their approvals still come to you.')}</p>
+            </div>
+          )}
+          {!p.home && list.length === 0 && <div class="dim pad">{t('No sessions in this project yet.')}</div>}
           <div class="plist">
             {list.map((s) => (
               <a key={s.id} href={`#/s/${s.id}`} class={cls('card prow-card', s.archived && 'archived')}>
@@ -259,14 +285,16 @@ export function ProjectPage({ id }: { id: string }) {
               </a>
             ))}
           </div>
-          <div class="danger-zone">
-            <button class="btn ghost danger small" onClick={remove}>
-              <ITrash size={14} /> {t('Remove project')}
-            </button>
-          </div>
+          {!p.home && (
+            <div class="danger-zone">
+              <button class="btn ghost danger small" onClick={remove}>
+                <ITrash size={14} /> {t('Remove project')}
+              </button>
+            </div>
+          )}
         </div>
       )}
-      {tab === 'changes' && (
+      {tab === 'changes' && !p.home && (
         <div class="tab-body">
           <ChangesView url={`/api/projects/${id}/changes`} />
         </div>
@@ -276,7 +304,7 @@ export function ProjectPage({ id }: { id: string }) {
           <TerminalView owner={id} projectId={id} />
         </Suspense>
       )}
-      {tab === 'settings' && (
+      {tab === 'settings' && !p.home && (
         <div class="tab-body">
           <ProjectSettings p={p} />
         </div>

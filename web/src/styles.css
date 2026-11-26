@@ -684,6 +684,21 @@ button.chip {
   margin-top: 3px;
   color: var(--dim);
 }
+.home-row {
+  margin-bottom: 8px;
+  border: 1px solid var(--border);
+  background: var(--elev);
+}
+.home-row .icon {
+  color: var(--accent);
+}
+.home-intro {
+  line-height: 1.6;
+}
+.home-intro ul {
+  margin: 6px 0 0;
+  padding-left: 1.2em;
+}
 .srow:hover,
 .prow:hover {
   background: var(--hover);

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -37,6 +38,11 @@ func env(k, def string) string {
 }
 
 func main() {
+	// Run by the Home agent (inside its container): connects the agent's MCP
+	// stdio to Collie's tools socket.
+	if len(os.Args) == 3 && os.Args[1] == "mcp-bridge" {
+		os.Exit(mcpBridge(os.Args[2]))
+	}
 	// Subcommands for the server owner (run on the server, as Collie's user).
 	if len(os.Args) > 1 && !strings.HasPrefix(os.Args[1], "-") {
 		os.Exit(subcommand(os.Args[1], os.Args[2:]))
@@ -329,4 +335,23 @@ func subcommand(name string, args []string) int {
 	}
 	usage()
 	return 2
+}
+
+// mcpBridge copies stdin to the Unix socket and the socket to stdout until
+// Collie's side is done (it finishes after the agent closes stdin).
+func mcpBridge(sock string) int {
+	c, err := net.Dial("unix", sock)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "collie mcp-bridge:", err)
+		return 1
+	}
+	defer c.Close()
+	go func() {
+		_, _ = io.Copy(c, os.Stdin)
+		if uc, ok := c.(*net.UnixConn); ok {
+			_ = uc.CloseWrite()
+		}
+	}()
+	_, _ = io.Copy(os.Stdout, c)
+	return 0
 }

@@ -151,6 +151,23 @@ const ja: Record<string, string> = {
   'invalid process limit': 'プロセス数の上限が正しくありません',
   'agent process exited': 'エージェントのプロセスが終了しました',
   'web UI not built': 'Web UI がビルドされていません',
+
+  // ---- Home
+  Home: 'Home',
+  'Talk about anything · coordinate your projects': '何でも相談・プロジェクトの取りまとめ',
+  'Talk to your Home agent': 'Home エージェントと話す',
+  'New chat': '新しい会話',
+  'Your Home agent is for anything that is not tied to one project:': 'Home エージェントには、特定のプロジェクトに限らないことを何でも頼めます:',
+  'everyday questions and consultations': 'ふだんの質問や相談',
+  '“What happened in my projects this week?” — it reads your sessions and code': '「今週プロジェクトで何があった？」— セッションの履歴やコードを読んで答えます',
+  '“Have sample2 fix its tests” — it starts or instructs sessions in your projects': '「sample2 のテストを直させて」— プロジェクトにセッションを立てたり、指示を送ったりします',
+  'It reads your projects but does not edit them; the sessions it starts do, and their approvals still come to you.':
+    'プロジェクトは読むだけで、自分では編集しません。編集するのは Home が立てたセッションで、その承認はこれまでどおりあなたに届きます。',
+  '{name} · via Home': '{name} · Home 経由',
+  'Sent by your Home agent': 'Home エージェントが送信',
+  // Server texts
+  'Home cannot be renamed, moved or deleted': 'Home は名前の変更・移動・削除ができません',
+  'Home needs podman on the server (it runs in a container)': 'Home を使うにはサーバに podman が必要です（コンテナで動くため）',
 }
 export default ja
 

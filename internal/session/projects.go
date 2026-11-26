@@ -223,6 +223,9 @@ func (m *Manager) DeleteProject(a Actor, id string) error {
 	if err != nil {
 		return err
 	}
+	if p.Home {
+		return errHomeFixed
+	}
 	if !m.ProjectManageable(a.ID, p) {
 		return ErrForbidden
 	}
@@ -303,6 +306,9 @@ func (m *Manager) PatchProject(a Actor, id string, req PatchProjectReq) (model.P
 	p, err := m.visibleProject(a.ID, id)
 	if err != nil {
 		return p, err
+	}
+	if p.Home && (req.Name != nil || req.Runtime != nil) {
+		return p, errHomeFixed
 	}
 	if !m.ProjectManageable(a.ID, p) {
 		return p, ErrForbidden

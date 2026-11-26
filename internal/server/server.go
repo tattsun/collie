@@ -371,6 +371,8 @@ func (s *Server) directory() []userInfo {
 func (s *Server) stateFor(u auth.User, legacy bool) map[string]any {
 	cfg := s.m.Config()
 	a := session.Actor{ID: u.ID, Name: u.Name, Admin: u.Admin}
+	// Every user has a Home (without podman only admins, as it then runs on the host).
+	_, _ = s.m.EnsureHome(a)
 	return map[string]any{
 		"t":         "state",
 		"me":        userInfo{ID: u.ID, Name: u.Name, DisplayName: u.DisplayName, Admin: u.Admin},

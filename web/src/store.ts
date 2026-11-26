@@ -6,7 +6,9 @@ import type { Caps, GroupInfo, Item, ModeInfo, Project, SandboxStatus, Session, 
 
 export const authed = signal<boolean | null>(null)
 export const conn = signal<'connecting' | 'online' | 'offline'>('connecting')
+// Work projects; the user's Home (a project too, server-side) is kept apart.
 export const projects = signal<Project[]>([])
+export const homeProject = signal<Project | null>(null)
 export const sessions = signal<Session[]>([])
 export const agentCaps = signal<Record<string, Caps>>({})
 export const modes = signal<Record<string, ModeInfo[]>>({})
@@ -38,7 +40,11 @@ export function ownerLabel(p: Project): string {
   return ''
 }
 
-export const projectById = computed(() => new Map(projects.value.map((p) => [p.id, p])))
+export const projectById = computed(() => {
+  const m = new Map(projects.value.map((p) => [p.id, p]))
+  if (homeProject.value) m.set(homeProject.value.id, homeProject.value)
+  return m
+})
 export const sessionById = computed(() => new Map(sessions.value.map((s) => [s.id, s])))
 
 export const attention = computed(() =>
@@ -272,7 +278,9 @@ export function applyState(d: any) {
     loadedBuild = d.build
   }
   batch(() => {
-    projects.value = d.projects || []
+    const all: Project[] = d.projects || []
+    homeProject.value = all.find((p) => p.home) || null
+    projects.value = all.filter((p) => !p.home)
     sessions.value = d.sessions || []
     agentCaps.value = d.agentCaps || {}
     modes.value = d.modes || {}
@@ -322,6 +330,10 @@ function onMessage(m: any) {
       sessions.value = sessions.value.filter((s) => s.id !== m.id)
       break
     case 'project': {
+      if (m.project.home) {
+        homeProject.value = m.project
+        break
+      }
       const list = projects.value.slice()
       const i = list.findIndex((x) => x.id === m.project.id)
       if (i >= 0) list[i] = m.project
@@ -330,6 +342,7 @@ function onMessage(m: any) {
       break
     }
     case 'project_del':
+      if (homeProject.value?.id === m.id) homeProject.value = null
       projects.value = projects.value.filter((p) => p.id !== m.id)
       break
     case 'agentcaps':

@@ -113,7 +113,20 @@ type Spec struct {
 	// project into the home on first use; only for the user who owns that
 	// state (the server's owner), never for anyone else.
 	MigrateHostState bool
+	// Home containers: the user's projects, mounted read-only at their
+	// paths; the host directory holding Collie's socket for the Home
+	// agent's tools (mounted at CollieRunDir); and Collie's own binary,
+	// which bridges the agent's MCP stdio to that socket (at CollieBinPath).
+	ReadOnly  []string
+	CollieRun string
+	CollieBin string
 }
+
+// Where a Home container sees Collie's socket directory and binary.
+const (
+	CollieRunDir  = "/run/collie"
+	CollieBinPath = "/usr/local/lib/collie/collie"
+)
 
 // Ensure starts the container, creating (or re-creating, when its
 // configuration changed and recreate is allowed) it as needed.
@@ -222,6 +235,15 @@ func (m *Manager) runArgs(sp Spec, extra []string) []string {
 	}
 	for _, d := range extra {
 		args = append(args, "-v", d+":"+d)
+	}
+	for _, d := range sp.ReadOnly {
+		args = append(args, "-v", d+":"+d+":ro")
+	}
+	if sp.CollieRun != "" {
+		args = append(args, "-v", sp.CollieRun+":"+CollieRunDir)
+	}
+	if sp.CollieBin != "" {
+		args = append(args, "-v", sp.CollieBin+":"+CollieBinPath+":ro")
 	}
 	// The merged (global + personal) profile where the agents look for it.
 	ro := func(src, dst string) { args = append(args, "-v", src+":"+dst+":ro") }

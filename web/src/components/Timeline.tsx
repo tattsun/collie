@@ -80,7 +80,11 @@ function UserMsg({ item }: { item: Item }) {
   const other = item.by && item.by !== me.value?.id
   return (
     <div class="msg-user">
-      {other && <div class="msg-by">{userName(item.by)}</div>}
+      {item.via === 'home' ? (
+        <div class="msg-by">{other ? t('{name} · via Home', { name: userName(item.by) }) : t('Sent by your Home agent')}</div>
+      ) : (
+        other && <div class="msg-by">{userName(item.by)}</div>
+      )}
       {item.images && item.images.length > 0 && (
         <div class="thumbs">
           {item.images.map((id) => (

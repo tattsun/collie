@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"mime"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -51,6 +52,10 @@ type Manager struct {
 	ctrMu      sync.Mutex
 	ctrActive  map[string]time.Time // "project/user" containers started by this process
 
+	// Home: one per user (see home.go); homeLn are the users' tools sockets.
+	homeMu sync.Mutex
+	homeLn map[string]net.Listener
+
 	mu   sync.Mutex
 	rts  map[string]*Runtime
 	caps map[string]model.Caps
@@ -59,7 +64,7 @@ type Manager struct {
 
 func NewManager(cfg Config, st *store.Store, hub *Hub, sb *sandbox.Manager) *Manager {
 	m := &Manager{cfg: cfg, st: st, hub: hub, sb: sb, rts: map[string]*Runtime{}, caps: map[string]model.Caps{},
-		ctrActive: map[string]time.Time{}, hostOwner: cfg.HostOwner}
+		ctrActive: map[string]time.Time{}, hostOwner: cfg.HostOwner, homeLn: map[string]net.Listener{}}
 	if cfg.HostOwner != "" {
 		m.AdoptOrphans(cfg.HostOwner)
 	}
@@ -114,6 +119,11 @@ func (m *Manager) ensureContainer(p model.Project, uid string, onBuild func()) e
 		}
 	}
 	sp := sandbox.Spec{Project: p, UserID: uid, SessionDirs: dirs, MigrateHostState: uid == m.hostOwner && m.hostOwner != ""}
+	if p.Home {
+		if err := m.homeSpec(&sp, uid); err != nil {
+			return fmt.Errorf("prepare Home: %w", err)
+		}
+	}
 	if err := m.sb.Ensure(sp, !m.projectBusy(p.ID, uid)); err != nil {
 		return fmt.Errorf("start project container: %w", err)
 	}
@@ -366,6 +376,11 @@ type CreateSessionReq struct {
 }
 
 func (m *Manager) CreateSession(a Actor, req CreateSessionReq) (model.Session, error) {
+	return m.createSession(a, req, "")
+}
+
+// createSession: via marks the first message as sent by the Home agent.
+func (m *Manager) createSession(a Actor, req CreateSessionReq, via string) (model.Session, error) {
 	p, err := m.visibleProject(a.ID, req.ProjectID)
 	if err != nil {
 		return model.Session{}, err
@@ -424,7 +439,7 @@ func (m *Manager) CreateSession(a Actor, req CreateSessionReq) (model.Session, e
 	m.st.PutSession(s)
 	m.pushSession(s)
 	if strings.TrimSpace(req.Prompt) != "" || len(req.Images) > 0 {
-		if err := m.Send(a, sid, req.Prompt, req.Images); err != nil {
+		if err := m.send(a, sid, req.Prompt, req.Images, via); err != nil {
 			return s, err
 		}
 	}
@@ -466,6 +481,10 @@ func (m *Manager) UploadPath(id string) (string, bool) {
 }
 
 func (m *Manager) Send(a Actor, sid, text string, imageIDs []string) error {
+	return m.send(a, sid, text, imageIDs, "")
+}
+
+func (m *Manager) send(a Actor, sid, text string, imageIDs []string, via string) error {
 	sess, err := m.visibleSession(a.ID, sid)
 	if err != nil {
 		return err
@@ -507,7 +526,7 @@ func (m *Manager) Send(a Actor, sid, text string, imageIDs []string) error {
 	if text == "" && len(imgs) == 0 {
 		return errors.New("empty message")
 	}
-	it := &model.Item{ID: "u-" + model.NewID(), Kind: model.KindUser, Text: text, Images: imageIDs, Done: true, By: a.ID}
+	it := &model.Item{ID: "u-" + model.NewID(), Kind: model.KindUser, Text: text, Images: imageIDs, Done: true, By: a.ID, Via: via}
 	r.mu.Lock()
 	r.ensureLoaded()
 	r.put(it)

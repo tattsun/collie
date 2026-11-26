@@ -2,9 +2,9 @@ import { signal } from '@preact/signals'
 import { memo } from 'preact/compat'
 import { useMemo } from 'preact/hooks'
 import type { Session } from '../types'
-import { attention, conn, go, groupById, me, notifyEnabled, projectById, projects, route, sessions, setNotify, userName, version } from '../store'
+import { attention, conn, go, groupById, homeProject, me, notifyEnabled, projectById, projects, route, sessionById, sessions, setNotify, userName, version } from '../store'
 import { ago, cls, home } from '../util'
-import { IBell, IBox, IFolder, IPlus, IBranch, IUsers, Spinner } from './icons'
+import { IBell, IBox, IFolder, IHome, IPlus, IBranch, IUsers, Spinner } from './icons'
 import { AgentBadge, Menu, StatusDot } from './ui'
 import { signOut } from '../authflow'
 import { ImageIndicator } from './ProjectSettings'
@@ -173,6 +173,29 @@ function ProjectList() {
   )
 }
 
+// Home: chats outside any project, whose agent coordinates the projects.
+function HomeRow() {
+  const h = homeProject.value
+  const r = route.value
+  if (!h) return null
+  const mine = sessions.value.filter((s) => s.projectId === h.id && !s.archived)
+  const waiting = mine.some((s) => s.status === 'waiting')
+  const busy = mine.some((s) => s.status === 'running' || s.status === 'starting')
+  const active = (r.name === 'project' && r.id === h.id) || (r.name === 'session' && sessionById.value.get(r.id || '')?.projectId === h.id)
+  return (
+    <a href={`#/p/${h.id}`} class={cls('prow home-row', active && 'active')}>
+      <IHome size={16} />
+      <div class="srow-main">
+        <div class="srow-top">
+          <span class="srow-title">{t('Home')}</span>
+          {waiting ? <StatusDot status="waiting" /> : busy ? <Spinner size={12} /> : null}
+        </div>
+        <div class="srow-preview">{t('Talk about anything · coordinate your projects')}</div>
+      </div>
+    </a>
+  )
+}
+
 export function Sidebar() {
   const tab = listTab.value
   const setTab = (t: 'sessions' | 'projects') => {
@@ -201,7 +224,10 @@ export function Sidebar() {
           {t('Projects')}
         </button>
       </div>
-      <div class="side-scroll">{tab === 'sessions' ? <SessionList /> : <ProjectList />}</div>
+      <div class="side-scroll">
+        <HomeRow />
+        {tab === 'sessions' ? <SessionList /> : <ProjectList />}
+      </div>
       <footer class="side-foot">
         <Menu
           up

@@ -15,6 +15,8 @@ export interface Project {
   git: boolean
   status?: '' | 'cloning' | 'error'
   error?: string
+  /** the user's Home: chats outside any project, coordinating the projects */
+  home?: boolean
 }
 
 export interface SandboxStatus {
@@ -139,6 +141,7 @@ export interface Item {
   result?: Result
   images?: string[]
   by?: string
+  via?: 'home'
 }
 
 export interface Command {

@@ -227,6 +227,18 @@ func (r *Runtime) startDriver(flip bool) (agent.Driver, error) {
 		}
 	}
 
+	// Home: its instructions, and Collie's tools for coordinating projects.
+	var toolCmd string
+	var toolArgs []string
+	if proj.Home {
+		writeHomeInstructions(proj.Path)
+		c, args, err := r.m.homeTool(proj, sess.Owner)
+		if err != nil {
+			return nil, setupError{fmt.Errorf("prepare Home tools: %w", err)}
+		}
+		toolCmd, toolArgs = c, args
+	}
+
 	r.mu.Lock()
 	r.gen++
 	gen := r.gen
@@ -250,12 +262,18 @@ func (r *Runtime) startDriver(flip bool) (agent.Driver, error) {
 				log.Printf("session %s: prepare codex config: %v", r.id, err)
 			}
 		}
+		if proj.Home {
+			cfg.ExtraArgs = homeCodexArgs(cfg.ExtraArgs, toolCmd, toolArgs)
+		}
 		d = agent.NewCodex(cfg, s)
 	} else {
 		cfg.Bin = r.m.cfg.ClaudeBin
 		if isolated {
 			cfg.Bin = "claude"
 			cfg.ExtraArgs = r.m.sb.ClaudeArgs(sess.Owner)
+		}
+		if proj.Home {
+			cfg.ExtraArgs = homeClaudeArgs(cfg.ExtraArgs, toolCmd, toolArgs)
 		}
 		d = agent.NewClaude(cfg, s)
 	}

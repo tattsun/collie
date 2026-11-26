@@ -10,6 +10,10 @@ import { t, ts } from '../i18n'
 
 const pref = (k: string, d = '') => localStorage.getItem('collie.new.' + k) ?? d
 const setPref = (k: string, v: string) => localStorage.setItem('collie.new.' + k, v)
+// The permission mode is remembered only when it differs from the default
+// (the first mode the server lists), so a changed default reaches devices
+// that never picked one. ("mode2": "mode" also stored untouched defaults.)
+const modeKey = (agent: string) => 'mode2.' + agent
 
 const EFFORTS: Record<Agent, string[]> = {
   claude: ['low', 'medium', 'high', 'xhigh', 'max'],
@@ -26,7 +30,7 @@ export function NewSession() {
     return projectById.value.has(last) ? last : plist[0]?.id || ''
   })
   const [agent, setAgent] = useState<Agent>(() => (pref('agent', 'claude') as Agent) || 'claude')
-  const [mode, setMode] = useState(() => pref('mode.' + agent))
+  const [mode, setMode] = useState(() => pref(modeKey(agent)))
   const [model, setModel] = useState(() => pref('model.' + agent))
   const [effort, setEffort] = useState(() => pref('effort.' + agent))
   const [worktree, setWorktree] = useState(() => pref('worktree') === '1')
@@ -47,7 +51,7 @@ export function NewSession() {
   }, [plist.length])
 
   useEffect(() => {
-    setMode(pref('mode.' + agent))
+    setMode(pref(modeKey(agent)))
     setModel(pref('model.' + agent))
     setEffort(pref('effort.' + agent))
   }, [agent])
@@ -93,7 +97,8 @@ export function NewSession() {
       })
       setPref('project', projectId)
       setPref('agent', agent)
-      setPref('mode.' + agent, effMode)
+      if (effMode === modeList[0]?.id) localStorage.removeItem('collie.new.' + modeKey(agent))
+      else setPref(modeKey(agent), effMode)
       setPref('model.' + agent, model)
       setPref('effort.' + agent, effort)
       setPref('worktree', worktree ? '1' : '0')

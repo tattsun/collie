@@ -201,12 +201,12 @@ mise run install --serve      # 初回と同じオプションで（--serve な�
 
 | エージェント | モード | 内容 |
 |---|---|---|
-| Claude | Ask first（default） | 編集・コマンド実行前に確認 |
+| Claude | Auto（default） | Claude Code の自動判定モード。プランやモデルが対応していなければ Claude Code が Ask first に戻します |
+| | Ask first | 編集・コマンド実行前に確認 |
 | | Accept edits | ファイル編集は自動、コマンドは確認 |
 | | Plan | 計画のみ。計画承認時に Accept edits / Ask first に切替 |
-| | Auto | Claude Code の自動判定モード |
 | | Bypass | すべて自動（注意） |
-| Codex | Auto | workspace-write サンドボックス、外に出る時だけ確認 |
+| Codex | Auto（default） | workspace-write サンドボックス、外に出る時だけ確認 |
 | | Untrusted | 信頼済み以外のコマンドは確認 |
 | | Read only | 読み取りのみ |
 | | Full access | サンドボックスなし・確認なし（注意） |

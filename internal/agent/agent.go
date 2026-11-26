@@ -84,11 +84,12 @@ type Driver interface {
 
 // Modes lists the permission modes offered for each agent.
 var Modes = map[string][]ModeInfo{
+	// The first mode is the default in the UI (see DefaultMode).
 	"claude": {
+		{ID: "auto", Label: "Auto (classifier)"},
 		{ID: "default", Label: "Ask before edits & commands"},
 		{ID: "acceptEdits", Label: "Auto-accept edits"},
 		{ID: "plan", Label: "Plan mode"},
-		{ID: "auto", Label: "Auto (classifier)"},
 		{ID: "bypassPermissions", Label: "Bypass all permissions"},
 	},
 	"codex": {
@@ -104,11 +105,14 @@ type ModeInfo struct {
 	Label string `json:"label"`
 }
 
+// DefaultMode is the mode a session starts in when none is chosen: auto
+// for both agents. Claude Code falls back to asking by itself when auto
+// mode is not available for the account or model.
 func DefaultMode(agent string) string {
-	if agent == "codex" {
-		return "auto"
+	if m := Modes[agent]; len(m) > 0 {
+		return m[0].ID
 	}
-	return "default"
+	return ""
 }
 
 // ---- process plumbing shared by the drivers ----

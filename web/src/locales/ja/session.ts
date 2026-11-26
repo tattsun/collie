@@ -106,6 +106,11 @@ const ja: Record<string, string> = {
   'No shell open.': '開いているシェルはありません。',
   Paste: 'ペースト',
   'Paste the text to send to the shell:': 'シェルに送るテキストを貼り付けてください:',
+  Select: '選択',
+  'Terminal text': 'ターミナルのテキスト',
+  'Long-press to select and copy.': '長押しで範囲を選んでコピーできます。',
+  'Copy all': 'すべてコピー',
+  'Copy failed': 'コピーに失敗しました',
 
   // ---- Server texts: timeline notices
   'Context compacted': 'コンテキストを圧縮しました',

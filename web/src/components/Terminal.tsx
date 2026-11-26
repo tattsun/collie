@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'preact/hooks'
 import type { TermInfo } from '../types'
 import { api } from '../api'
-import { terms, toastError } from '../store'
-import { cls, isTouch } from '../util'
+import { terms, toast, toastError } from '../store'
+import { cls, copyText, isTouch } from '../util'
 import { t } from '../i18n'
 import { IPlus, IX, Spinner } from './icons'
+import { Modal } from './ui'
 
 type XTerm = import('@xterm/xterm').Terminal
 
@@ -32,6 +33,45 @@ const KEYS: { label: string; seq: string }[] = [
   { label: '~', seq: '~' },
   { label: '/', seq: '/' },
 ]
+
+// The terminal's text (scrollback included) as plain lines. Rows the
+// terminal soft-wrapped are joined back, so a long token stays one string.
+function bufferText(term: XTerm): string {
+  const buf = term.buffer.active
+  const out: string[] = []
+  for (let i = 0; i < buf.length; i++) {
+    const line = buf.getLine(i)
+    if (!line) continue
+    const s = line.translateToString(!buf.getLine(i + 1)?.isWrapped)
+    if (line.isWrapped && out.length) out[out.length - 1] += s
+    else out.push(s)
+  }
+  while (out.length && !out[out.length - 1].trim()) out.pop()
+  return out.join('\n')
+}
+
+// Touch browsers cannot select text inside xterm, so show it in a native
+// text box where long-press selection and Copy work.
+function TextView({ text, onClose }: { text: string; onClose: () => void }) {
+  const ta = useRef<HTMLTextAreaElement>(null)
+  useEffect(() => {
+    if (ta.current) ta.current.scrollTop = ta.current.scrollHeight
+  }, [])
+  return (
+    <Modal title={t('Terminal text')} onClose={onClose} wide>
+      <p class="dim small">{t('Long-press to select and copy.')}</p>
+      <textarea ref={ta} class="input mono term-text" readOnly value={text} />
+      <div class="modal-actions">
+        <button class="btn" onClick={() => copyText(text).then((ok) => toast(ok ? t('Copied') : t('Copy failed')))}>
+          {t('Copy all')}
+        </button>
+        <button class="btn primary" onClick={onClose}>
+          {t('Close')}
+        </button>
+      </div>
+    </Modal>
+  )
+}
 
 function TermPane({ info }: { info: TermInfo }) {
   const host = useRef<HTMLDivElement>(null)
@@ -156,6 +196,8 @@ function TermPane({ info }: { info: TermInfo }) {
     termRef.current?.focus()
   }
 
+  const [textView, setTextView] = useState<string | null>(null)
+
   return (
     <div class="term-pane">
       {state === 'loading' && (
@@ -171,6 +213,17 @@ function TermPane({ info }: { info: TermInfo }) {
           <button class="key" onPointerDown={(e) => e.preventDefault()} onClick={paste}>
             {t('Paste')}
           </button>
+          <button
+            class="key"
+            onClick={() => {
+              const tm = termRef.current
+              if (!tm) return
+              tm.blur() // close the on-screen keyboard
+              setTextView(bufferText(tm))
+            }}
+          >
+            {t('Select')}
+          </button>
           <button class={cls('key', ctrl && 'on')} onPointerDown={(e) => { e.preventDefault(); setCtrl(!ctrl) }}>
             Ctrl
           </button>
@@ -181,6 +234,7 @@ function TermPane({ info }: { info: TermInfo }) {
           ))}
         </div>
       )}
+      {textView !== null && <TextView text={textView} onClose={() => setTextView(null)} />}
     </div>
   )
 }

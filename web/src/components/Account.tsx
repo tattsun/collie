@@ -79,7 +79,7 @@ export function AccountPage() {
     }
   }
   const saveClaude = async () => {
-    const tok = claude.trim()
+    const tok = claude.replace(/\s+/g, '') // tokens copied from a narrow terminal may carry line breaks
     if (!tok) return
     setBusy('claude')
     try {

@@ -2053,6 +2053,13 @@ pre.out.error-box {
   z-index: 2;
   pointer-events: none;
 }
+.term-text {
+  height: min(60dvh, 520px);
+  resize: none;
+  font: 12px/1.45 var(--mono);
+  white-space: pre-wrap;
+  word-break: break-all; /* wrap long tokens on screen; copying keeps them whole */
+}
 .keybar {
   display: flex;
   gap: 6px;

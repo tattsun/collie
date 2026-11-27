@@ -113,3 +113,48 @@ func TestFreshBaseDefaultBranchWithoutUpstream(t *testing.T) {
 		t.Fatalf("diverged: got %s want %s", got, want)
 	}
 }
+
+func TestInitialCommit(t *testing.T) {
+	repo := t.TempDir()
+	git(t, repo, "init", "-q")
+	if HasCommits(repo) || HasFiles(repo) {
+		t.Fatal("a fresh repository has neither commits nor files")
+	}
+	os.WriteFile(filepath.Join(repo, "staged.txt"), []byte("x\n"), 0o644)
+	git(t, repo, "add", "staged.txt")
+	if !HasFiles(repo) {
+		t.Fatal("a staged file counts")
+	}
+	if err := InitialCommit(repo, "Ann", "ann@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if !HasCommits(repo) {
+		t.Fatal("no commit")
+	}
+	log := func(format string) string {
+		out, err := exec.Command("git", "-C", repo, "log", "-1", "--format="+format).Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	if got := log("%an <%ae> %s"); got != "Ann <ann@example.com> Initial commit" {
+		t.Fatalf("commit = %q", got)
+	}
+	// Empty, and the staged file is still only staged.
+	if out, _ := exec.Command("git", "-C", repo, "ls-tree", "-r", "HEAD").Output(); len(out) != 0 {
+		t.Fatalf("tree = %q", out)
+	}
+	if out, _ := exec.Command("git", "-C", repo, "status", "--porcelain").Output(); string(out) != "A  staged.txt\n" {
+		t.Fatalf("status = %q", out)
+	}
+	// Someone else got there first: nothing changes.
+	head := HeadCommit(repo)
+	if err := InitialCommit(repo, "Bob", "bob@example.com"); err != nil || HeadCommit(repo) != head {
+		t.Fatalf("second call: %v, head %s -> %s", err, head, HeadCommit(repo))
+	}
+	wt := filepath.Join(t.TempDir(), "wt")
+	if err := AddWorktree(repo, wt, "collie/test", head); err != nil {
+		t.Fatal(err)
+	}
+}

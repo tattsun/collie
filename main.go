@@ -27,6 +27,7 @@ import (
 
 	"github.com/tattsun/collie/internal/auth"
 	"github.com/tattsun/collie/internal/egress"
+	"github.com/tattsun/collie/internal/gitutil"
 	"github.com/tattsun/collie/internal/preview"
 	"github.com/tattsun/collie/internal/push"
 	"github.com/tattsun/collie/internal/sandbox"
@@ -74,6 +75,11 @@ func main() {
 	// connections to the servers listening there (package preview).
 	if len(os.Args) > 1 && os.Args[1] == "port-bridge" {
 		os.Exit(portBridge(os.Args[2:]))
+	}
+	// Run by Collie inside an isolated project's container: the git
+	// operations Collie needs on the project's files (gitutil.Helper).
+	if len(os.Args) == 2 && os.Args[1] == "git-helper" {
+		os.Exit(gitutil.ServeHelper(os.Stdin, os.Stdout))
 	}
 	home, _ := os.UserHomeDir()
 	if len(os.Args) > 1 && os.Args[1] == "update" {

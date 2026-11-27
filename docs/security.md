@@ -48,6 +48,8 @@ This assumes the configuration from the [setup guide](setup.md): a dedicated `co
 - Members can't register arbitrary folders. Their clones are `https://` only and run inside their own container.
 - Project folders can't be nested inside each other, so no container can see another project.
 - Agents talk to Collie only through a tool socket given to their own container. A project's agent can address only its user's sessions in that same container.
+- Collie never runs git on the server in an isolated project's files, because its agents can rewrite the repository's hooks and git settings. New worktrees, their removal and the **Changes** tab run git in the project's container.
+- Home runs in a container too and reads what other agents wrote, so it can't start, instruct or schedule agents of host-run projects, not even an admin's Home.
 - With SELinux on (Fedora, RHEL and the like), the containers run without SELinux labels, because they share the project's files with the host. Their other walls stay: their own user namespace, no capabilities, seccomp, and only their own mounts.
 - A project on an allowlist (Project → Settings → **Network**) gives its containers no network of their own. Their only way out is Collie's proxy, which checks every connection against the list as it is at that moment. It never connects to the loopback or this server's addresses, even when they are listed. A private address, such as a NAS, gets through only when it is listed by IP and the firewall allows it (`--allow`).
 - Only the project's owner can change its network setting (for a group project, the group's owners). Members and agents can't loosen it.
@@ -62,6 +64,7 @@ This assumes the configuration from the [setup guide](setup.md): a dedicated `co
 
 - An agent in a container can read every file in its project and can reach the internet. Don't keep secrets in a project that you wouldn't want sent out.
 - An allowlist narrows where data can go, but allowed hosts can still carry it further. Claude's and Codex's own services are always allowed and accept uploads from any account. Hosts that serve many sites, such as CDNs or GitHub, can pass traffic on to them.
+- An agent can read the accounts and tokens its container gets (the Claude and Codex logins, environment variables such as a `GH_TOKEN`), and so can whatever it runs. Give a project only the tokens it needs, e.g. a `GH_TOKEN` for just that repository in Project → Settings → **Project secrets**.
 - A host-run agent has all the access of the `collie` user.
 - Previews on ports of Collie's address reuse each port. A page that you keep open on one can read whatever you open on that port next. The browser also sends it the cookies of other apps on that host name, and it can overwrite or pile up cookies for Collie (signing you out, or keeping Collie from loading until you clear its site data). Names per project on another domain avoid most of this; there, pages of one project can still set cookies for the others' names (see [Setup](setup.md#previews)).
 - A preview of a project on an allowlist may load and send only to its own origin and the listed hosts. But it runs in your browser: by navigating away, a page can still carry data out.

@@ -201,21 +201,24 @@ type rpcMsg struct {
 	Params  json.RawMessage `json:"params,omitempty"`
 }
 
+// The longest message an agent may send on its tools socket.
+const maxToolMessage = 4 << 20
+
 func (m *Manager) serveTools(tc *toolConn, c net.Conn) {
 	defer c.Close()
-	r := bufio.NewReaderSize(c, 64<<10)
+	sc := bufio.NewScanner(c)
+	sc.Buffer(make([]byte, 64<<10), maxToolMessage)
 	enc := json.NewEncoder(c)
-	for {
-		line, err := r.ReadBytes('\n')
-		if len(bytes.TrimSpace(line)) > 0 {
-			if resp := m.handleRPC(tc, line); resp != nil {
-				if enc.Encode(resp) != nil {
-					return
-				}
-			}
+	// Ends at EOF, on an error, or on a longer message.
+	for sc.Scan() {
+		line := sc.Bytes()
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
 		}
-		if err != nil {
-			return
+		if resp := m.handleRPC(tc, line); resp != nil {
+			if enc.Encode(resp) != nil {
+				return
+			}
 		}
 	}
 }
@@ -302,6 +305,8 @@ func (m *Manager) handleRPC(tc *toolConn, line []byte) (resp any) {
 		var text string
 		var err error
 		switch {
+		case m.UserActive != nil && !m.UserActive(tc.scope.uid):
+			err = errors.New("this user can no longer use Collie")
 		case p.Name == "show_media":
 			text, err = m.toolShowMedia(tc, orEmpty(p.Arguments))
 		case home && homeFollowTool(p.Name):
@@ -424,7 +429,7 @@ func withModels(defs []map[string]any, caps map[string]model.Caps) []map[string]
 
 func (m *Manager) callTool(uid, name string, raw json.RawMessage) (string, error) {
 	raw = orEmpty(raw)
-	a := Actor{ID: uid, Admin: m.isAdmin(uid)}
+	a := m.toolActor(uid)
 	switch name {
 	case "list_projects":
 		return m.toolListProjects(a)
@@ -796,9 +801,11 @@ func (m *Manager) toolStartSession(a Actor, project string, req CreateSessionReq
 	if req.Agent == "" {
 		req.Agent = "claude"
 	}
-	switch req.Mode {
-	case "bypassPermissions", "dontAsk", "full":
+	if unattendedMode(req.Mode) {
 		return "", errors.New("the Home agent cannot start sessions without permission checks; ask the user to start it from Collie")
+	}
+	if !p.Isolated() && !a.Admin {
+		return "", errHomeHostRun
 	}
 	req.ProjectID = p.ID
 	req.Model, req.Effort = m.ResolveModelEffort(a.ID, req.Agent, req.Model, req.Effort)
@@ -818,6 +825,9 @@ func (m *Manager) toolSendMessage(a Actor, sid, text string) (string, error) {
 	s, p, err := m.workSession(a.ID, sid)
 	if err != nil {
 		return "", err
+	}
+	if !p.Isolated() && !a.Admin {
+		return "", errHomeHostRun
 	}
 	waiting := s.Status == model.StatusWaiting
 	if err := m.send(a, s.ID, text, nil, "home"); err != nil {

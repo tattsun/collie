@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/tattsun/collie/internal/model"
@@ -50,6 +51,31 @@ func (m *Manager) isAdmin(uid string) bool { return m.acc != nil && m.acc.IsAdmi
 // errHostOnly: agents of non-isolated projects run directly on the server
 // as Collie's user, which only admins may command.
 var errHostOnly = errors.New("this project runs directly on the server; only admins can run or instruct its agents")
+
+// toolActor is who the agents' tools socket acts for. Home's agent runs in
+// a container and reads what other agents wrote, which could steer it, so
+// it never gets an admin's say over host-run projects: their agents run on
+// the server itself. (A host-run Home, on a server without Podman, runs
+// there anyway.)
+func (m *Manager) toolActor(uid string) Actor {
+	a := Actor{ID: uid, Admin: m.isAdmin(uid)}
+	if h, ok := m.homeOf(uid); !ok || h.Isolated() {
+		a.Admin = false
+	}
+	return a
+}
+
+var errHomeHostRun = errors.New("this project runs directly on the server and Home runs in a container, so Home can't start or instruct its agents; the user can, in Collie")
+
+// unattendedMode reports whether a permission mode lets an agent act
+// without asking, which Home may not pick.
+func unattendedMode(mode string) bool {
+	switch strings.TrimSpace(mode) {
+	case "bypassPermissions", "dontAsk", "full":
+		return true
+	}
+	return false
+}
 
 func (m *Manager) SetAccess(a Access) { m.acc = a }
 

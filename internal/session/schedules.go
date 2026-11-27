@@ -259,7 +259,7 @@ func (m *Manager) applySchedule(a Actor, sc *model.Schedule, req ScheduleReq, cr
 		sc.Worktree = *req.Worktree
 	}
 	if sc.Worktree && (req.Worktree != nil || req.ProjectID != nil) {
-		if err := checkWorktrees(p.Path); err != nil {
+		if err := m.git(p, a.ID, true).CheckWorktrees(p.Path); err != nil {
 			return err
 		}
 	}

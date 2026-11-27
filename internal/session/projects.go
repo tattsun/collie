@@ -182,7 +182,7 @@ func (m *Manager) CreateProject(a Actor, req CreateProjectReq) (model.Project, e
 	}
 	switch req.Kind {
 	case "existing":
-		p.Git = gitutil.IsRepo(path)
+		p.Git = isRepo(p)
 	case "clone":
 		p.Status = "cloning"
 		url := strings.TrimSpace(req.URL)
@@ -276,7 +276,7 @@ func (m *Manager) ProjectChanges(a Actor, id string) (*gitutil.Changes, error) {
 	if err != nil {
 		return nil, err
 	}
-	ch, err := gitutil.Diff(p.Path, "")
+	ch, err := m.git(p, a.ID, true).Diff(p.Path, "")
 	if err == nil && ch.Repo != p.Git {
 		np, _ := m.st.UpdateProject(id, func(x *model.Project) { x.Git = ch.Repo })
 		m.pushProject(np)

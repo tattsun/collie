@@ -485,6 +485,15 @@ button.chip {
 .dot.unread:not(.running):not(.waiting):not(.error) {
   background: var(--green);
 }
+/* turn over, but work still running in the background */
+.dot.bg {
+  background: transparent;
+  box-shadow: inset 0 0 0 2px var(--blue);
+  animation: pulse 2.4s ease-in-out infinite;
+}
+.dot.bg.unread {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--blue) 55%, transparent);
+}
 .pill {
   display: inline-flex;
   align-items: center;
@@ -510,6 +519,10 @@ button.chip {
 .pill.error {
   color: var(--red);
   background: color-mix(in srgb, var(--red) 13%, transparent);
+}
+.pill.bg {
+  color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 9%, transparent);
 }
 .agent {
   font-size: 11px;
@@ -1715,6 +1728,130 @@ pre.out.error-box {
 }
 
 /* ---------------------------------------------------------------- composer */
+/* ---------------------------------------------------------------- background tasks */
+.tasks {
+  padding: 6px 12px 0;
+}
+.tasks-card {
+  max-width: var(--content);
+  margin: 0 auto;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.tasks-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  padding: 7px 12px;
+  border: 0;
+  background: none;
+  color: var(--dim);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.tasks-head:hover {
+  color: var(--text);
+}
+.tasks-n {
+  color: var(--blue);
+  font-weight: 550;
+  white-space: nowrap;
+  flex: none;
+}
+.tasks-first {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.tasks-time {
+  font-variant-numeric: tabular-nums;
+  color: var(--faint);
+  font-size: 12px;
+  white-space: nowrap;
+  flex: none;
+}
+.tasks-head .chev {
+  flex: none;
+  opacity: 0.6;
+  transition: transform 0.15s;
+}
+.tasks.open .tasks-head .chev {
+  transform: rotate(90deg);
+}
+.tasks-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 6px 6px;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+.task {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 7px 6px 7px 8px;
+  border-top: 1px solid var(--border);
+  color: var(--dim);
+}
+.task > svg {
+  flex: none;
+  margin-top: 3px;
+}
+.task-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.task-title {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.task-title:disabled {
+  cursor: default;
+}
+.task-title:not(:disabled):hover {
+  text-decoration: underline;
+}
+.task-src {
+  font-size: 11.5px;
+  color: var(--faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.task-sum {
+  font-size: 12px;
+}
+.task .tasks-time {
+  margin-top: 2px;
+}
+.task-stop {
+  width: 26px;
+  height: 26px;
+  margin: -3px -2px 0 0;
+}
+.srow-bg {
+  color: var(--blue);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
 .composer {
   position: relative;
   padding: 6px 12px calc(12px + env(safe-area-inset-bottom));

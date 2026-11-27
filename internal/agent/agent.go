@@ -89,6 +89,12 @@ type Driver interface {
 	Done() <-chan struct{}
 }
 
+// TaskStopper is a driver that can stop one of the agent's background
+// tasks (model.Session.Tasks).
+type TaskStopper interface {
+	StopTask(id string) error
+}
+
 // Modes lists the permission modes offered for each agent.
 var Modes = map[string][]ModeInfo{
 	// The first mode is the default in the UI (see DefaultMode).

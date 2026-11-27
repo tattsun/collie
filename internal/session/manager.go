@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -75,8 +76,13 @@ func NewManager(cfg Config, st *store.Store, hub *Hub, sb *sandbox.Manager) *Man
 	}
 	// Nothing is running after a restart.
 	for _, s := range st.Sessions() {
-		if s.Status != model.StatusStopped && s.Status != model.StatusError {
-			st.UpdateSession(s.ID, func(x *model.Session) { x.Status = model.StatusStopped })
+		if (s.Status != model.StatusStopped && s.Status != model.StatusError) || len(s.Tasks) > 0 {
+			st.UpdateSession(s.ID, func(x *model.Session) {
+				if x.Status != model.StatusError {
+					x.Status = model.StatusStopped
+				}
+				x.Tasks = nil
+			})
 		}
 	}
 	for _, p := range st.Projects() {
@@ -347,7 +353,7 @@ func (m *Manager) updateSession(sid string, fn func(*model.Session)) (model.Sess
 	defer m.bmu.Unlock()
 	before, _ := m.st.Session(sid)
 	s, ok := m.st.UpdateSession(sid, fn)
-	if ok && s != before {
+	if ok && !reflect.DeepEqual(s, before) {
 		m.pushSession(s)
 	}
 	return s, ok
@@ -565,6 +571,22 @@ func (m *Manager) Interrupt(a Actor, sid string) error {
 		return nil
 	}
 	return d.Interrupt()
+}
+
+// StopTask stops one of the agent's background tasks.
+func (m *Manager) StopTask(a Actor, sid, taskID string) error {
+	if _, err := m.visibleSession(a.ID, sid); err != nil {
+		return err
+	}
+	r, err := m.runtime(sid)
+	if err != nil {
+		return err
+	}
+	d, ok := r.driver().(agent.TaskStopper)
+	if !ok {
+		return errors.New("the agent is not running anymore")
+	}
+	return d.StopTask(taskID)
 }
 
 func (m *Manager) Reply(a Actor, sid, askID string, rep agent.Reply) error {
@@ -818,7 +840,9 @@ func (m *Manager) reaper() {
 			r.mu.Lock()
 			idleFor := time.Since(r.lastActive)
 			d := r.drv
-			if d != nil && m.cfg.IdleTimeout > 0 && idleFor > m.cfg.IdleTimeout && s.Status == model.StatusIdle {
+			// Background tasks die with the agent process, and it is the one
+			// told when they end: keep it while any are running.
+			if d != nil && m.cfg.IdleTimeout > 0 && idleFor > m.cfg.IdleTimeout && s.Status == model.StatusIdle && len(s.Tasks) == 0 {
 				r.closing = true
 				go d.Close()
 			}

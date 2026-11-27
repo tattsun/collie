@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # One-time host preparation for Collie. Run on the server with sudo:
 #
-#   sudo ./deploy/setup-host.sh [--user collie] [--port 7878] [--allow CIDR]...
+#   sudo ./deploy/setup-host.sh [--user collie] [--port 7878] [--allow CIDR]... [--public]
 #
 # It
 #   1. installs podman (rootless containers) and nftables,
@@ -12,6 +12,9 @@
 #      tailnet, link-local addresses, any of this server's own addresses, or
 #      Collie's own port.
 #      (--allow adds exceptions, e.g. --allow 192.168.1.20/32 for a NAS.)
+#   4. with --public (for `mise run install --domain …`): lets unprivileged
+#      users bind ports 80 and up, so Collie can serve HTTPS itself, opens
+#      80/443 in ufw if it is active, and keeps agents off those ports too.
 #
 # Then switch to that user and install Collie itself (see docs/setup.md).
 set -euo pipefail
@@ -19,12 +22,14 @@ set -euo pipefail
 user=collie
 port=7878
 allow=()
+public=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --user) user="$2"; shift 2 ;;
     --port) port="$2"; shift 2 ;;
     --allow) allow+=("$2"); shift 2 ;;
-    -h|--help) sed -n '2,17p' "$0"; exit 0 ;;
+    --public) public=1; shift ;;
+    -h|--help) sed -n '2,19p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -51,6 +56,20 @@ loginctl enable-linger "$user"
 if command -v tailscale >/dev/null 2>&1; then
   # lets the user run `tailscale serve` for Collie
   tailscale set --operator="$user" || true
+fi
+
+# Collie's own ports, which agents must never reach.
+ports="$port"
+if [[ $public == 1 ]]; then
+  ports="$port, 80, 443"
+  echo "== public HTTPS"
+  # Ports below 1024 are root-only by default; Collie runs as $user.
+  echo "net.ipv4.ip_unprivileged_port_start = 80" > /etc/sysctl.d/60-collie.conf
+  sysctl -q -p /etc/sysctl.d/60-collie.conf
+  if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
+    ufw allow 80/tcp
+    ufw allow 443/tcp
+  fi
 fi
 
 echo "== firewall (uid $uid)"
@@ -83,8 +102,8 @@ table inet collie {
     # name resolution may go to a local or tailnet resolver (MagicDNS)
     meta l4proto { tcp, udp } th dport 53 accept
     # agents must never talk to Collie's own API
-    ip daddr 127.0.0.0/8 tcp dport $port reject
-    ip6 daddr ::1 tcp dport $port reject
+    ip daddr 127.0.0.0/8 tcp dport { $ports } reject
+    ip6 daddr ::1 tcp dport { $ports } reject
     # other loopback services stay usable (e.g. dev servers of host-mode projects)
     ip daddr 127.0.0.0/8 accept
     ip6 daddr ::1 accept
@@ -126,7 +145,7 @@ Done. Next, as the '$user' user:
   curl https://mise.run | sh && exec bash -l   # then activate mise in ~/.bashrc
   git clone <collie repo> && cd collie
   mise trust && mise install
-  mise run install --serve            # build, install the service, publish via tailscale serve
+  mise run install --domain collie.example.com   # or --serve / --funnel / --proxy URL (see docs/setup.md)
 
 Then open Collie, create your passkey (you become the first admin) and set
 up your Claude / Codex accounts under Account → Agent accounts.

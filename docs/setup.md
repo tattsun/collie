@@ -2,15 +2,27 @@
 
 **English** | [日本語](setup.ja.md) · [← README](../README.md)
 
-This runs Collie as a long-running service on Ubuntu 26.04 or later. It runs under a dedicated user and is served over HTTPS on your tailnet.
+This runs Collie as a long-running service on Ubuntu 26.04 or later, under a dedicated user and over HTTPS. Passkeys, notifications and installing the PWA all need HTTPS.
+
+First decide how people will reach it:
+
+| | People open | You need |
+|---|---|---|
+| **Your own domain** | `https://collie.example.com` from anywhere | A domain name and a server with ports 80 and 443 open to the internet. Collie gets its certificate from Let's Encrypt by itself |
+| **Your reverse proxy** | Whatever your Caddy, nginx or Cloudflare Tunnel serves | A proxy on the same machine that already serves HTTPS |
+| **Tailscale** | `https://<machine>.<tailnet>.ts.net` on your tailnet, and with Funnel from anywhere | Tailscale on the server and on every device (without Funnel) |
+
+Choose before you create the first passkey. Passkeys work only on the address they were created on (see [Moving to another address](#moving-to-another-address)).
 
 ## 1. Prepare the host (once, with sudo)
 
 ```bash
-sudo ./deploy/setup-host.sh
+sudo ./deploy/setup-host.sh            # add --public for your own domain
 ```
 
 This installs Podman and creates a `collie` user that runs Collie and every agent, so agents can't touch your own `~/.ssh` or personal files. It also adds a firewall rule: that user's processes can reach the internet, but not your LAN, your tailnet or this server. To let agents reach something like a NAS, pass `--allow 192.168.1.20/32`. See `--help` for all options.
+
+With `--public`, Collie may listen on ports 80 and 443 even though it doesn't run as root. This lets every user on the machine listen on ports from 80 up, so use it on a server that is there for Collie. It also opens 80 and 443 in ufw if ufw is on. Open them in your cloud provider's firewall yourself.
 
 ## 2. Install Collie (as `collie`)
 
@@ -19,17 +31,58 @@ sudo machinectl shell collie@        # a login session where systemd --user work
 curl https://mise.run | sh           # then enable mise in ~/.bashrc
 git clone <this repo> && cd collie
 mise trust && mise install
-mise run install --serve
+mise run install --domain collie.example.com     # or one of the lines below
 ```
 
-This builds Collie and the agent container image (the first build takes a few minutes), then registers a systemd user service. `--serve` publishes the service at `https://<machine>.<tailnet>.ts.net/` with `tailscale serve`. Use it: passkeys, notifications and installing the PWA all need HTTPS.
+| | |
+|---|---|
+| `--domain collie.example.com` | Your own domain |
+| `--proxy https://collie.example.com` | Behind your reverse proxy, at that address |
+| `--serve` | Tailscale, tailnet only |
+| `--funnel` | Tailscale, tailnet and the internet |
+
+This builds Collie and the agent container image (the first build takes a few minutes), then registers a systemd user service.
 
 Logs: `journalctl --user -u collie -f`
 
+### Your own domain
+
+Point the domain's DNS at the server and open ports 80 and 443 before you first open Collie. The certificate is fetched on the first visit, and Let's Encrypt refuses for a while after a few failed tries. Port 80 only redirects to HTTPS and answers Let's Encrypt.
+
+### Your reverse proxy
+
+Run it on the same machine and forward to `http://127.0.0.1:7878`, including WebSockets. Keep the client's address in `X-Forwarded-For`: Collie limits sign-in attempts per address, and without it every visitor shares one limit. With Caddy, this is all:
+
+```
+collie.example.com {
+	reverse_proxy 127.0.0.1:7878
+}
+```
+
+With nginx:
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:7878;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto https;
+}
+```
+
+For Cloudflare Tunnel, point the public hostname at `http://localhost:7878`.
+
+### Tailscale Funnel
+
+The first time, `--funnel` prints a link to allow Funnel on your tailnet. To take Collie off the internet again, run `mise run install --serve` and check that `tailscale funnel status` no longer lists it.
+
 ## 3. Become the first admin
 
-1. Open the URL the installer printed. Until a passkey exists, anyone on your tailnet can get in without a token.
-2. Click **Create passkey**. You become the first admin, and from then on you can sign in only with a passkey.
+1. Open the link the installer printed. It contains the setup token. To see it again, run `collie --print-token` as `collie`. Until a passkey exists, the setup token is the only way in. Being on your tailnet or LAN doesn't sign anyone in.
+2. Click **Create passkey**. You become the first admin. From then on you can sign in only with a passkey, and the setup token stops working.
 3. Under Account → **Agent accounts**, connect your Claude Code / Codex. The screen walks you through it. You can add several Claude accounts (a subscription, Amazon Bedrock, an API key or custom settings) and choose one per project in Project → Settings → **Claude account**.
 4. Invite other people from Admin → Users → **Invite**. Their agents run on their own accounts, so each person pays for their own usage.
 
@@ -47,7 +100,7 @@ To update from the source instead:
 ```bash
 cd collie && git pull
 mise install
-mise run install --serve    # with the same options you used the first time
+mise run install --domain collie.example.com    # with the same options you used the first time
 ```
 
 To update only Claude Code / Codex in the image, use Admin → Containers → **Agent image** → **Rebuild**, or run `collie --build-image`. Each project's container switches to the new image the next time it restarts while nothing in it is in use.
@@ -56,6 +109,17 @@ To update only Claude Code / Codex in the image, use Admin → Containers → **
 
 - Another user: Admin → Users → **Passkey recovery link**
 - You (an admin): run `collie link` on the server as `collie`. Add `--user NAME` to make a link for someone else.
+
+## Moving to another address
+
+Passkeys work only on the address they were created on. To move Collie, for example from Tailscale to your own domain:
+
+1. Reinstall with the new option (step 2).
+2. As `collie`, run `collie reset-passkeys --yes`. This removes everyone's passkeys and signs everyone out.
+3. Open the new address, sign in with the setup token (`collie --print-token`) and create your passkey right away. Until you do, the setup token is the only key.
+4. Give everyone else a link to add a passkey: Admin → Users → **Passkey recovery link**.
+
+Moving from `--serve` to `--funnel` keeps the address, so passkeys keep working.
 
 ## Host-run projects (optional)
 

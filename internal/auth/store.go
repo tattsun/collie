@@ -30,6 +30,9 @@ const (
 	SessionTTL = 30 * 24 * time.Hour
 	InviteTTL  = 7 * 24 * time.Hour
 	LinkTTL    = 30 * time.Minute // recovery / add-device links
+	// VerifyTTL is how recent a passkey check must be for sensitive changes
+	// (adding sign-in methods, inviting, managing users, global settings).
+	VerifyTTL = 15 * time.Minute
 )
 
 type Passkey struct {
@@ -59,6 +62,25 @@ type Session struct {
 	ExpiresAt int64  `json:"expiresAt"`
 	LastSeen  int64  `json:"lastSeen"`
 	Agent     string `json:"agent,omitempty"`
+	IP        string `json:"ip,omitempty"`     // where it signed in from
+	LastIP    string `json:"lastIp,omitempty"` // where it was last used from
+	// VerifiedAt is the last passkey check: the sign-in itself, or a
+	// re-verification before a sensitive change.
+	VerifiedAt int64 `json:"verifiedAt,omitempty"`
+}
+
+// ID is a short public identifier of the session (the hash is never shown).
+func (x Session) ID() string {
+	if len(x.Hash) < 16 {
+		return x.Hash
+	}
+	return x.Hash[:16]
+}
+
+// Verified reports whether the session's last passkey check is recent
+// enough for a sensitive change.
+func (x Session) Verified() bool {
+	return x.VerifiedAt > 0 && now()-x.VerifiedAt < VerifyTTL.Milliseconds()
 }
 
 // Invite is a one-time link. With UserID set it adds a passkey to that
@@ -626,8 +648,9 @@ func (s *Store) ResetRP() error {
 
 // ---- login sessions ----
 
-// NewSession returns the cookie value for a fresh login session.
-func (s *Store) NewSession(userID, agent string) (string, error) {
+// NewSession returns the cookie value for a fresh login session. Signing in
+// with a passkey counts as a passkey check.
+func (s *Store) NewSession(userID, agent, ip string) (string, error) {
 	secret := newSecret()
 	err := s.update(func(d *data) error {
 		t := now()
@@ -639,7 +662,7 @@ func (s *Store) NewSession(userID, agent string) (string, error) {
 			}
 		}
 		d.Sessions = append(keep, &Session{Hash: hashSecret(secret), UserID: userID, CreatedAt: t,
-			ExpiresAt: t + SessionTTL.Milliseconds(), LastSeen: t, Agent: agent})
+			ExpiresAt: t + SessionTTL.Milliseconds(), LastSeen: t, Agent: agent, IP: ip, LastIP: ip, VerifiedAt: t})
 		if u := d.user(userID); u != nil {
 			u.LastSeen = t
 		}
@@ -648,11 +671,11 @@ func (s *Store) NewSession(userID, agent string) (string, error) {
 	return secret, err
 }
 
-// SessionUser resolves a session cookie. Sessions slide: each use (at most
-// hourly) pushes the expiry SessionTTL into the future.
-func (s *Store) SessionUser(secret string) (User, string, bool) {
+// SessionUser resolves a session cookie used from ip. Sessions slide: each
+// use (at most hourly) pushes the expiry SessionTTL into the future.
+func (s *Store) SessionUser(secret, ip string) (User, Session, bool) {
 	if secret == "" {
-		return User{}, "", false
+		return User{}, Session{}, false
 	}
 	h := hashSecret(secret)
 	d := s.read()
@@ -664,7 +687,7 @@ func (s *Store) SessionUser(secret string) (User, string, bool) {
 		}
 		u := d.user(x.UserID)
 		if u == nil || u.Disabled {
-			return User{}, "", false
+			return User{}, Session{}, false
 		}
 		if t-x.LastSeen > time.Hour.Milliseconds() {
 			x.LastSeen = t
@@ -672,9 +695,26 @@ func (s *Store) SessionUser(secret string) (User, string, bool) {
 			u.LastSeen = t
 			s.dirty = true
 		}
-		return cloneUser(u), h, true
+		if ip != "" && x.LastIP != ip {
+			x.LastIP = ip
+			s.dirty = true
+		}
+		return cloneUser(u), *x, true
 	}
-	return User{}, "", false
+	return User{}, Session{}, false
+}
+
+// MarkVerified records a passkey check on the session (by hash).
+func (s *Store) MarkVerified(hash string) error {
+	return s.update(func(d *data) error {
+		for _, x := range d.Sessions {
+			if x.Hash == hash {
+				x.VerifiedAt = now()
+				return nil
+			}
+		}
+		return ErrNotFound
+	})
 }
 
 // SessionValid reports whether the session (by hash) still exists.
@@ -726,6 +766,23 @@ func (s *Store) DeleteSession(hash string) {
 		d.Sessions = keep
 		return nil
 	})
+}
+
+// DeleteUserSession signs one of the user's devices out (by Session.ID)
+// and returns that session's hash.
+func (s *Store) DeleteUserSession(userID, id string) (string, error) {
+	var hash string
+	err := s.update(func(d *data) error {
+		for i, x := range d.Sessions {
+			if x.UserID == userID && id != "" && x.ID() == id {
+				hash = x.Hash
+				d.Sessions = append(d.Sessions[:i], d.Sessions[i+1:]...)
+				return nil
+			}
+		}
+		return ErrNotFound
+	})
+	return hash, err
 }
 
 // DeleteUserSessions signs the user out everywhere except exceptHash.

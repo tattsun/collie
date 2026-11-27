@@ -1,7 +1,7 @@
 import { rich } from './ui'
 import { useEffect, useState } from 'preact/hooks'
 import { api } from '../api'
-import { addPasskey, deviceName, signOut } from '../authflow'
+import { addPasskey, deviceName, lastVerified, signOut } from '../authflow'
 import { go, me, route, sandbox, toast, toastError } from '../store'
 import { ago, cls, copyText } from '../util'
 import { lang, setLang, t, type Lang } from '../i18n'
@@ -13,7 +13,7 @@ import { IBack, ICheck, IPlus, IShield, ITrash, IX, Spinner } from './icons'
 interface MeInfo {
   user: { id: string; name: string; displayName: string; admin?: boolean }
   passkeys: { id: string; name: string; createdAt: number; lastUsed?: number }[]
-  sessions: { current: boolean; createdAt: number; lastSeen: number; agent: string }[]
+  sessions: { id: string; current: boolean; createdAt: number; lastSeen: number; agent: string; ip?: string; lastIp?: string }[]
   codexLoggedIn: boolean
   claudeAccounts: number
 }
@@ -62,7 +62,10 @@ export function AccountPage() {
       toast(t('Passkey added'))
       load()
     } catch (e) {
-      toastError(passkeyError(e))
+      // Some browsers allow one passkey prompt per tap: right after the
+      // re-check, creating the new passkey needs another tap.
+      if (e instanceof DOMException && e.name === 'NotAllowedError' && Date.now() - lastVerified < 60_000) toast(t('Confirmed. Tap “Add a passkey on this device” again.'))
+      else toastError(passkeyError(e))
     } finally {
       setBusy('')
     }
@@ -186,8 +189,8 @@ export function AccountPage() {
 
           <section class="card col gap">
             <h3>{t('Signed-in devices')}</h3>
-            {info.sessions.map((s, i) => (
-              <div key={i} class="row gap list-row">
+            {info.sessions.map((s) => (
+              <div key={s.id} class="row gap list-row">
                 <span class="grow">
                   {s.agent}
                   {s.current && <span class="chip">{t('this device')}</span>}
@@ -196,10 +199,21 @@ export function AccountPage() {
                     {t('since {time}', { time: ago(s.createdAt) })}
                     {' · '}
                     {t('active {time}', { time: ago(s.lastSeen) })}
+                    {(s.lastIp || s.ip) && <span class="mono">{' · ' + (s.lastIp || s.ip)}</span>}
                   </span>
                 </span>
+                {!s.current && (
+                  <button
+                    class="btn small"
+                    disabled={!!busy}
+                    onClick={() => confirm(t('Sign out “{device}”?', { device: s.agent })) && act('out1', () => api('DELETE', `/api/me/sessions/${encodeURIComponent(s.id)}`))()}
+                  >
+                    {t('Sign out')}
+                  </button>
+                )}
               </div>
             ))}
+            <p class="dim small">{t('Don’t recognize a device or address? Sign it out, and check your passkeys above.')}</p>
             {info.sessions.length > 1 && (
               <button class="btn small" onClick={act('out', () => api('POST', '/api/me/signout-others'))}>
                 {t('Sign out all other devices')}

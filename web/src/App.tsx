@@ -9,7 +9,7 @@ import { Viewer } from './components/Media'
 import { Spinner } from './components/icons'
 import { cls } from './util'
 import { inviteCode } from './authflow'
-import { InvitePage, LoginPage, PasskeyBanner } from './components/Auth'
+import { InvitePage, LoginPage, PasskeyBanner, VerifyDialog } from './components/Auth'
 import { AccountPage } from './components/Account'
 import { GroupsPage } from './components/Groups'
 import { AdminPage } from './components/Admin'
@@ -54,6 +54,7 @@ export function App() {
       {conn.value === 'offline' && <div class="offline">{t('Reconnecting…')}</div>}
       <Toasts />
       <Viewer />
+      <VerifyDialog />
     </div>
   )
 }

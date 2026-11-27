@@ -399,7 +399,7 @@ export async function setNotify(on: boolean) {
   if (on && 'Notification' in window && Notification.permission !== 'granted') {
     const p = await Notification.requestPermission()
     if (p !== 'granted') {
-      toast(t('Notifications need HTTPS (e.g. tailscale serve) and permission'), 'error')
+      toast(t('Notifications need HTTPS and permission'), 'error')
       on = false
     }
   }

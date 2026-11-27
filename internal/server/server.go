@@ -35,14 +35,13 @@ import (
 )
 
 type Options struct {
-	// Token is the legacy access token. It (and the Tailscale identity
-	// header) only work until the first passkey is registered.
-	Token  string
+	// Token is the setup token. It only works until the first passkey is
+	// registered.
+	Token string
+	// NoAuth skips sign-in. Only requests made directly on this machine
+	// are served then.
 	NoAuth bool
 	Web    fs.FS
-	// ProxyUID is the uid of the local reverse proxy whose identity headers
-	// are trusted (tailscaled runs as root).
-	ProxyUID int
 	// PublicURL pins the origin passkeys are bound to (default: the host the
 	// first passkey was registered on).
 	PublicURL string
@@ -64,11 +63,12 @@ type Server struct {
 	agentsAvail map[string]bool
 	build       string
 	logins      claudeLogins
+	limit       *limiter // public sign-in endpoints, per client address
 }
 
 func New(m *session.Manager, terms *term.Manager, users *auth.Store, opt Options) *Server {
 	s := &Server{m: m, terms: terms, users: users, pk: auth.NewPasskeys(users), opt: opt,
-		mux: http.NewServeMux(), agentsAvail: map[string]bool{}}
+		mux: http.NewServeMux(), agentsAvail: map[string]bool{}, limit: newLimiter(20, 20, 10000)}
 	cfg := m.Config()
 	for name, bin := range map[string]string{"claude": cfg.ClaudeBin, "codex": cfg.CodexBin} {
 		_, err := exec.LookPath(bin)
@@ -111,9 +111,10 @@ func (s *Server) Handler() http.Handler { return s }
 type ctxKey int
 
 const (
-	userKey ctxKey = iota
-	sessKey
-	legacyKey
+	userKey    ctxKey = iota
+	sessKey           // the login session's hash ("" for setup-token / --no-auth)
+	sessionKey        // the login session (auth.Session)
+	legacyKey         // signed in with the setup token (no passkey exists yet)
 )
 
 const (
@@ -122,34 +123,56 @@ const (
 )
 
 // identify resolves the signed-in user. Until the first passkey exists the
-// legacy token / Tailscale identity sign the owner in (bootstrap); after
-// that only passkey sessions count.
-func (s *Server) identify(r *http.Request) (u auth.User, sessHash string, legacy bool, ok bool) {
+// setup token signs the owner in; after that only passkey sessions count.
+// Nothing about the network a request came from (tailnet, LAN, a proxy's
+// headers) signs anyone in.
+func (s *Server) identify(r *http.Request) (u auth.User, sess auth.Session, legacy bool, ok bool) {
 	if s.opt.NoAuth {
 		u, ok = s.users.User(s.opt.Owner)
-		return u, "", true, ok
+		return u, auth.Session{}, true, ok
 	}
 	if c, err := r.Cookie(sessionCookie); err == nil {
-		if u, h, ok := s.users.SessionUser(c.Value); ok {
-			return u, h, false, true
+		if u, sess, ok := s.users.SessionUser(c.Value, clientIP(r)); ok {
+			return u, sess, false, true
 		}
 	}
 	if s.users.PasskeysExist() {
-		return auth.User{}, "", false, false
+		return auth.User{}, auth.Session{}, false, false
 	}
 	legacyOK := false
-	if r.Header.Get("Tailscale-User-Login") != "" && isLoopback(r.RemoteAddr) && s.fromTrustedProxy(r) {
-		legacyOK = true
-	} else if c, err := r.Cookie(legacyCookie); err == nil && s.tokenOK(c.Value) {
+	if c, err := r.Cookie(legacyCookie); err == nil && s.tokenOK(c.Value) {
 		legacyOK = true
 	} else if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") && s.tokenOK(strings.TrimPrefix(h, "Bearer ")) {
 		legacyOK = true
 	}
 	if !legacyOK {
-		return auth.User{}, "", false, false
+		return auth.User{}, auth.Session{}, false, false
 	}
 	u, ok = s.users.User(s.opt.Owner)
-	return u, "", true, ok
+	return u, auth.Session{}, true, ok
+}
+
+// verified checks that a sensitive change (adding a way to sign in,
+// inviting or managing users, global settings, host access) comes with a
+// recent passkey check. If not, it answers 403 with "reauth": the UI asks
+// for the passkey (POST /api/auth/verify/…) and retries. This keeps a
+// stolen or left-open session from locking its owner out or planting
+// lasting access.
+func (s *Server) verified(w http.ResponseWriter, r *http.Request) bool {
+	if s.opt.NoAuth {
+		return true
+	}
+	if legacy, _ := r.Context().Value(legacyKey).(bool); legacy {
+		return true // setup: no passkey exists yet, the setup token is the only key
+	}
+	sess, _ := r.Context().Value(sessionKey).(auth.Session)
+	if sess.Verified() || len(current(r).Passkeys) == 0 {
+		return true
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusForbidden)
+	_ = json.NewEncoder(w).Encode(map[string]any{"error": "confirm it's you with your passkey to make this change", "reauth": true})
+	return false
 }
 
 func current(r *http.Request) auth.User {
@@ -175,6 +198,16 @@ var publicAPI = map[string]bool{
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if s.opt.NoAuth && !direct(r) {
+		// Without sign-in, whoever reaches Collie controls the server: serve
+		// only this machine's own browser, never a proxy, another host or a
+		// page that rebound its DNS name to 127.0.0.1.
+		http.Error(w, "collie --no-auth only answers requests to localhost made on this machine", http.StatusForbidden)
+		return
+	}
+	if isHTTPS(r) {
+		w.Header().Set("Strict-Transport-Security", "max-age=31536000")
+	}
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Referrer-Policy", "same-origin")
 	// Agent output is rendered as markdown; even if something slipped past
@@ -184,20 +217,27 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
 	if strings.HasPrefix(r.URL.Path, "/api/") {
 		// Every API call (WebSockets too) must be same-origin, whatever its
-		// method: cookies and the Tailscale identity header would otherwise be
-		// usable by any site the user visits.
-		if !sameOrigin(r) {
+		// method: the sign-in cookie would otherwise be usable by any site
+		// the user visits.
+		if !s.sameOrigin(r) {
 			httpError(w, http.StatusForbidden, "cross-origin request rejected")
 			return
 		}
-		u, h, legacy, ok := s.identify(r)
+		if authLimited[r.URL.Path] && !s.opt.NoAuth {
+			if ok, wait := s.limit.take(limitKey(clientIP(r)), 1); !ok {
+				tooMany(w, wait)
+				return
+			}
+		}
+		u, sess, legacy, ok := s.identify(r)
 		if !ok && !publicAPI[r.URL.Path] {
 			httpError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
 		if ok {
 			ctx := context.WithValue(r.Context(), userKey, u)
-			ctx = context.WithValue(ctx, sessKey, h)
+			ctx = context.WithValue(ctx, sessKey, sess.Hash)
+			ctx = context.WithValue(ctx, sessionKey, sess)
 			ctx = context.WithValue(ctx, legacyKey, legacy)
 			r = r.WithContext(ctx)
 		}
@@ -215,8 +255,13 @@ func requireAdmin(w http.ResponseWriter, r *http.Request) bool {
 
 // allowedHosts lists the host[:port] values a same-origin browser request
 // can carry in its Origin header.
-func allowedHosts(r *http.Request) []string {
+func (s *Server) allowedHosts(r *http.Request) []string {
 	hosts := []string{r.Host}
+	// The address users open (--public-url): a reverse proxy may pass on a
+	// different Host.
+	if u, err := url.Parse(s.opt.PublicURL); err == nil && u.Host != "" {
+		hosts = append(hosts, u.Host)
+	}
 	// Behind a local reverse proxy (tailscale serve) the public name may only
 	// arrive in X-Forwarded-Host. Browsers cannot set this header themselves,
 	// and it is only trusted from loopback.
@@ -236,13 +281,13 @@ func normHost(h string) string {
 // sameOrigin rejects cross-site browser requests (CSRF and cross-site
 // WebSocket hijacking). Browsers always send Origin on WebSocket handshakes
 // and cross-origin requests; non-browser clients (curl) send neither header.
-func sameOrigin(r *http.Request) bool {
+func (s *Server) sameOrigin(r *http.Request) bool {
 	if o := r.Header.Get("Origin"); o != "" {
 		u, err := url.Parse(o)
 		if err != nil || u.Host == "" {
 			return false // includes the opaque "null" origin
 		}
-		for _, h := range allowedHosts(r) {
+		for _, h := range s.allowedHosts(r) {
 			if normHost(u.Host) == normHost(h) {
 				return true
 			}
@@ -252,13 +297,34 @@ func sameOrigin(r *http.Request) bool {
 	return r.Header.Get("Sec-Fetch-Site") != "cross-site"
 }
 
-func (s *Server) fromTrustedProxy(r *http.Request) bool {
-	local, ok := r.Context().Value(http.LocalAddrContextKey).(net.Addr)
-	if !ok {
+// isHTTPS reports whether the browser reached Collie over HTTPS (directly,
+// or through a reverse proxy on this machine).
+func isHTTPS(r *http.Request) bool {
+	return r.TLS != nil || (isLoopback(r.RemoteAddr) && r.Header.Get("X-Forwarded-Proto") == "https")
+}
+
+// direct reports whether the request was made on this machine, to a local
+// name, without passing through a proxy (what --no-auth requires).
+func direct(r *http.Request) bool {
+	if !isLoopback(r.RemoteAddr) {
 		return false
 	}
-	uid, err := loopbackPeerUID(r.RemoteAddr, local.String())
-	return err == nil && uid == s.opt.ProxyUID
+	for _, h := range []string{"X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto", "Forwarded", "X-Real-Ip",
+		"Via", "Cf-Connecting-Ip", "Tailscale-User-Login", "Tailscale-Funnel-Request"} {
+		if r.Header.Get(h) != "" {
+			return false
+		}
+	}
+	host := r.Host
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func (s *Server) tokenOK(t string) bool {
@@ -305,7 +371,7 @@ func (s *Server) relyingParty(r *http.Request) (auth.RP, error) {
 	case https:
 		rp = auth.RP{ID: hostname, Origin: "https://" + normHost(host)}
 	default:
-		return auth.RP{}, errors.New("passkeys need HTTPS: open Collie through `tailscale serve` (https://<machine>.<tailnet>.ts.net)")
+		return auth.RP{}, errors.New("passkeys need HTTPS: open Collie at its https:// address (served with --domain, tailscale serve or a reverse proxy)")
 	}
 	if id, origin := s.users.RP(); id != "" && (id != rp.ID || origin != rp.Origin) {
 		return auth.RP{}, errors.New("passkeys are registered for " + origin + " — open Collie there")
@@ -456,7 +522,7 @@ func (s *Server) acceptWS(w http.ResponseWriter, r *http.Request) (*websocket.Co
 	// the library check is a second layer). Glob characters are escaped so
 	// e.g. IPv6 literals match literally.
 	var patterns []string
-	for _, h := range allowedHosts(r) {
+	for _, h := range s.allowedHosts(r) {
 		patterns = append(patterns, globEscape.Replace(h))
 	}
 	return websocket.Accept(w, r, &websocket.AcceptOptions{

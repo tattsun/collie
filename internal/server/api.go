@@ -59,6 +59,11 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		httpError(w, 400, err.Error())
 		return
 	}
+	// Registering a server folder or running agents on the host reaches
+	// beyond any container.
+	if (req.Kind == "existing" || req.Runtime == "host") && actor(r).Admin && !s.verified(w, r) {
+		return
+	}
 	p, err := s.m.CreateProject(actor(r), req)
 	if err != nil {
 		fail(w, err)
@@ -79,6 +84,9 @@ func (s *Server) patchProject(w http.ResponseWriter, r *http.Request) {
 	var req session.PatchProjectReq
 	if err := decode(r, &req); err != nil {
 		httpError(w, 400, err.Error())
+		return
+	}
+	if req.Runtime != nil && *req.Runtime == "host" && actor(r).Admin && !s.verified(w, r) {
 		return
 	}
 	p, err := s.m.PatchProject(actor(r), r.PathValue("id"), req)

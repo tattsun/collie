@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
@@ -16,10 +17,11 @@ func TestSubIDRanges(t *testing.T) {
 		want  string
 	}{
 		// keep-id with 65536 subordinate ids: the container has 0..65536,
-		// 1002 being the user; the rest is for the inner Podman.
-		{1002, 65536, "u:0:1002\nu:1003:64534\n"},
+		// 1002 being the user; the rest but 0 is for the inner Podman.
+		{1002, 65536, "u:1:1001\nu:1003:64534\n"},
+		{1, 65536, "u:2:65535\n"},
 		{0, 65536, "u:1:65536\n"},
-		{70000, 65536, "u:0:65536\n"},
+		{70000, 65536, "u:1:65535\n"},
 	}
 	for _, c := range cases {
 		if got := subIDRanges("u", c.id, c.n); got != c.want {
@@ -58,6 +60,7 @@ func TestNestedRunArgs(t *testing.T) {
 		{"--cap-drop", "all"},
 		{"--cap-add", "SETUID,SETGID"},
 		{"--security-opt", "unmask=ALL"},
+		{"--security-opt", "seccomp=" + filepath.Join(m.nestedDir(), "seccomp.json")},
 		{"-v", filepath.Join(m.nestedDir(), "subuid") + ":/etc/subuid:ro"},
 		{"-v", m.NestedStorage("p1", "u1") + ":" + Home + "/.local/share/containers"},
 	} {
@@ -74,5 +77,61 @@ func TestNestedRunArgs(t *testing.T) {
 	}
 	if configHash(plain) == configHash(nested) {
 		t.Error("toggling nested would not re-create the container")
+	}
+}
+
+func TestNestedSeccomp(t *testing.T) {
+	profile := []byte(`{"defaultAction": "SCMP_ACT_ERRNO", "syscalls": [
+	  {"names": ["read", "write"], "action": "SCMP_ACT_ALLOW"},
+	  {"names": ["chroot"], "action": "SCMP_ACT_ALLOW", "includes": {"caps": ["CAP_SYS_CHROOT"]}},
+	  {"names": ["chroot"], "action": "SCMP_ACT_ERRNO", "excludes": {"caps": ["CAP_SYS_CHROOT"]}, "errnoRet": 1},
+	  {"names": ["sethostname", "setns"], "action": "SCMP_ACT_ERRNO", "excludes": {"caps": ["CAP_SYS_ADMIN"]}, "errnoRet": 1}
+	]}`)
+	out, err := nestedSeccomp(profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	check := func(out []byte) {
+		t.Helper()
+		var p struct {
+			Syscalls []struct {
+				Names  []string `json:"names"`
+				Action string   `json:"action"`
+			} `json:"syscalls"`
+		}
+		if err := json.Unmarshal(out, &p); err != nil {
+			t.Fatal(err)
+		}
+		allowed := map[string]bool{}
+		for _, r := range p.Syscalls {
+			for _, n := range r.Names {
+				if r.Action != "SCMP_ACT_ALLOW" && slices.Contains(nestedSyscalls, n) {
+					t.Errorf("%s still denied by %+v", n, r)
+				}
+				if r.Action == "SCMP_ACT_ALLOW" {
+					allowed[n] = true
+				}
+			}
+		}
+		for _, n := range nestedSyscalls {
+			if !allowed[n] {
+				t.Errorf("%s not allowed", n)
+			}
+		}
+	}
+	check(out)
+	if !strings.Contains(string(out), `"setns"`) {
+		t.Error("other syscalls of a rule were dropped with it")
+	}
+	// Podman's real profile, where there is one.
+	for _, path := range podmanSeccompPaths {
+		if b, err := os.ReadFile(path); err == nil {
+			out, err := nestedSeccomp(b)
+			if err != nil {
+				t.Fatalf("%s: %v", path, err)
+			}
+			check(out)
+			break
+		}
 	}
 }

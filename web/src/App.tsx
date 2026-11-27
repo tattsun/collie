@@ -5,6 +5,7 @@ import { NewSession } from './components/NewSession'
 import { SessionView } from './components/SessionView'
 import { ProjectPage, ProjectsPage } from './components/Projects'
 import { Toasts } from './components/ui'
+import { Viewer } from './components/Media'
 import { Spinner } from './components/icons'
 import { cls } from './util'
 import { inviteCode } from './authflow'
@@ -52,6 +53,7 @@ export function App() {
       </main>
       {conn.value === 'offline' && <div class="offline">{t('Reconnecting…')}</div>}
       <Toasts />
+      <Viewer />
     </div>
   )
 }

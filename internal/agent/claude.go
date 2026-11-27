@@ -593,10 +593,14 @@ func (c *Claude) onAssistant(msg map[string]any, parent string) {
 			if strings.HasSuffix(typ, "_tool_result") {
 				id := str(b, "tool_use_id")
 				out := clip(stringifyContent(b["content"]))
+				imgs := toolImages(c.sink, b["content"])
 				c.sink.Update(id, func(it *model.Item) {
 					it.Tool.Output = out
 					it.Tool.Status = "ok"
 					it.Done = true
+					if len(imgs) > 0 {
+						it.Images = imgs
+					}
 				})
 			}
 		}
@@ -630,6 +634,8 @@ func (c *Claude) onUser(msg map[string]any, parent string) {
 		}
 		id := str(b, "tool_use_id")
 		out := clip(stringifyContent(b["content"]))
+		// Screenshots and images the agent read: show them to the user too.
+		imgs := toolImages(c.sink, b["content"])
 		isErr, _ := b["is_error"].(bool)
 		status := "ok"
 		if isErr {
@@ -642,9 +648,12 @@ func (c *Claude) onUser(msg map[string]any, parent string) {
 			it.Tool.Output = out
 			it.Tool.Status = status
 			it.Done = true
+			if len(imgs) > 0 {
+				it.Images = imgs
+			}
 		}) {
 			c.sink.Put(&model.Item{ID: id, Kind: model.KindTool, TS: model.NowMs(), Parent: parent, Done: true,
-				Tool: &model.Tool{Name: "Tool", Output: out, Status: status}})
+				Tool: &model.Tool{Name: "Tool", Output: out, Status: status}, Images: imgs})
 		}
 	}
 }

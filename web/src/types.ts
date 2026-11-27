@@ -126,7 +126,15 @@ export interface Result {
   status?: string
 }
 
-export type Kind = 'user' | 'text' | 'thinking' | 'tool' | 'approval' | 'question' | 'plan' | 'notice' | 'error' | 'result'
+export type Kind = 'user' | 'text' | 'thinking' | 'tool' | 'approval' | 'question' | 'plan' | 'notice' | 'error' | 'result' | 'media'
+
+/** A file the agent showed the user (show_media), stored as an upload. */
+export interface Media {
+  id: string
+  mime: string
+  caption?: string
+  name?: string
+}
 
 export interface Item {
   id: string
@@ -139,7 +147,9 @@ export interface Item {
   ask?: Ask
   plan?: PlanStep[]
   result?: Result
+  /** upload names: attached to a user message, or images in a tool's result */
   images?: string[]
+  media?: Media[]
   by?: string
   via?: 'home'
 }

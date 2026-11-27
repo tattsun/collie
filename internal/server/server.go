@@ -28,6 +28,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/tattsun/collie/internal/auth"
+	"github.com/tattsun/collie/internal/push"
 	"github.com/tattsun/collie/internal/session"
 	"github.com/tattsun/collie/internal/term"
 	"github.com/tattsun/collie/internal/update"
@@ -49,6 +50,8 @@ type Options struct {
 	Owner string
 	// Updater installs new releases (nil: no updates).
 	Updater *update.Updater
+	// Push sends Web Push notifications (nil: none).
+	Push *push.Service
 }
 
 type Server struct {
@@ -86,6 +89,7 @@ func New(m *session.Manager, terms *term.Manager, users *auth.Store, opt Options
 		u, ok := users.User(uid)
 		return ok && !u.Disabled
 	}
+	m.Notify = s.notifySession
 	if sb := m.Sandbox(); sb != nil {
 		sb.OnChange = func() {
 			m.Hub().Each(func(c *session.Client) {
@@ -639,6 +643,16 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 			s.m.Unsubscribe(client, msg.SID)
 		case "seen":
 			s.m.Seen(a, msg.SID)
+		case "vis":
+			// Whether the page is in front of the user, and its browser's
+			// Web Push registration (pushes skip it while it is).
+			var vis struct {
+				V    bool   `json:"v"`
+				Push string `json:"push"`
+			}
+			if json.Unmarshal(data, &vis) == nil && len(vis.Push) <= 64 {
+				client.SetForeground(vis.V, vis.Push)
+			}
 		}
 	}
 }
@@ -651,6 +665,7 @@ func (s *Server) routes() {
 	s.apiRoutes()
 	s.scheduleRoutes()
 	s.pluginRoutes()
+	s.pushRoutes()
 	mx.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { httpError(w, 404, "not found") })
 	mx.HandleFunc("/", s.static)
 }

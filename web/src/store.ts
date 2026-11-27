@@ -259,6 +259,7 @@ export function disconnect() {
 }
 
 document.addEventListener('visibilitychange', () => {
+  reportVisibility()
   if (!document.hidden && authed.value) {
     if (!ws) connect()
     else if (pending.size) scheduleFlush()
@@ -280,6 +281,14 @@ export function subscribe(sid: string | null) {
 export function markSeen(sid: string) {
   send({ t: 'seen', sid })
 }
+
+/** Tells the server whether this page is in front of the user: Web Push
+ *  skips this browser while it is, as the page shows notifications itself.
+ *  Repeated while visible, since a phone may freeze the page without a word. */
+function reportVisibility() {
+  if (pushID.value) send({ t: 'vis', v: !document.hidden, push: pushID.value })
+}
+setInterval(() => !document.hidden && reportVisibility(), 20_000)
 
 let loadedBuild: string | null = null
 
@@ -334,6 +343,7 @@ function onMessage(m: any) {
     conn.value = 'online'
     applyState(m)
     if (subscribed) send({ t: 'sub', sid: subscribed })
+    reportVisibility()
     return
   }
   if (!ready) return
@@ -418,24 +428,19 @@ function onMessage(m: any) {
 
 // ---------------------------------------------------------------- notifications
 
+// Turned on and off in notify.ts.
 export const notifyEnabled = signal(localStorage.getItem('collie.notify') === '1')
-
-export async function setNotify(on: boolean) {
-  if (on && 'Notification' in window && Notification.permission !== 'granted') {
-    const p = await Notification.requestPermission()
-    if (p !== 'granted') {
-      toast(t('Notifications need HTTPS and permission'), 'error')
-      on = false
-    }
-  }
-  notifyEnabled.value = on
-  localStorage.setItem('collie.notify', on ? '1' : '0')
-}
+/** This browser's Web Push registration on the server ('' = none). */
+export const pushID = signal('')
+pushID.subscribe(() => reportVisibility())
 
 function maybeNotify(prev: Session | undefined, s: Session) {
   if (!prev || prev.status === s.status) return
   const viewing = route.value.name === 'session' && route.value.id === s.id && !document.hidden
   if (viewing) return
+  // In the background, Web Push brings the user's own sessions (with the
+  // same tag, so even a race shows them once).
+  if (document.hidden && pushID.value && s.owner === me.value?.id) return
   let body = ''
   if (s.status === 'waiting') body = t('Needs your approval')
   else if (s.status === 'idle' && (prev.status === 'running' || prev.status === 'waiting')) body = s.preview || t('Finished')

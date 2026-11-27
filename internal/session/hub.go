@@ -3,6 +3,7 @@ package session
 import (
 	"encoding/json"
 	"sync"
+	"time"
 
 	"github.com/tattsun/collie/internal/model"
 )
@@ -20,6 +21,12 @@ type Client struct {
 	known  map[string]bool // "p:<id>" / "s:<id>" the client has been sent
 	closed bool
 	kill   func()
+
+	// What the page last reported (SetForeground): whether it is in front
+	// of the user, and its browser's Web Push registration.
+	visible bool
+	visAt   time.Time
+	pushID  string
 }
 
 func NewClient(userID, sessionHash string, kill func()) *Client {
@@ -76,6 +83,36 @@ func (c *Client) unsubscribe(sid string) {
 	c.mu.Lock()
 	delete(c.subs, sid)
 	c.mu.Unlock()
+}
+
+// foregroundTTL is how long a page's report that it is in front of the
+// user holds: the page repeats it while visible, and one frozen in the
+// background (as phones do) stops repeating it without saying so.
+const foregroundTTL = 45 * time.Second
+
+// SetForeground records whether the page is in front of the user, and the
+// Web Push registration of its browser.
+func (c *Client) SetForeground(visible bool, pushID string) {
+	c.mu.Lock()
+	c.visible, c.visAt, c.pushID = visible, time.Now(), pushID
+	c.mu.Unlock()
+}
+
+// Foreground reports whether a page of userID in the browser registered as
+// pushID is in front of them: that browser shows notifications itself.
+func (h *Hub) Foreground(userID, pushID string) bool {
+	if pushID == "" {
+		return false
+	}
+	found := false
+	h.each(func(c *Client) {
+		c.mu.Lock()
+		if !c.closed && c.UserID == userID && c.pushID == pushID && c.visible && time.Since(c.visAt) < foregroundTTL {
+			found = true
+		}
+		c.mu.Unlock()
+	})
+	return found
 }
 
 // resetKnown records what a freshly sent state contained.

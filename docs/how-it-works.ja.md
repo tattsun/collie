@@ -33,6 +33,15 @@
 - Playwright で録画すると WebM になります。iPhone で再生できないときは、MP4 で書き出すよう頼んでください。
 - HTML のページは、ネットワークに出られないサンドボックスの中で開きます。そのため、スタイルや画像を埋め込んだ 1 ファイルで書いてもらう必要があります（エージェントにもそう伝えてあります）。スクリプトは **Run scripts** を押したときだけ動きます。
 
+## 通知
+
+通知を受け取りたい端末ごとに Account → **通知** でオンにして、**テスト通知を送る** で確かめてください。自分が始めたセッションが承認や回答を待っているとき、完了したとき、エラーで止まったときに、Collie を閉じていても届きます。
+
+- iPhone・iPad（iOS 16.4 以降）では、先に Collie をホーム画面に追加し（共有 → ホーム画面に追加）、そのアイコンから開いた Collie で通知をオンにします。
+- Collie を前面で開いている端末には、ページ自身が通知を出します。二重には届きません。
+- サーバから各ブラウザのプッシュ通知サービスに HTTPS で接続できる必要があります: `fcm.googleapis.com`（Chrome・Android）、`push.services.mozilla.com`（Firefox）、`web.push.apple.com`（Safari・iPhone）、`notify.windows.com`（Edge）。
+- Tailscale 経由で使っている場合、通知はスマホが tailnet につながっていなくても届きますが、タップして開くには Tailscale の接続が必要です。
+
 ## 隔離
 
 新しいプロジェクトは、既定で **Isolated container** で動きます。Project → Settings で変更できます。

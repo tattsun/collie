@@ -2,6 +2,7 @@ import { t } from './i18n'
 import { api, ApiError } from './api'
 import { applyState, authed, connect, toast } from './store'
 import { fetchAuthStatus, inviteCode } from './authflow'
+import { syncPush } from './notify'
 
 /** Legacy token sign-in (only before the first passkey exists). */
 export async function login(token: string): Promise<boolean> {
@@ -26,6 +27,7 @@ export async function boot() {
     applyState(await api('GET', '/api/state'))
     authed.value = true
     connect()
+    syncPush()
   } catch (e) {
     if (e instanceof ApiError && e.status === 401) {
       authed.value = false

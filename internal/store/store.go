@@ -11,6 +11,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"sync"
 	"time"
@@ -200,14 +201,25 @@ func (s *Store) DeleteSession(id string) {
 	s.scheduleSave()
 	s.mu.Unlock()
 	s.logMu.Lock()
-	_ = os.Remove(s.logPath(id))
+	if path, err := s.logPath(id); err == nil {
+		_ = os.Remove(path)
+	}
 	s.logMu.Unlock()
 }
 
 // ---- timelines ----
 
-func (s *Store) logPath(sid string) string {
-	return filepath.Join(s.dir, "sessions", sid+".jsonl")
+// sessionIDRe matches session ids (model.NewID), and nothing that could
+// step out of the sessions folder.
+var sessionIDRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+
+var errBadSessionID = errors.New("invalid session id")
+
+func (s *Store) logPath(sid string) (string, error) {
+	if !sessionIDRe.MatchString(sid) {
+		return "", errBadSessionID
+	}
+	return filepath.Join(s.dir, "sessions", sid+".jsonl"), nil
 }
 
 func (s *Store) AppendItem(sid string, it *model.Item) error {
@@ -218,7 +230,11 @@ func (s *Store) AppendItem(sid string, it *model.Item) error {
 	b = append(b, '\n')
 	s.logMu.Lock()
 	defer s.logMu.Unlock()
-	f, err := os.OpenFile(s.logPath(sid), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	path, err := s.logPath(sid)
+	if err != nil {
+		return err
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return err
 	}
@@ -234,7 +250,11 @@ func (s *Store) AppendItem(sid string, it *model.Item) error {
 func (s *Store) LoadItems(sid string) ([]*model.Item, int, error) {
 	s.logMu.Lock()
 	defer s.logMu.Unlock()
-	f, err := os.Open(s.logPath(sid))
+	path, err := s.logPath(sid)
+	if err != nil {
+		return nil, 0, err
+	}
+	f, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, 0, nil
 	}
@@ -267,7 +287,11 @@ func (s *Store) LoadItems(sid string) ([]*model.Item, int, error) {
 func (s *Store) CompactItems(sid string, items []*model.Item) error {
 	s.logMu.Lock()
 	defer s.logMu.Unlock()
-	tmp := s.logPath(sid) + ".tmp"
+	path, err := s.logPath(sid)
+	if err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
 	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
 		return err
@@ -287,7 +311,7 @@ func (s *Store) CompactItems(sid string, items []*model.Item) error {
 	if err := f.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmp, s.logPath(sid))
+	return os.Rename(tmp, path)
 }
 
 func (s *Store) UploadsDir() string   { return filepath.Join(s.dir, "uploads") }

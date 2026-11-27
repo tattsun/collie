@@ -120,6 +120,9 @@ func selinuxEnabled() bool {
 
 func (m *Manager) Available() bool { return m.available }
 
+// Podman is the podman executable (argv[0] of Exec's command lines).
+func (m *Manager) Podman() string { return m.cfg.Podman }
+
 // LimitsSupported reports whether rootless containers can get resource
 // limits here: that needs the systemd cgroup manager with a user session
 // (on a server: `loginctl enable-linger <user>`).

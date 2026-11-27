@@ -1,6 +1,8 @@
 package store
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/tattsun/collie/internal/model"
@@ -49,5 +51,30 @@ func TestStatePersist(t *testing.T) {
 	}
 	if p, ok := st2.Project("p"); !ok || p.Name != "demo" {
 		t.Fatal("project not persisted")
+	}
+}
+
+func TestTimelineRejectsBadSessionIDs(t *testing.T) {
+	dir := t.TempDir()
+	st, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, sid := range []string{"", "../escape", "a/b", "..", "s.jsonl", "/etc/passwd"} {
+		if err := st.AppendItem(sid, &model.Item{ID: "a"}); err == nil {
+			t.Errorf("AppendItem(%q) wrote a timeline", sid)
+		}
+		if _, _, err := st.LoadItems(sid); err == nil {
+			t.Errorf("LoadItems(%q) read a timeline", sid)
+		}
+		if err := st.CompactItems(sid, nil); err == nil {
+			t.Errorf("CompactItems(%q) wrote a timeline", sid)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, "escape.jsonl")); err == nil {
+		t.Error("a timeline was written outside the sessions folder")
+	}
+	if err := st.AppendItem("0123abcdef456789", &model.Item{ID: "a"}); err != nil {
+		t.Errorf("a real session id: %v", err)
 	}
 }

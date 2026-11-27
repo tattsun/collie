@@ -445,6 +445,7 @@ func (s *Server) stateFor(u auth.User, legacy bool) map[string]any {
 	a := session.Actor{ID: u.ID, Name: u.Name, Admin: u.Admin}
 	// Every user has a Home (without podman only admins, as it then runs on the host).
 	_, _ = s.m.EnsureHome(a)
+	root, _ := s.m.OwnerRoot(a, "")
 	return map[string]any{
 		"t":         "state",
 		"me":        userInfo{ID: u.ID, Name: u.Name, DisplayName: u.DisplayName, Admin: u.Admin},
@@ -456,7 +457,7 @@ func (s *Server) stateFor(u auth.User, legacy bool) map[string]any {
 		"usage":     s.m.UsageFor(u.ID),
 		"modes":     agentModes(),
 		"agents":    s.agentsAvail,
-		"root":      s.m.OwnerRoot(a, ""),
+		"root":      root,
 		"rootBase":  cfg.ProjectRoot,
 		"terms":     s.termsFor(u.ID),
 		"sandbox":   s.sandboxStatus(u.Admin),

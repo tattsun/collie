@@ -345,3 +345,24 @@ func TestSend(t *testing.T) {
 		t.Fatalf("oversized payload: %v", err)
 	}
 }
+
+func TestPayloadLimit(t *testing.T) {
+	b := newBrowser(t)
+	sub := b.sub("u1", "https://fcm.googleapis.com/fcm/send/a")
+	full := make([]byte, maxPayload)
+	body, err := encrypt(sub.P256dh, sub.Auth, full)
+	if err != nil {
+		t.Fatalf("a payload filling the record: %v", err)
+	}
+	if pt := b.decrypt(t, body); len(pt) != maxPayload {
+		t.Fatalf("decrypted %d bytes", len(pt))
+	}
+	if _, err := encrypt(sub.P256dh, sub.Auth, make([]byte, maxPayload+1)); !errors.Is(err, errPayloadTooBig) {
+		t.Fatalf("one byte over: %v", err)
+	}
+	// The caller's slice is left alone.
+	p := make([]byte, 3, 10)
+	if _, err := encrypt(sub.P256dh, sub.Auth, p); err != nil || p[:4][3] != 0 {
+		t.Fatalf("payload modified: %v %v", err, p[:4])
+	}
+}

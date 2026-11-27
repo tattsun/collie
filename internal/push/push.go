@@ -28,6 +28,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -403,8 +404,12 @@ func (s *Service) vapidToken(endpoint, contact string, now time.Time) (string, e
 	return unsigned + "." + b64.EncodeToString(sig), nil
 }
 
-// recordSize is the aes128gcm record size: the whole payload is one record.
-const recordSize = 4096
+// recordSize is the aes128gcm record size: the whole payload is one record,
+// so it holds at most maxPayload bytes (besides the delimiter and GCM tag).
+const (
+	recordSize = 4096
+	maxPayload = recordSize - 1 - 16
+)
 
 // encrypt encodes a payload for the browser holding the subscription's
 // keys (RFC 8291, aes128gcm content coding of RFC 8188).
@@ -429,7 +434,7 @@ func encrypt(p256dh, auth string, plaintext []byte) ([]byte, error) {
 }
 
 func encryptWith(uaPublic, authSecret, plaintext, salt []byte, as *ecdh.PrivateKey) ([]byte, error) {
-	if len(plaintext)+1+16 > recordSize {
+	if len(plaintext) > maxPayload {
 		return nil, errPayloadTooBig
 	}
 	ua, err := ecdh.P256().NewPublicKey(uaPublic)
@@ -473,11 +478,10 @@ func encryptWith(uaPublic, authSecret, plaintext, salt []byte, as *ecdh.PrivateK
 		return nil, err
 	}
 	// Header: salt, record size, key id (our ephemeral public key).
-	out := make([]byte, 0, 16+4+1+len(asPublic)+len(plaintext)+1+gcm.Overhead())
-	out = append(out, salt...)
-	out = binary.BigEndian.AppendUint32(out, recordSize)
+	out := binary.BigEndian.AppendUint32(slices.Clone(salt), recordSize)
 	out = append(out, byte(len(asPublic)))
 	out = append(out, asPublic...)
-	record := append(append(make([]byte, 0, len(plaintext)+1), plaintext...), 0x02) // 0x02: the last record
+	// 0x02 marks the last record (appended to a copy: plaintext is the caller's).
+	record := append(slices.Clip(plaintext), 0x02)
 	return gcm.Seal(out, nonce, record, nil), nil
 }

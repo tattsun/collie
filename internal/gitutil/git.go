@@ -61,7 +61,9 @@ func Init(dir string) error {
 func Clone(url, dest string) error {
 	c, cancel := ctx(30 * time.Minute)
 	defer cancel()
-	_, err := run(c, filepath.Dir(dest), "clone", "--quiet", "--", url, dest)
+	// After "--", neither can be taken for an option (--upload-pack=…).
+	args := []string{"clone", "--quiet", "--", url, dest}
+	_, err := run(c, filepath.Dir(dest), args...)
 	return err
 }
 

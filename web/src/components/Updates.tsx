@@ -8,6 +8,12 @@ import { ago, cls } from '../util'
 import { IRefresh, Spinner } from './icons'
 import { Toggle } from './ui'
 
+/** A release's page on GitHub, built here: only ever a github.com link, whatever the server passes on. */
+function releaseURL(repo: string, version: string): string {
+  const path = repo.split('/').map(encodeURIComponent).join('/')
+  return `https://github.com/${path}/releases/tag/v${encodeURIComponent(version)}`
+}
+
 function phaseText(phase?: string): string {
   switch (phase) {
     case 'downloading':
@@ -78,7 +84,7 @@ export function UpdatesPanel() {
           <span>
             {u.latest ? (
               <>
-                <a class="mono" href={u.url} target="_blank" rel="noopener noreferrer">
+                <a class="mono" href={releaseURL(u.repo || '', u.latest)} target="_blank" rel="noopener noreferrer">
                   v{u.latest}
                 </a>
                 {u.published ? <span class="dim"> · {ago(u.published)}</span> : null}

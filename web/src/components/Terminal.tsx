@@ -181,7 +181,7 @@ function TermPane({ info }: { info: TermInfo }) {
       const connect = () => {
         if (disposed) return
         const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
-        const ws = new WebSocket(`${proto}//${location.host}/api/terms/${info.id}/ws`)
+        const ws = new WebSocket(`${proto}//${location.host}/api/terms/${encodeURIComponent(info.id)}/ws`)
         ws.binaryType = 'arraybuffer'
         wsRef.current = ws
         let first = true
@@ -323,7 +323,7 @@ export function TerminalView({ owner, projectId, sessionId }: { owner: string; p
         {mine.map((tm, i) => (
           <div key={tm.id} class={cls('term-tab', cur?.id === tm.id && 'on')}>
             <button onClick={() => setActive(tm.id)}>{t('Shell {n}', { n: i + 1 })}</button>
-            <button class="x" aria-label={t('Close shell')} onClick={() => api('DELETE', `/api/terms/${tm.id}`).catch(toastError)}>
+            <button class="x" aria-label={t('Close shell')} onClick={() => api('DELETE', `/api/terms/${encodeURIComponent(tm.id)}`).catch(toastError)}>
               <IX size={11} />
             </button>
           </div>

@@ -33,6 +33,9 @@ type CreateProjectReq struct {
 	Group   string `json:"group"`   // owning group id ("" = personal)
 }
 
+// errNotInOwnerRoot: new folders are only ever created inside the owner's.
+var errNotInOwnerRoot = errors.New("new projects go inside their owner's folder")
+
 var nameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$`)
 
 func (m *Manager) expand(p string) string {
@@ -47,14 +50,22 @@ func (m *Manager) expand(p string) string {
 	return filepath.Clean(p)
 }
 
+// ownerNameRe matches the user and group names that name owners' folders:
+// one folder name, which can't step out of (or alias) the folder it's in.
+var ownerNameRe = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._-]{0,99}$`)
+
 // OwnerRoot is where new projects of a user / group are created. Users and
 // groups live in separate subtrees so a name can never alias another
 // owner's folder.
-func (m *Manager) OwnerRoot(a Actor, groupID string) string {
+func (m *Manager) OwnerRoot(a Actor, groupID string) (string, error) {
+	base, name := filepath.Join(m.cfg.ProjectRoot, "users"), a.Name
 	if groupID != "" && m.acc != nil {
-		return filepath.Join(m.cfg.ProjectRoot, "groups", m.acc.GroupName(groupID))
+		base, name = filepath.Join(m.cfg.ProjectRoot, "groups"), m.acc.GroupName(groupID)
 	}
-	return filepath.Join(m.cfg.ProjectRoot, "users", a.Name)
+	if !ownerNameRe.MatchString(name) {
+		return "", fmt.Errorf("%q can't name a folder", name)
+	}
+	return filepath.Join(base, name), nil
 }
 
 func within(p, dir string) bool {
@@ -79,7 +90,10 @@ func (m *Manager) CreateProject(a Actor, req CreateProjectReq) (model.Project, e
 	if req.Group != "" && req.Runtime == "host" {
 		return model.Project{}, errors.New("group projects always run isolated")
 	}
-	root := m.OwnerRoot(a, req.Group)
+	root, err := m.OwnerRoot(a, req.Group)
+	if err != nil {
+		return model.Project{}, err
+	}
 	name := strings.TrimSpace(req.Name)
 	var path string
 	switch req.Kind {
@@ -177,6 +191,9 @@ func (m *Manager) CreateProject(a Actor, req CreateProjectReq) (model.Project, e
 			// project: the same network policy as their agents (no host
 			// loopback, no LAN/tailnet behind the firewall), their own
 			// GH_TOKEN, and none of the server's credentials.
+			if !strings.HasPrefix(path, root+string(filepath.Separator)) {
+				return model.Project{}, errNotInOwnerRoot
+			}
 			if err := os.MkdirAll(path, 0o755); err != nil {
 				return model.Project{}, err
 			}
@@ -202,6 +219,9 @@ func (m *Manager) CreateProject(a Actor, req CreateProjectReq) (model.Project, e
 			}
 		}()
 	default:
+		if !strings.HasPrefix(path, root+string(filepath.Separator)) {
+			return model.Project{}, errNotInOwnerRoot
+		}
 		if err := os.MkdirAll(path, 0o755); err != nil {
 			return model.Project{}, err
 		}
@@ -573,7 +593,9 @@ func (m *Manager) cloneInContainer(p model.Project, uid, url string) error {
 		[]string{"GIT_TERMINAL_PROMPT=0"}, []string{"git", "clone", "--quiet", "--", url, "."})
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	// argv[0] is podman; name it from the configuration, not the list that
+	// also carries the URL.
+	cmd := exec.CommandContext(ctx, m.sb.Podman(), argv[1:]...)
 	var errb bytes.Buffer
 	cmd.Stderr = &errb
 	if err := cmd.Run(); err != nil {

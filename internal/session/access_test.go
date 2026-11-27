@@ -143,7 +143,7 @@ func TestProjectFoldersNeverOverlap(t *testing.T) {
 	alice := Actor{ID: "alice", Name: "alice", Admin: true}
 	m.st.PutProject(model.Project{ID: "pt", OwnerGroup: "team", Path: filepath.Join(root, "groups", "team", "app")})
 	// personal and group folders live in separate subtrees
-	if got := m.OwnerRoot(Actor{Name: "groups"}, ""); got != filepath.Join(root, "users", "groups") {
+	if got, _ := m.OwnerRoot(Actor{Name: "groups"}, ""); got != filepath.Join(root, "users", "groups") {
 		t.Errorf("personal root = %s", got)
 	}
 	for _, p := range []string{filepath.Join(root, "groups", "team"), filepath.Join(root, "groups", "team", "app", "sub"), root, filepath.Join(root, "groups")} {
@@ -160,5 +160,26 @@ func TestProjectFoldersNeverOverlap(t *testing.T) {
 	os.MkdirAll(other, 0o755)
 	if _, err := m.CreateProject(alice, CreateProjectReq{Kind: "existing", Path: other}); err != nil {
 		t.Errorf("unrelated folder rejected: %v", err)
+	}
+}
+
+func TestOwnerFoldersAreSingleNames(t *testing.T) {
+	m, _ := newTestManager(t)
+	m.SetAccess(fakeAccess{"../escape": {"alice": "owner"}, "team": {"alice": "owner"}})
+	alice := Actor{ID: "alice", Name: "alice"}
+	if _, err := m.OwnerRoot(alice, "../escape"); err == nil {
+		t.Error("a group name stepped out of the groups folder")
+	}
+	admin := Actor{ID: "alice", Name: "alice", Admin: true}
+	if _, err := m.CreateProject(admin, CreateProjectReq{Name: "app", Group: "../escape"}); err == nil || !strings.Contains(err.Error(), "can't name a folder") {
+		t.Errorf("a project for a group named ../escape: %v", err)
+	}
+	for _, name := range []string{"", ".", "..", "a/b", "-x"} {
+		if _, err := m.OwnerRoot(Actor{ID: "u", Name: name}, ""); err == nil {
+			t.Errorf("user name %q accepted as a folder", name)
+		}
+	}
+	if got, err := m.OwnerRoot(alice, "team"); err != nil || got != filepath.Join(m.cfg.ProjectRoot, "groups", "team") {
+		t.Errorf("group root = %q, %v", got, err)
 	}
 }

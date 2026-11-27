@@ -297,9 +297,10 @@ func (m *Manager) SaveAccount(uid string, in AccountInput) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("unknown account kind %q", kind)
 	}
-	id := in.ID
-	if idx < 0 {
-		id = newAccountID()
+	// The stored id, never the request's: it names the account's file.
+	id := newAccountID()
+	if idx >= 0 {
+		id = f.Accounts[idx].ID
 	}
 	path := m.AccountEnvPath(uid, id)
 	if kind == KindCustom {

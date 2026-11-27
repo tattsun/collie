@@ -3,3 +3,4 @@
 /web/dist/*
 !/web/dist/.keep
 .playwright-mcp/
+/tools/demo/node_modules/

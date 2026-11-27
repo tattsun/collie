@@ -1,0 +1,13 @@
+{
+  "name": "collie-demo",
+  "private": true,
+  "type": "module",
+  "description": "Shoots the README screenshots and demo GIF (see shoot.mjs)",
+  "scripts": {
+    "shoot": "node shoot.mjs"
+  },
+  "dependencies": {
+    "gifenc": "^1.0.3",
+    "pngjs": "^7.0.0"
+  }
+}

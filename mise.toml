@@ -44,3 +44,12 @@ run = "./deploy/install.sh"
 [tasks.dev]
 description = "Run the API on :7878 without auth (pair with `cd web && npm run dev`)"
 run = "go run . --no-auth --addr 127.0.0.1:7878"
+
+[tasks.shots]
+description = "Re-shoot the README screenshots and demo GIF into docs/images (needs Playwright + Chromium)"
+depends = ["build"]
+dir = "{{config_root}}/tools/demo"
+run = [
+  "npm ci --no-audit --no-fund",
+  "node shoot.mjs",
+]

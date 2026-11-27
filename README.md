@@ -3,6 +3,15 @@
 Ubuntu サーバにポコっと置ける、**Claude Code / Codex を複数同時に操るための Web UI**。
 Tailscale 経由でスマホや別 PC からプロジェクトを作り、エージェントを走らせ、承認し、差分を確認できます。
 
+<p align="center">
+  <img src="docs/images/demo-dark.gif" width="320" alt="スマホからタスクを頼み、エージェントの作業を見て、コマンドの実行を承認し、スクショと差分を確認する">
+</p>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/desktop-dark.png">
+  <img src="docs/images/desktop-light.png" alt="PC での表示。左に承認待ち・実行中・完了したセッションの一覧、右に会話とコマンド実行の承認">
+</picture>
+
 - **単一バイナリ**（Go、UI 埋め込み・約 8MB）。依存はサーバ上の `claude` / `codex` / `git` だけ
 - **軽量フロント**（Preact、初期ロード gzip ≈ 55KB）。ストリーミングはフレーム単位でまとめて描画、長い履歴は遅延描画
 - **Claude Code**: `claude -p` の stream-json 制御プロトコル（Agent SDK と同じ）で駆動
@@ -46,6 +55,7 @@ mise run build               # web/ をビルドして bin/collie を生成
 | `mise run test` | Go のテスト・vet とフロントの型チェック |
 | `mise run install [--serve]` | ビルドして systemd ユーザーサービスとして導入 |
 | `mise run dev` | 開発用 API サーバ（認証なし・:7878） |
+| `mise run shots` | README の画像（`docs/images/`）を撮り直す |
 
 ## 起動（お試し）
 
@@ -145,6 +155,11 @@ mise run install --serve      # 初回と同じオプションで（--serve な�
 2. **New** → やりたいことを書き、プロジェクト・エージェント（Claude Code / Codex）・権限モード・モデルを選んで開始
 3. 一覧の **Needs you** に承認待ちが上がってくるので、タップして Allow / Deny
 4. **Changes** で差分を確認、必要なら **Terminal** で `git push` など
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/mobile-dark.png">
+  <img src="docs/images/mobile-light.png" alt="スマホでの表示。セッション一覧の Needs you、チャット内の承認、Changes タブの差分">
+</picture>
 
 ### スクショ・動画・HTML を見せてもらう
 
@@ -329,4 +344,7 @@ deploy/setup-host.sh     ホスト準備（専用ユーザー・podman・nftable
 web/                     Preact + Vite フロントエンド
 deploy/install.sh        systemd ユーザーサービス導入
 mise.toml                ツールチェーン（Go / Node）とビルドタスク
+tools/demo/              README の画像を撮るスクリプト
 ```
+
+README のスクショと GIF は `mise run shots` で撮り直せます（UI を変えたときに）。使い捨ての Collie を、台本どおりに会話する偽の `claude`（`tools/demo/fake-claude.mjs`）で動かして撮るので、エージェントのアカウントは要らず、毎回同じ画面になります。Playwright と Chromium が必要です（無ければ `cd tools/demo && npm i playwright && npx playwright install chromium`）。

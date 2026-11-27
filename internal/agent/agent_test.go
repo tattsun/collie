@@ -49,7 +49,7 @@ func TestClip(t *testing.T) {
 
 func TestAuthNotice(t *testing.T) {
 	cases := map[string]string{
-		"Not logged in · Please run /login":                                     "not logged in",
+		"Not logged in · Please run /login":                                     "no usable account",
 		"Failed to authenticate. API Error: 401 OAuth access token is invalid.": "token was rejected",
 		"API Error: 529 Overloaded":                                             "",
 		"":                                                                      "",

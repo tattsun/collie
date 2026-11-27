@@ -273,11 +273,12 @@ func (m *Manager) runArgs(sp Spec, extra []string) []string {
 }
 
 // envFiles lists the env files for the user's container for the project.
-// Later files override earlier ones: global < user < project.
+// Later files override earlier ones: global < user < the user's Claude
+// account for the project < project.
 func (m *Manager) envFiles(projectID, userID string) []string {
 	var out []string
-	for _, f := range []string{m.SharedEnvPath(), m.UserEnvPath(userID), m.ProjectEnvPath(projectID)} {
-		if fileNonEmpty(f) {
+	for _, f := range []string{m.SharedEnvPath(), m.UserEnvPath(userID), m.accountFile(projectID, userID), m.ProjectEnvPath(projectID)} {
+		if f != "" && fileNonEmpty(f) {
 			out = append(out, f)
 		}
 	}

@@ -215,7 +215,7 @@ func TestExecPassesEnvFiles(t *testing.T) {
 		}
 	}
 	write(m.SharedEnvPath(), "A=shared\n")
-	write(m.UserEnvPath("u1"), "CLAUDE_CODE_OAUTH_TOKEN=tok\n")
+	write(m.UserEnvPath("u1"), "GH_TOKEN=tok\n")
 	write(m.ProjectEnvPath("p1"), "") // empty files are skipped
 
 	argv, _ := m.Exec("p1", "u1", "/work", "id1", false, []string{"GIT_TERMINAL_PROMPT=0"}, []string{"true"})

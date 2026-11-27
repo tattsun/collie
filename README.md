@@ -90,7 +90,11 @@ mise run install --serve              # ビルド → エージェント用イ�
 
 エージェントは使う人それぞれのアカウントで動きます（課金も各自）。Account → **Agent accounts** から:
 
-- **Claude Code**: 任意のプロジェクトの Terminal で `claude setup-token` → 表示されたトークンを貼り付けて保存
+- **Claude Code**: **Claude アカウント**を複数登録できます（種類: サブスク / Amazon Bedrock / Anthropic API キー / カスタム環境変数）。
+  - **サブスク**: 「Claude でサインイン」を押すと、Collie が `claude setup-token` を代行します。表示されたリンクを開いてサインインし、出てきたコードを貼るだけ（ターミナル不要。トークンは自動で保存）。手元で取ったトークンを貼ることもできます
+  - **Bedrock**: リージョン、Bedrock API キー（または IAM アクセスキー）、必要ならモデル / 推論プロファイルを入力（`CLAUDE_CODE_USE_BEDROCK=1` は自動で付きます）
+  - **既定のアカウント**を 1 つ決め、プロジェクトごとに Project → Settings → **Claude account** で切り替えます（グループのプロジェクトでも各メンバーが自分のアカウントを選びます）。変更は次に起動するエージェント・シェルから効きます
+  - 以前に保存したトークン（`CLAUDE_CODE_OAUTH_TOKEN`）は、最初に開いたときに自動でアカウントに移行されます
 - **Codex**: 任意のプロジェクトの Terminal で `codex login --device-auth`（その人の全プロジェクトで有効）
 - **GitHub**: 自分の環境変数に `GH_TOKEN=…` を入れると、push と private リポジトリの clone に使われます
 

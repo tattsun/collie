@@ -93,3 +93,23 @@ func TestFreshBase(t *testing.T) {
 		t.Fatalf("diverged: got %s want %s", got, want)
 	}
 }
+
+func TestFreshBaseDefaultBranchWithoutUpstream(t *testing.T) {
+	origin := t.TempDir()
+	git(t, origin, "init", "-q", "-b", "main")
+	commitFile(t, origin, "a")
+	local := filepath.Join(t.TempDir(), "local")
+	git(t, filepath.Dir(local), "clone", "-q", origin, local)
+	// old feature branch with no upstream, then main moves on
+	git(t, local, "checkout", "-q", "-b", "feature")
+	commitFile(t, origin, "b")
+	tip := HeadCommit(origin)
+	if got := FreshBase(local); got != tip {
+		t.Fatalf("got %s want default branch tip %s", got, tip)
+	}
+	// feature gains its own commit: keep HEAD
+	commitFile(t, local, "c")
+	if got, want := FreshBase(local), HeadCommit(local); got != want {
+		t.Fatalf("diverged: got %s want %s", got, want)
+	}
+}

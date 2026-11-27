@@ -23,6 +23,18 @@ func (m *Manager) testHas(t *testing.T, ref string) bool {
 	return ok
 }
 
+func (m *Manager) testClaim(t *testing.T, ref string) string {
+	t.Helper()
+	if c, ok := m.uploadClaim(ref); ok {
+		return c
+	}
+	c, ok := m.fileClaim(ref)
+	if !ok {
+		t.Fatalf("%q is neither an upload nor a file", ref)
+	}
+	return c
+}
+
 func putItems(t *testing.T, m *Manager, sid string, items ...*model.Item) {
 	t.Helper()
 	r, err := m.runtime(sid)
@@ -147,7 +159,7 @@ func TestAttachmentsGoWithTheirSession(t *testing.T) {
 	if m.testHas(t, bobsPhoto) || m.testHas(t, notes) {
 		t.Error("what a session that is gone held survived the sweep")
 	}
-	if _, err := os.Stat(m.uploadClaim(bobsPhoto)); !os.IsNotExist(err) {
+	if _, err := os.Stat(m.testClaim(t, bobsPhoto)); !os.IsNotExist(err) {
 		t.Errorf("claim left behind: %v", err)
 	}
 }
@@ -217,12 +229,12 @@ func TestClaimExisting(t *testing.T) {
 		}
 	}
 	m.claimExisting()
-	for _, c := range []string{m.uploadClaim(img), m.uploadClaim(shot), m.fileClaim(f.ID)} {
+	for _, c := range []string{m.testClaim(t, img), m.testClaim(t, shot), m.testClaim(t, f.ID)} {
 		if claimOf(c) != "s1" {
 			t.Errorf("%s not claimed", c)
 		}
 	}
-	if _, err := os.Stat(m.uploadClaim("0123456789abcdef.png")); !os.IsNotExist(err) {
+	if _, err := os.Stat(m.testClaim(t, "0123456789abcdef.png")); !os.IsNotExist(err) {
 		t.Errorf("claimed a missing upload: %v", err)
 	}
 
@@ -230,7 +242,7 @@ func TestClaimExisting(t *testing.T) {
 	later, _ := m.SaveUpload(tinyPNG)
 	_ = m.st.AppendItem("s1", &model.Item{ID: "u-2", Kind: model.KindUser, Images: []string{later}, Done: true})
 	m.claimExisting()
-	if claimOf(m.uploadClaim(later)) != "" {
+	if claimOf(m.testClaim(t, later)) != "" {
 		t.Error("claimed again")
 	}
 }

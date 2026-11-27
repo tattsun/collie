@@ -2,6 +2,7 @@ package session
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"log"
 	"os"
@@ -42,12 +43,22 @@ var (
 	errImageTaken = errors.New("an attached image was already sent in another session; attach it again")
 )
 
-func (m *Manager) uploadClaim(name string) string {
-	return filepath.Join(m.st.UploadsDir(), name+claimExt)
+// uploadClaim is where an upload's claim is; !ok for a name that is not
+// an upload's.
+func (m *Manager) uploadClaim(name string) (string, bool) {
+	p, ok := m.UploadPath(name)
+	if !ok {
+		return "", false
+	}
+	return p + claimExt, true
 }
 
-func (m *Manager) fileClaim(id string) string {
-	return filepath.Join(m.st.FilesDir(), id, claimName)
+// fileClaim is where a file's claim is; !ok for an id that is not a file's.
+func (m *Manager) fileClaim(id string) (string, bool) {
+	if !fileIDRe.MatchString(id) {
+		return "", false
+	}
+	return filepath.Join(m.st.FilesDir(), id, claimName), true
 }
 
 // claimOf is the session a claim names, or "".
@@ -63,6 +74,9 @@ func claimOf(path string) string {
 // session has it (errClaimed). It is linked in place, so it appears whole
 // or not at all.
 func claim(path, sid string) error {
+	if path == "" {
+		return errors.New("nothing to claim")
+	}
 	tmp := path + "." + model.NewID()
 	if err := os.WriteFile(tmp, []byte(sid), 0o600); err != nil {
 		return err
@@ -83,14 +97,22 @@ func claim(path, sid string) error {
 // claimSent makes the images and files of a message the session's.
 func (m *Manager) claimSent(sid string, images []string, files []model.File) error {
 	for _, name := range images {
-		if err := claim(m.uploadClaim(name), sid); errors.Is(err, errClaimed) {
+		c, ok := m.uploadClaim(name)
+		if !ok {
+			return fmt.Errorf("bad image id %q", name)
+		}
+		if err := claim(c, sid); errors.Is(err, errClaimed) {
 			return errImageTaken
 		} else if err != nil {
 			return err
 		}
 	}
 	for _, f := range files {
-		if err := claim(m.fileClaim(f.ID), sid); errors.Is(err, errClaimed) {
+		c, ok := m.fileClaim(f.ID)
+		if !ok {
+			return errFileMissing
+		}
+		if err := claim(c, sid); errors.Is(err, errClaimed) {
 			return errFileTaken
 		} else if err != nil {
 			return err
@@ -105,7 +127,8 @@ func (m *Manager) saveSessionUpload(sid string, data []byte, ext string) (string
 	if err != nil {
 		return "", err
 	}
-	if err := claim(m.uploadClaim(name), sid); err != nil {
+	c, _ := m.uploadClaim(name)
+	if err := claim(c, sid); err != nil {
 		m.removeUpload(name)
 		return "", err
 	}
@@ -115,7 +138,7 @@ func (m *Manager) saveSessionUpload(sid string, data []byte, ext string) (string
 func (m *Manager) removeUpload(name string) {
 	if p, ok := m.UploadPath(name); ok {
 		_ = os.Remove(p)
-		_ = os.Remove(m.uploadClaim(name))
+		_ = os.Remove(p + claimExt)
 	}
 }
 
@@ -156,14 +179,14 @@ func (m *Manager) deleteAttachments(s model.Session, rf refs) {
 		}
 	}
 	for _, name := range rf.uploads {
-		if _, ok := m.UploadPath(name); !ok || claimOf(m.uploadClaim(name)) != s.ID {
+		if c, ok := m.uploadClaim(name); !ok || claimOf(c) != s.ID {
 			continue
 		}
 		staged(name) // Codex takes images by path
 		m.removeUpload(name)
 	}
 	for _, f := range rf.files {
-		if !fileIDRe.MatchString(f.ID) || claimOf(m.fileClaim(f.ID)) != s.ID {
+		if c, ok := m.fileClaim(f.ID); !ok || claimOf(c) != s.ID {
 			continue
 		}
 		staged(f.ID)
@@ -196,8 +219,9 @@ func (m *Manager) sweepAttachments() {
 				}
 				continue
 			}
+			c, _ := m.uploadClaim(name)
 			fi, _ := e.Info()
-			if gone(m.uploadClaim(name), fi) {
+			if gone(c, fi) {
 				m.removeUpload(name)
 			}
 		}
@@ -207,8 +231,9 @@ func (m *Manager) sweepAttachments() {
 			if !e.IsDir() || !fileIDRe.MatchString(e.Name()) {
 				continue
 			}
+			c, _ := m.fileClaim(e.Name())
 			fi, _ := e.Info()
-			if gone(m.fileClaim(e.Name()), fi) {
+			if gone(c, fi) {
 				_ = os.RemoveAll(filepath.Join(m.st.FilesDir(), e.Name()))
 			}
 		}
@@ -236,12 +261,12 @@ func (m *Manager) claimExisting() {
 		for _, name := range rf.uploads {
 			if p, ok := m.UploadPath(name); !ok {
 				continue
-			} else if _, err := os.Stat(p); err == nil && claim(m.uploadClaim(name), s.ID) == nil {
+			} else if _, err := os.Stat(p); err == nil && claim(p+claimExt, s.ID) == nil {
 				n++
 			}
 		}
 		for _, f := range rf.files {
-			if fileIDRe.MatchString(f.ID) && claim(m.fileClaim(f.ID), s.ID) == nil {
+			if c, ok := m.fileClaim(f.ID); ok && claim(c, s.ID) == nil {
 				n++
 			}
 		}

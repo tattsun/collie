@@ -620,6 +620,7 @@ func (m *Manager) Remove(projectID string) {
 	_ = os.RemoveAll(m.MemoryDir(projectID))
 	_ = os.Remove(projectEnvPath(m.cfg.DataDir, projectID))
 	_ = os.Remove(m.hostsPath(projectID))
+	_ = os.Remove(m.ProjectPluginsPath(projectID))
 	m.removeNested(filepath.Join(m.nestedDir(), projectID))
 	m.egress.Close(projectID, "")
 	_ = os.RemoveAll(filepath.Join(m.cfg.DataDir, "netsock", projectID))

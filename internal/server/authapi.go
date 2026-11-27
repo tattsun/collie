@@ -717,6 +717,9 @@ func (s *Server) deleteGroup(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
+	if sb := s.m.Sandbox(); sb != nil {
+		sb.RemoveGroup(gid)
+	}
 	ok(w)
 }
 

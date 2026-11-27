@@ -32,6 +32,7 @@ Invite links work for 7 days and device or recovery links for 30 minutes, for an
 
 - Every permission check runs on the server. Anything you aren't allowed to see is treated as if it doesn't exist.
 - Admins can't read other people's personal projects or conversations either.
+- Plugins turned on for a group or a project, or in the repository's `.claude/settings.json`, run in every member's container with that member's accounts and tokens, just like hooks in the repository's `.claude/`. Add only plugins from sources you trust.
 
 ## What agents can reach
 

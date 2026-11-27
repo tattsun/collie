@@ -638,6 +638,7 @@ func (s *Server) routes() {
 	mx.HandleFunc("GET /api/ws", s.ws)
 	s.authRoutes()
 	s.apiRoutes()
+	s.pluginRoutes()
 	mx.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { httpError(w, 404, "not found") })
 	mx.HandleFunc("/", s.static)
 }

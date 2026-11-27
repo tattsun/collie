@@ -127,6 +127,12 @@ const ja: Record<string, string> = {
   'Attach image': '画像を添付',
   'Start session': 'セッションを開始',
   Project: 'プロジェクト',
+  'Claude Code plugins installed for every member’s agents in this project. Plugins enabled in the repository’s {file} are installed too.':
+    'このプロジェクトで、メンバー全員のエージェントに入れる Claude Code のプラグインです。リポジトリの {file} で有効にしたプラグインも入ります。',
+  'Claude Code plugins installed for your agents in this project. Plugins enabled in the repository’s {file} are installed too.':
+    'このプロジェクトでエージェントに入れる Claude Code のプラグインです。リポジトリの {file} で有効にしたプラグインも入ります。',
+  'What your agents get here': 'このプロジェクトで自分のエージェントに入るもの',
+  'Installed into your container before Claude starts; changes apply to agents started from now on.': 'Claude の起動前に自分のコンテナへインストールします。変更は、これから起動するエージェントに反映されます。',
   'Allow containers inside (Podman)': 'コンテナの中でコンテナを動かせるようにする（Podman）',
   'For developing container tooling such as Collie itself. The containers keep running as the server user’s ids, but can switch between their own ids and reach more of the kernel (FUSE, tun devices, nested namespaces with their own /proc). Only for projects you trust.':
     'Collie 自体など、コンテナを扱うものの開発用です。コンテナは引き続きサーバユーザーの ID で動きますが、コンテナ内の ID を切り替えられるようになり、カーネルの機能（FUSE、tun デバイス、独自の /proc を持つ入れ子の名前空間）にも触れられるようになります。信頼できるプロジェクトだけに使ってください。',

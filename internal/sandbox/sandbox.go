@@ -80,6 +80,13 @@ type Manager struct {
 	stale    map[string]bool // containers left running with an older configuration
 	egress   *egress.Proxy   // for containers on an allowlist (network.go)
 
+	// The plugin directory (see PluginCatalog).
+	catMu    sync.Mutex
+	catalog  []CatalogPlugin
+	catAt    time.Time
+	catErr   error // the last refresh failed (at catErrAt)
+	catErrAt time.Time
+
 	// OnChange is called when the image status changes.
 	OnChange func()
 }

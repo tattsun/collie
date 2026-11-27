@@ -132,7 +132,7 @@ export function ProfileEditor({ scope }: { scope: 'global' | 'me' }) {
 
   const tree = useMemo(() => (files || []).filter((f) => f.path !== 'README.md'), [files])
   const skills = tree.filter((f) => f.dir && /^(claude|codex)\/skills\/[^/]+$/.test(f.path))
-  const others = tree.filter((f) => !f.dir && !QUICK.some((q) => q.path === f.path) && !/^(claude|codex)\/skills\//.test(f.path))
+  const others = tree.filter((f) => !f.dir && f.path !== 'claude/plugins.json' && !QUICK.some((q) => q.path === f.path) && !/^(claude|codex)\/skills\//.test(f.path))
 
   return (
     <div class="profile-editor">

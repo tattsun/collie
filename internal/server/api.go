@@ -421,6 +421,7 @@ func (s *Server) createTerm(w http.ResponseWriter, r *http.Request) {
 			httpError(w, 409, err.Error())
 			return
 		}
+		s.m.SyncPluginsAsync(p, a.ID, sp.Cwd)
 		sp.Argv, sp.Kill = s.m.Sandbox().Exec(p.ID, a.ID, sp.Cwd, "term-"+sp.ID(), true, nil, []string{"bash", "-l"})
 	} else if !a.Admin {
 		httpError(w, 403, "only admins can open shells on the server itself")

@@ -298,3 +298,30 @@ export interface ProfileFile {
   size: number
   dir?: boolean
 }
+
+/** Claude Code plugins of one level (Claude Code's own settings keys). */
+export interface MarketplaceSource {
+  source: string // github | git | url (directory: from a repository)
+  repo?: string
+  url?: string
+  path?: string
+}
+
+export interface PluginSet {
+  enabledPlugins?: Record<string, boolean>
+  extraKnownMarketplaces?: Record<string, { source: MarketplaceSource }>
+}
+
+export type PluginLevel = 'global' | 'group' | 'personal' | 'project' | 'repo'
+
+export interface EffectivePlugin {
+  id: string
+  enabled: boolean
+  from: PluginLevel
+}
+
+export interface CatalogPlugin {
+  id: string
+  name: string
+  description?: string
+}

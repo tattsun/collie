@@ -53,6 +53,24 @@ Personal settings win when names clash. The repository's own `.claude/`, `.mcp.j
 
 Claude's auto memory is shared across your sessions in a project. In a group project, it is shared by all members.
 
+## Claude Code plugins
+
+Plugins can be turned on at five levels. A later level wins, and **Turn off** keeps a plugin turned on at a broader level out of that scope:
+
+- **Global**: admins, in Admin → Global plugins
+- **Group**: the group's owners, on the group's page. Applies to the group's projects
+- **Personal**: each user, in Account → My plugins
+- **Project**: the project's managers, in Project → Settings
+- **Repository**: `enabledPlugins` in the repository's `.claude/settings.json`
+
+Project → Settings shows which plugins your agents get there and which level decided each one.
+
+- Collie installs them into your container right before Claude starts, and when you open a terminal. Progress and failures appear in the session. Changes reach agents started afterwards.
+- Plugins are installed per project and user, so the first session after a change in each project takes a little longer.
+- Collie removes only the plugins it installed. Plugins you install yourself in a terminal stay, even if a level turns them off.
+- Only isolated projects get plugins. Host-run projects use the server user's own `~/.claude`, which Collie leaves alone.
+- In a project on an allowlist, the plugins' sources must be on the list too. Most come from GitHub (`github.com`, `*.githubusercontent.com`).
+
 ## Home
 
 **Home**, at the top of the sidebar, is a conversation that belongs to no project. You can ask it anything, including work that spans projects:

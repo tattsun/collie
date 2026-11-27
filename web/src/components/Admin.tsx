@@ -6,6 +6,7 @@ import { go, me, route, toast, toastError } from '../store'
 import { ago, cls, until } from '../util'
 import { LinkBox } from './Account'
 import { EnvEditor, ProfileEditor } from './Editors'
+import { PluginsEditor } from './Plugins'
 import { ImageLog } from './ProjectSettings'
 import { UpdatesPanel } from './Updates'
 import { IBack, IPlus, IRefresh, ITrash, Spinner } from './icons'
@@ -62,6 +63,7 @@ export function AdminPage() {
           ['users', t('Users')],
           ['containers', t('Containers')],
           ['profile', t('Global skills & MCP')],
+          ['plugins', t('Global plugins')],
           ['env', t('Global environment')],
           ['updates', t('Updates')],
         ].map(([k, label]) => (
@@ -70,7 +72,7 @@ export function AdminPage() {
           </a>
         ))}
       </nav>
-      {!d && tab !== 'profile' && tab !== 'env' && tab !== 'updates' && <Spinner />}
+      {!d && tab !== 'profile' && tab !== 'plugins' && tab !== 'env' && tab !== 'updates' && <Spinner />}
 
       {d && tab === 'users' && (
         <div class="col gap-l">
@@ -188,6 +190,13 @@ export function AdminPage() {
       {tab === 'profile' && (
         <section class="card">
           <ProfileEditor scope="global" />
+        </section>
+      )}
+      {tab === 'plugins' && (
+        <section class="card col gap">
+          <h3>{t('Global plugins')}</h3>
+          <p class="dim small">{t('Claude Code plugins installed for every user’s agents in isolated projects. Groups, users and projects can add more, or turn these off for themselves.')}</p>
+          <PluginsEditor url="/api/shared/plugins" />
         </section>
       )}
       {tab === 'env' && (

@@ -60,6 +60,10 @@ type Manager struct {
 	// sockets (see media.go), by toolScope.key.
 	homeMu sync.Mutex
 	toolLn map[string]net.Listener
+	// Notifications to Home agents about the sessions they watch
+	// (home_follow.go), by Home session.
+	noteMu sync.Mutex
+	notes  map[string]*noteBox
 
 	mu   sync.Mutex
 	rts  map[string]*Runtime
@@ -389,6 +393,7 @@ func (m *Manager) updateSession(sid string, fn func(*model.Session)) (model.Sess
 	if ok && !reflect.DeepEqual(s, before) {
 		m.pushSession(s)
 		m.trackRun(before, s)
+		m.noteChange(before, s)
 	}
 	return s, ok
 }

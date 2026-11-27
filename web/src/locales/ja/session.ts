@@ -29,6 +29,16 @@ const ja: Record<string, string> = {
   "this task's output cannot be shown": 'このタスクの出力は表示できません',
   'Stop “{title}”?': '「{title}」を停止しますか？',
   '{n} in background': '裏で {n} 件実行中',
+  // ---- Collie's notifications to the Home agent (Timeline, SessionView)
+  'Notification from Collie': 'Collie からの通知',
+  'Collie told your Home agent how the sessions it watches are doing.': 'Home エージェントが見守っているセッションの様子を、Collie が知らせました。',
+  'Ended with an error': 'エラーで終わりました',
+  'Waiting for your approval': '承認を待っています',
+  'Has a question for you': 'あなたへの質問があります',
+  'No longer watched (too many notifications)': '通知が多くなったため、見守りを終えました',
+  'Stop watching': '見守りをやめる',
+  'Your Home agent is told when this session finishes, needs you, or fails': 'このセッションが終わったとき・あなたの対応が必要なとき・失敗したときに、Home エージェントへ知らせます',
+  'Stop Home from watching': 'Home の見守りをやめる',
   // ---- SessionView
   'Session settings': 'セッションの設定',
   Title: 'タイトル',

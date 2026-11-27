@@ -104,6 +104,10 @@ type Session struct {
 	Tasks []Task `json:"tasks,omitempty"`
 	// Schedule is the schedule that started the session, if one did.
 	Schedule string `json:"schedule,omitempty"`
+	// Watching (Home conversations only) lists the sessions whose changes
+	// Collie reports to this conversation's agent. Replaced as a whole,
+	// like Tasks.
+	Watching []string `json:"watching,omitempty"`
 }
 
 // Schedule starts a session with the same instructions at set times. It
@@ -204,7 +208,21 @@ type Item struct {
 	Images []string `json:"images,omitempty"`
 	Media  []Media  `json:"media,omitempty"`
 	By     string   `json:"by,omitempty"`  // user who sent a user message
-	Via    string   `json:"via,omitempty"` // "home": sent for the user by their Home agent
+	Via    string   `json:"via,omitempty"` // "home": sent for the user by their Home agent, "schedule": by a schedule, "collie": Collie's notification to a Home agent
+	// Notes are what a Collie notification (Via "collie") reports.
+	Notes []Note `json:"notes,omitempty"`
+}
+
+// Note is a change in a session a Home agent watches, as Collie told it.
+type Note struct {
+	Session string `json:"session"`
+	Title   string `json:"title"`
+	Project string `json:"project,omitempty"`
+	// Event: done (its turn finished), failed (the turn ended in an error),
+	// waiting (for an approval), question, error (the agent stopped), or
+	// unwatched (Collie stopped watching it after many notifications).
+	Event  string `json:"event"`
+	Detail string `json:"detail,omitempty"`
 }
 
 // Media is one file the agent showed the user, copied into the uploads
@@ -377,6 +395,9 @@ func (it *Item) Clone() *Item {
 	}
 	if it.Media != nil {
 		c.Media = append([]Media(nil), it.Media...)
+	}
+	if it.Notes != nil {
+		c.Notes = append([]Note(nil), it.Notes...)
 	}
 	return &c
 }

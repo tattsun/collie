@@ -36,7 +36,7 @@ var (
 )
 
 // homeReadTools never change anything, so agents may call them unasked.
-var homeReadTools = []string{"list_projects", "list_sessions", "read_session", "list_schedules"}
+var homeReadTools = []string{"list_projects", "list_sessions", "read_session", "list_schedules", "read_diff"}
 
 func (m *Manager) homeOf(uid string) (model.Project, bool) {
 	for _, p := range m.st.Projects() {
@@ -157,8 +157,18 @@ You are the user's **Home agent** in Collie, the web app where they run coding a
 - ` + "`list_projects`, `list_sessions`, `read_session`" + `: the user's projects, what each session is doing, and what was said in it.
 - ` + "`start_session`" + `: start an agent in a project with your instructions. It runs with the user's default model and reasoning effort for that agent unless you pass ` + "`model` / `effort`" + `; the effort cannot be changed once it runs.
 - ` + "`send_message`" + `: give an existing session more instructions.
+- ` + "`read_diff`" + `: what a session changed — the same diff as its Changes tab.
+- ` + "`watch_session`, `unwatch_session`" + `: follow a session's progress (the ones you start are followed already), or stop.
+- ` + "`stop_session`, `archive_session`" + `: stop a session's agent; archive a finished session (or bring it back). Only the user's own sessions; worktrees and branches stay.
 - ` + "`create_schedule`, `list_schedules`, `delete_schedule`" + `: start a session in a project (or here in Home) at set times, with the same instructions every time.
 - ` + "`show_media`" + `: show the user images, videos or an HTML page right in this chat.
+
+## Following work through
+- When a session you watch finishes its turn, starts waiting for the user, or fails, Collie tells you in a message starting with "[Collie]" (after your current turn). It comes from Collie, not from the user.
+- Then check on it (` + "`read_session`, and `read_diff`" + ` for code) and carry the work on: tell the user in a line or two what happened and what is next, have the session fix what is missing, or start the next step the user asked for. Review the diff before you call work done.
+- A session waiting for an approval or a question needs the user: say briefly what it asks; they answer in that session.
+- Each notification costs a turn. Unwatch sessions you no longer need to follow, and pass ` + "`watch: false`" + ` to ` + "`start_session`" + ` when nobody needs to follow the work.
+- Stop a session that goes the wrong way or that the user wants stopped. Archive sessions whose work is finished when the user agrees (ask first, unless they asked you to tidy up).
 
 ## How to work
 - You are the coordinator. Changes to a project are made by a session in that project: start one (or instruct an existing one) with clear, self-contained instructions — that agent does not see this conversation.
@@ -270,7 +280,7 @@ func (m *Manager) handleRPC(tc *toolConn, line []byte) (resp any) {
 	case "tools/list":
 		tools := []map[string]any{showMediaDef}
 		if home {
-			tools = append(withModels(append(slices.Clone(homeToolDefs), scheduleToolDefs...), m.AgentCaps()), showMediaDef)
+			tools = append(withModels(slices.Concat(homeToolDefs, scheduleToolDefs, homeFollowToolDefs), m.AgentCaps()), showMediaDef)
 		}
 		return rpcResult(req.ID, map[string]any{"tools": tools})
 	case "tools/call":
@@ -292,6 +302,8 @@ func (m *Manager) handleRPC(tc *toolConn, line []byte) (resp any) {
 		switch {
 		case p.Name == "show_media":
 			text, err = m.toolShowMedia(tc, orEmpty(p.Arguments))
+		case home && homeFollowTool(p.Name):
+			text, err = m.callFollowTool(tc, p.Name, orEmpty(p.Arguments))
 		case home:
 			text, err = m.callTool(tc.scope.uid, p.Name, p.Arguments)
 		default:
@@ -360,6 +372,7 @@ var homeToolDefs = []map[string]any{
 			"model":    prop("string", `Model (default: the user's default for that agent). An alias or model id the agent accepts; "default" is the agent's own default`),
 			"effort":   prop("string", effortHelp),
 			"worktree": prop("boolean", "Work on a separate git branch and checkout, so it does not collide with other sessions in the project"),
+			"watch":    prop("boolean", "Have Collie tell you when it finishes its turn, needs the user, or fails (default true; see watch_session)"),
 			"title":    prop("string", "Short title (default: from the prompt)"),
 		}, "project", "prompt"),
 	},

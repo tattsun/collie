@@ -40,6 +40,7 @@ func (s *Server) apiRoutes() {
 	mx.HandleFunc("POST /api/sessions/{id}/stop", s.stop)
 	mx.HandleFunc("POST /api/sessions/{id}/tasks/{task}/stop", s.stopTask)
 	mx.HandleFunc("GET /api/sessions/{id}/tasks/{task}/output", s.taskOutput)
+	mx.HandleFunc("DELETE /api/sessions/{id}/watching/{sid}", s.unwatch)
 	mx.HandleFunc("POST /api/sessions/{id}/asks/{ask}", s.reply)
 	mx.HandleFunc("GET /api/sessions/{id}/items", s.items)
 	mx.HandleFunc("GET /api/sessions/{id}/changes", s.sessionChanges)
@@ -300,6 +301,15 @@ func (s *Server) taskOutput(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) stop(w http.ResponseWriter, r *http.Request) {
 	if err := s.m.Stop(actor(r), r.PathValue("id")); err != nil {
+		fail(w, err)
+		return
+	}
+	ok(w)
+}
+
+// unwatch stops a Home conversation from being told about a session.
+func (s *Server) unwatch(w http.ResponseWriter, r *http.Request) {
+	if err := s.m.Unwatch(actor(r), r.PathValue("id"), r.PathValue("sid")); err != nil {
 		fail(w, err)
 		return
 	}

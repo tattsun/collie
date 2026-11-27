@@ -108,5 +108,12 @@ Project → Settings shows which plugins your agents get there and which level d
 - "What did I do this week?" or "How does auth work in sample2?" It reads your projects, session history and code to answer.
 - "Start a session in sample2 to fix the tests." It can start sessions and send instructions to existing ones.
 - "Every Friday at 18:00, sum up what was merged this week." It can create, list and delete your schedules.
+- "Tell me when it's done, and check the diff first." Home follows the sessions it starts. When one finishes its turn, waits for you, or fails, Collie wakes Home with a short notification. Home then reads the session and its changes and takes the work forward. It can also stop and archive your sessions.
 
 Home can't edit projects itself. The sessions it starts do the editing, and their approvals still come to **Needs you**. It sees only what you can see.
+
+When Home follows sessions:
+
+- Each notification starts a Home turn, which uses your plan like a message would. To stop the notifications about a session, use **Stop watching** on a notification, **Stop Home from watching** in the session's menu, or ask Home.
+- A notification waits until Home's current turn is over, and changes that come close together arrive as one. After 30 notifications about the same session, Collie stops watching it.
+- Home stops and archives only sessions you started (not other members', even in a group you own). It never removes a worktree or branch.

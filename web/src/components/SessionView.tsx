@@ -2,14 +2,14 @@ import { lazy, Suspense } from 'preact/compat'
 import { useEffect, useState } from 'preact/hooks'
 import type { Session } from '../types'
 import { api } from '../api'
-import { go, groupById, markSeen, me, projectById, route, scheduleById, sessionById, subscribe, timeline, toastError, agentCaps, userName } from '../store'
+import { go, groupById, homeProject, markSeen, me, projectById, route, scheduleById, sessionById, sessions, subscribe, timeline, toastError, agentCaps, userName } from '../store'
 import { Timeline } from './Timeline'
 import { Composer } from './Composer'
 import { TasksBar } from './Tasks'
 import { ChangesView } from './Changes'
 import { AgentBadge, Menu, Modal, StatusPill } from './ui'
 import { SessionMeter } from './Usage'
-import { IBack, IBox, IBranch, IChat, IClock, IDiff, IMore, ITerminal, IUsers, Spinner } from './icons'
+import { IBack, IBell, IBox, IBranch, IChat, IClock, IDiff, IMore, ITerminal, IUsers, Spinner } from './icons'
 import { cls, home, money, shortMode } from '../util'
 import { t } from '../i18n'
 
@@ -124,6 +124,8 @@ export function SessionView({ id }: { id: string }) {
   const modeLabel = shortMode(s.mode)
 
   const act = (fn: () => Promise<unknown>) => () => fn().catch(toastError)
+  // Home conversations that Collie tells about this session.
+  const watchers = sessions.value.filter((h) => h.projectId === homeProject.value?.id && h.watching?.includes(id))
   const del = async () => {
     const wt = s.worktree ? '\n\n' + t('Its worktree checkout will be removed (the branch is kept).') : ''
     if (!confirm(t('Delete “{title}”?', { title: s.title }) + wt)) return
@@ -179,6 +181,11 @@ export function SessionView({ id }: { id: string }) {
               </span>
             )}
             {s.model && <span class="sub-item wide-only">{s.model}</span>}
+            {watchers.length > 0 && (
+              <span class="sub-item watched" title={t('Your Home agent is told when this session finishes, needs you, or fails')}>
+                <IBell size={11} /> {t('Home')}
+              </span>
+            )}
           </div>
         </div>
         <StatusPill status={s.status} bg={!!s.tasks?.length} />
@@ -209,6 +216,9 @@ export function SessionView({ id }: { id: string }) {
                     },
                   },
                 ]
+              : []),
+            ...(watchers.length > 0
+              ? [{ label: t('Stop Home from watching'), onClick: act(() => Promise.all(watchers.map((h) => api('DELETE', `/api/sessions/${h.id}/watching/${id}`)))) }]
               : []),
             { label: s.archived ? t('Unarchive') : t('Archive'), onClick: act(() => api('PATCH', `/api/sessions/${id}`, { archived: !s.archived })) },
             { label: t('Delete session'), danger: true, onClick: del },

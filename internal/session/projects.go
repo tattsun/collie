@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tattsun/collie/internal/egress"
 	"github.com/tattsun/collie/internal/gitutil"
 	"github.com/tattsun/collie/internal/model"
 	"github.com/tattsun/collie/internal/sandbox"
@@ -297,6 +298,10 @@ type PatchProjectReq struct {
 	CPUs    *string `json:"cpus"`
 	Pids    *int    `json:"pids"`
 	Nested  *bool   `json:"nested"` // allow Podman inside the containers
+	// What the containers can connect to (the project's managers decide):
+	// "" the internet, "allowlist" only NetAllow's hosts.
+	Network  *string   `json:"network"`
+	NetAllow *[]string `json:"netAllow"`
 }
 
 var limitRe = regexp.MustCompile(`^(|[0-9]+(\.[0-9]+)?[kmgKMG]?)$`)
@@ -309,7 +314,7 @@ func (m *Manager) PatchProject(a Actor, id string, req PatchProjectReq) (model.P
 	if err != nil {
 		return p, err
 	}
-	if p.Home && (req.Name != nil || req.Runtime != nil || req.Nested != nil) {
+	if p.Home && (req.Name != nil || req.Runtime != nil || req.Nested != nil || req.Network != nil || req.NetAllow != nil) {
 		return p, errHomeFixed
 	}
 	if !m.ProjectManageable(a.ID, p) {
@@ -330,6 +335,25 @@ func (m *Manager) PatchProject(a Actor, id string, req PatchProjectReq) (model.P
 	}
 	if nested && runtime != "container" {
 		return p, errors.New("containers inside are only for isolated projects")
+	}
+	network, netAllow := p.Network, p.NetAllow
+	if req.Network != nil {
+		network = *req.Network
+	} else if runtime != "container" {
+		network = "" // a host-run agent has the server's network
+	}
+	if network != "" && network != model.NetAllowlist {
+		return p, fmt.Errorf("unknown network setting %q", network)
+	}
+	if network != "" && runtime != "container" {
+		return p, errors.New("a network allowlist is only for isolated projects")
+	}
+	if req.NetAllow != nil {
+		list, err := egress.NormalizeList(*req.NetAllow)
+		if err != nil {
+			return p, err
+		}
+		netAllow = list
 	}
 	if req.Runtime != nil && *req.Runtime != "host" && *req.Runtime != "container" {
 		return p, fmt.Errorf("unknown runtime %q", *req.Runtime)
@@ -352,7 +376,8 @@ func (m *Manager) PatchProject(a Actor, id string, req PatchProjectReq) (model.P
 		(req.Memory != nil && strings.TrimSpace(*req.Memory) != p.Memory) ||
 		(req.CPUs != nil && strings.TrimSpace(*req.CPUs) != p.CPUs) ||
 		(req.Pids != nil && *req.Pids != p.Pids) ||
-		nested != p.Nested
+		nested != p.Nested ||
+		network != p.Network // the containers restart with the other network
 	if envChanged {
 		if err := m.stopProject(id, false); err != nil {
 			log.Printf("stop project %s: %v", id, err)
@@ -375,9 +400,28 @@ func (m *Manager) PatchProject(a Actor, id string, req PatchProjectReq) (model.P
 			x.Pids = *req.Pids
 		}
 		x.Nested = nested
+		// The list applies at once: the proxy looks it up for every
+		// connection.
+		x.Network, x.NetAllow = network, netAllow
 	})
 	m.pushProject(np)
 	return np, nil
+}
+
+// NetworkLog lists where the project's containers tried to connect since
+// Collie started, for its managers to adjust the allowlist.
+func (m *Manager) NetworkLog(a Actor, id string) ([]egress.Entry, error) {
+	p, err := m.visibleProject(a.ID, id)
+	if err != nil {
+		return nil, err
+	}
+	if !m.ProjectManageable(a.ID, p) {
+		return nil, ErrForbidden
+	}
+	if m.sb == nil {
+		return []egress.Entry{}, nil
+	}
+	return m.sb.NetworkLog(id), nil
 }
 
 // ProjectEnv returns the project's container environment file contents.

@@ -91,17 +91,22 @@ type containerState struct {
 	exists  bool
 	running bool
 	config  string
+	network string // collie.network label ("" for the internet)
 }
 
 func (m *Manager) inspect(ctx context.Context, name string) containerState {
-	out, err := m.podman(ctx, "container", "inspect", "--format", `{{.State.Running}} {{index .Config.Labels "collie.config"}}`, name)
+	out, err := m.podman(ctx, "container", "inspect", "--format",
+		`{{.State.Running}}|{{index .Config.Labels "collie.config"}}|{{index .Config.Labels "collie.network"}}`, name)
 	if err != nil {
 		return containerState{}
 	}
-	f := strings.Fields(out)
-	st := containerState{exists: true, running: len(f) > 0 && f[0] == "true"}
+	f := strings.Split(strings.TrimSpace(out), "|")
+	st := containerState{exists: true, running: f[0] == "true"}
 	if len(f) > 1 {
 		st.config = f[1]
+	}
+	if len(f) > 2 && f[2] != "<no value>" {
+		st.network = f[2]
 	}
 	return st
 }
@@ -157,10 +162,18 @@ func (m *Manager) Ensure(sp Spec, recreate bool) error {
 	if err := m.prepare(sp); err != nil {
 		return err
 	}
+	if err := m.prepareNetwork(&sp); err != nil {
+		return fmt.Errorf("start the network proxy: %w", err)
+	}
 	args := m.runArgs(sp, m.extraMounts(p, sp.SessionDirs))
 	want := configHash(append(args, "image-id="+m.imageID(ctx)))
 	name := Name(p.ID, sp.UserID)
 	st := m.inspect(ctx, name)
+	if st.exists && st.network != networkMode(p) {
+		// What the container can reach changed: that can't wait until
+		// nothing uses it.
+		recreate = true
+	}
 	m.mu.Lock()
 	m.stale[name] = st.exists && st.config != want && !recreate
 	m.mu.Unlock()
@@ -249,12 +262,8 @@ func (m *Manager) runArgs(sp Spec, extra []string) []string {
 		// capabilities, seccomp, the mounts.
 		args = append(args, "--security-opt", "label=disable")
 	}
+	args = append(args, m.networkArgs(p, uid)...)
 	args = append(args,
-		// No shortcuts to the host: neither its loopback nor the
-		// host.containers.internal alias is mapped into the container. (The
-		// host's other addresses are blocked by deploy/setup-host.sh's
-		// firewall.)
-		"--network", "pasta:--map-host-loopback,none,--map-guest-addr,none",
 		// Our own minimal /etc/hosts: podman's would add host aliases and
 		// copy the server's entries.
 		"--no-hosts",
@@ -304,8 +313,8 @@ func (m *Manager) runArgs(sp Spec, extra []string) []string {
 		args = append(args, "--pids-limit", strconv.Itoa(pids))
 	}
 	// No env files here: Exec passes them to every process instead.
-	args = append(args, m.tag, "sleep", "infinity")
-	return args
+	args = append(args, m.tag)
+	return append(args, mainCommand(p)...)
 }
 
 // envFiles lists the env files for the user's container for the project.
@@ -612,6 +621,8 @@ func (m *Manager) Remove(projectID string) {
 	_ = os.Remove(projectEnvPath(m.cfg.DataDir, projectID))
 	_ = os.Remove(m.hostsPath(projectID))
 	m.removeNested(filepath.Join(m.nestedDir(), projectID))
+	m.egress.Close(projectID, "")
+	_ = os.RemoveAll(filepath.Join(m.cfg.DataDir, "netsock", projectID))
 }
 
 // RemoveUser deletes a user's containers and data (not project files).
@@ -636,6 +647,13 @@ func (m *Manager) RemoveUser(userID string) {
 	for _, n := range nested {
 		if n.IsDir() {
 			m.removeNested(m.NestedStorage(n.Name(), userID))
+		}
+	}
+	m.egress.CloseUser(userID)
+	socks, _ := os.ReadDir(filepath.Join(m.cfg.DataDir, "netsock"))
+	for _, d := range socks {
+		if d.IsDir() {
+			_ = os.RemoveAll(m.netDir(d.Name(), userID))
 		}
 	}
 }

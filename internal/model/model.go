@@ -29,6 +29,11 @@ type Project struct {
 	// Nested lets the project's containers run Podman inside (see
 	// sandbox/nested.go); an admin decision, as it widens what agents reach.
 	Nested bool `json:"nested,omitempty"`
+	// Network is what the project's containers can connect to: "" the
+	// internet (as far as the server's firewall allows), NetAllowlist only
+	// the hosts in NetAllow and the agents' own services (sandbox/network.go).
+	Network  string   `json:"network,omitempty"`
+	NetAllow []string `json:"netAllow,omitempty"`
 	// Home marks a user's Home: a workspace outside any project where the
 	// Home agent chats with the user and coordinates their project agents.
 	Home bool `json:"home,omitempty"`
@@ -40,6 +45,14 @@ type Project struct {
 
 // Isolated reports whether the project's agents run in a container.
 func (p *Project) Isolated() bool { return p.Runtime == "container" }
+
+// NetAllowlist is Project.Network for a project whose containers reach only
+// the hosts on its list.
+const NetAllowlist = "allowlist"
+
+// Allowlisted reports whether the project's containers reach only the
+// hosts on its allowlist.
+func (p *Project) Allowlisted() bool { return p.Isolated() && p.Network == NetAllowlist }
 
 // Session statuses.
 const (

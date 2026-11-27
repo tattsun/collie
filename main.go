@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/tattsun/collie/internal/auth"
+	"github.com/tattsun/collie/internal/egress"
 	"github.com/tattsun/collie/internal/sandbox"
 	"github.com/tattsun/collie/internal/server"
 	"github.com/tattsun/collie/internal/session"
@@ -50,6 +51,13 @@ func main() {
 	// stdio to Collie's tools socket.
 	if (len(os.Args) == 3 || len(os.Args) == 4) && os.Args[1] == "mcp-bridge" {
 		os.Exit(mcpBridge(os.Args[2], os.Args[3:]...))
+	}
+	// The main process of a container on a network allowlist: offers
+	// Collie's proxy (its socket) on the container's loopback.
+	if len(os.Args) == 4 && os.Args[1] == "net-bridge" {
+		err := egress.Bridge(os.Args[2], os.Args[3])
+		fmt.Fprintln(os.Stderr, "collie net-bridge:", err)
+		os.Exit(1)
 	}
 	home, _ := os.UserHomeDir()
 	if len(os.Args) > 1 && os.Args[1] == "update" {

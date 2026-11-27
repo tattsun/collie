@@ -131,6 +131,30 @@ const ja: Record<string, string> = {
   'For developing container tooling such as Collie itself. The containers keep running as the server user’s ids, but can switch between their own ids and reach more of the kernel (FUSE, tun devices, nested namespaces with their own /proc). Only for projects you trust.':
     'Collie 自体など、コンテナを扱うものの開発用です。コンテナは引き続きサーバユーザーの ID で動きますが、コンテナ内の ID を切り替えられるようになり、カーネルの機能（FUSE、tun デバイス、独自の /proc を持つ入れ子の名前空間）にも触れられるようになります。信頼できるプロジェクトだけに使ってください。',
   'Podman works inside the containers.': 'コンテナの中で Podman を使えます。',
+
+  // ---- ProjectSettings: network
+  Network: 'ネットワーク',
+  Internet: 'インターネット',
+  'Allowlist only': '許可リストのみ',
+  'Only the hosts on this project’s allowlist ({n}) and the agents’ own services.':
+    'このプロジェクトの許可リストにあるホスト（{n} 件）と、エージェント自身のサービスだけに接続できます。',
+  'The internet, but not your LAN, tailnet or this server.': 'インターネットに接続できます（LAN・tailnet・このサーバには接続できません）。',
+  'The project’s owner manages this setting.': 'この設定はプロジェクトのオーナーが管理します。',
+  'Agents and terminals reach only the hosts below and the agents’ own services, through Collie’s proxy. Tools that use the HTTPS_PROXY variable work (curl, git over https, npm, pip, Go, browsers); SSH and other direct connections can’t get out.':
+    'エージェントとターミナルは、Collie のプロキシを通して、下のホストとエージェント自身のサービスにだけ接続できます。HTTPS_PROXY 変数を使うツール（curl、https の git、npm、pip、Go、ブラウザなど）は動きますが、SSH などの直接の接続は外に出られません。',
+  'Agents and terminals can reach any host on the internet, but not your LAN, tailnet or this server.':
+    'エージェントとターミナルはインターネット上のどのホストにも接続できます。LAN・tailnet・このサーバには接続できません。',
+  'One per line: {a} (that host), {b} (its subdomains), {c} (one port), or an IP address or range. Private addresses, such as a NAS, can be reached only when listed by address.':
+    '1 行に 1 つ: {a}（そのホスト）、{b}（そのサブドメイン）、{c}（ポートを限定）、または IP アドレスや範囲。NAS などのプライベートアドレスは、アドレスで書いたときだけ接続できます。',
+  'Always allowed: the agents’ own services': '常に許可: エージェント自身のサービス',
+  'Changes to the list apply right away. Switching between Internet and an allowlist restarts the project’s containers.':
+    'リストの変更はすぐに反映されます。「インターネット」と「許可リストのみ」を切り替えると、プロジェクトのコンテナが再起動します。',
+  'Saved — the project’s containers restart with the new network': '保存しました。プロジェクトのコンテナは新しいネットワーク設定で再起動します',
+  'Saved — applies right away': '保存しました。すぐに反映されます',
+  'Allowed {host}': '{host} を許可しました',
+  'Recent connections': '最近の接続',
+  'None since Collie started.': 'Collie の起動以降、まだありません。',
+  'private address': 'プライベートアドレス',
   '{name} (cloning…)': '{name}（clone 中…）',
   'Share with {name}': '{name} に共有',
   'Share with the group': 'グループに共有',

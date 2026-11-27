@@ -23,6 +23,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/tattsun/collie/internal/egress"
 )
 
 //go:embed image
@@ -54,6 +56,9 @@ type Status struct {
 	Memory string `json:"memory"`
 	CPUs   string `json:"cpus"`
 	Pids   int    `json:"pids"`
+	// Allowlists: the hosts always allowed and a suggested starting list.
+	NetAgents    []string `json:"netAgents"`
+	NetSuggested []string `json:"netSuggested"`
 }
 
 type Manager struct {
@@ -73,6 +78,7 @@ type Manager struct {
 	imgID    string          // ID of the image tag, cached briefly
 	imgIDAt  time.Time       // when imgID was looked up
 	stale    map[string]bool // containers left running with an older configuration
+	egress   *egress.Proxy   // for containers on an allowlist (network.go)
 
 	// OnChange is called when the image status changes.
 	OnChange func()
@@ -82,7 +88,7 @@ func New(cfg Config) *Manager {
 	if cfg.Podman == "" {
 		cfg.Podman = "podman"
 	}
-	m := &Manager{cfg: cfg, locks: map[string]*sync.Mutex{}, stale: map[string]bool{}, buildLog: &tail{max: 6 << 10}}
+	m := &Manager{cfg: cfg, locks: map[string]*sync.Mutex{}, stale: map[string]bool{}, buildLog: &tail{max: 6 << 10}, egress: egress.NewProxy()}
 	_, err := exec.LookPath(cfg.Podman)
 	m.available = err == nil && Supported()
 	m.tag = "localhost/collie-agent:" + imageHash()
@@ -126,7 +132,8 @@ func (m *Manager) Status() Status {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	st := Status{Available: m.available, Limits: m.available && m.LimitsSupported(), Image: m.tag, Ready: m.ready,
-		Building: m.building, Error: m.buildErr, Shared: m.SharedPath(), Memory: m.cfg.Memory, CPUs: m.cfg.CPUs, Pids: m.cfg.Pids}
+		Building: m.building, Error: m.buildErr, Shared: m.SharedPath(), Memory: m.cfg.Memory, CPUs: m.cfg.CPUs, Pids: m.cfg.Pids,
+		NetAgents: egress.AgentHosts, NetSuggested: egress.Suggested}
 	if m.building || m.buildErr != "" {
 		st.Log = m.buildLog.String()
 	}

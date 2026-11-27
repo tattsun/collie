@@ -3,3 +3,5 @@
 /web/dist/*
 !/web/dist/.keep
 .playwright-mcp/
+/dist/
+collie-release.key

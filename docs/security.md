@@ -34,6 +34,12 @@ This assumes the configuration from the [setup guide](setup.md): a dedicated `co
 - An agent in a container can read every file in its project and can reach the internet. Don't keep secrets in a project that you wouldn't want sent out.
 - A host-run agent has all the access of the `collie` user.
 
+## Updates
+
+- Collie installs only releases whose signature checks out against a key built into Collie. Swapping files on the release page, or passing an old release off as a new one, gets nothing installed.
+- A signed release can be made only by someone who can run the release workflow by hand, because pushing a tag doesn't start it. Keep the **Actions**, **Workflows** and **Secrets** permissions off GitHub tokens that agents use, such as a `GH_TOKEN` in Collie's environment. With them an agent could publish a release, read the signing key or replace it.
+- Only admins can install updates. Home agents can't.
+
 ## Other things worth knowing
 
 - HTML and SVG that agents show you never run as Collie's own page. They open in a sandbox without network access, so they can't touch your Collie session or send anything out, even after you press **Run scripts**.

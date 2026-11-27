@@ -34,6 +34,7 @@ mise run build
 - **[セットアップ](docs/setup.ja.md)**: サーバへの常駐、最初の管理者になる、アップデート
 - **[しくみ](docs/how-it-works.ja.md)**: プロジェクトとセッション、隔離、ユーザーとグループ、skill・MCP、Home
 - **[セキュリティ](docs/security.ja.md)**: 何から何が隔離されているか、されていないか
+- **[リリースの作り方](docs/releasing.ja.md)**: 署名付きリリースを出す（メンテナ向け）
 - `collie --help`: フラグと管理用コマンド
 
 ## 開発

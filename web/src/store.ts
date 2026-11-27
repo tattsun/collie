@@ -1,6 +1,6 @@
 import { signal, computed, batch } from '@preact/signals'
 import { t, ts } from './i18n'
-import type { AgentUsage, Caps, GroupInfo, Item, ModeInfo, Project, SandboxStatus, Session, TermInfo, UserInfo } from './types'
+import type { AgentUsage, Caps, GroupInfo, Item, ModeInfo, Project, SandboxStatus, Session, TermInfo, UpdateStatus, UserInfo } from './types'
 
 // ---------------------------------------------------------------- state
 
@@ -23,6 +23,8 @@ export const sandbox = signal<SandboxStatus>({ available: false })
 export const root = signal('')
 export const rootBase = signal('')
 export const version = signal('')
+/** New releases and updating to them (admins only; null for others). */
+export const updateStatus = signal<UpdateStatus | null>(null)
 export const me = signal<UserInfo | null>(null)
 export const users = signal<UserInfo[]>([])
 export const groups = signal<GroupInfo[]>([])
@@ -301,6 +303,7 @@ export function applyState(d: any) {
     root.value = d.root || ''
     rootBase.value = d.rootBase || ''
     version.value = d.version || ''
+    updateStatus.value = d.update || null
   })
 }
 
@@ -362,6 +365,9 @@ function onMessage(m: any) {
       break
     case 'sandbox':
       sandbox.value = m.sandbox || { available: false }
+      break
+    case 'update':
+      updateStatus.value = m.update || null
       break
     case 'snap': {
       pending.delete(m.sid)

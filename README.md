@@ -34,6 +34,7 @@ Open the URL it prints, which includes a sign-in token. If Podman isn't installe
 - **[Setup](docs/setup.md)**: running it on a server, becoming the first admin, updating
 - **[How it works](docs/how-it-works.md)**: projects and sessions, isolation, users and groups, skills & MCP, Home
 - **[Security](docs/security.md)**: what is isolated from what, and what isn't
+- **[Releasing](docs/releasing.md)**: publishing a signed release (maintainers)
 - `collie --help`: flags and admin commands
 
 ## Development

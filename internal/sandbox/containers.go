@@ -147,7 +147,7 @@ func (m *Manager) Ensure(sp Spec, recreate bool) error {
 		return err
 	}
 	args := m.runArgs(sp, m.extraMounts(p, sp.SessionDirs))
-	want := configHash(args)
+	want := configHash(append(args, "image-id="+m.imageID(ctx)))
 	name := Name(p.ID, sp.UserID)
 	st := m.inspect(ctx, name)
 	m.mu.Lock()
@@ -167,8 +167,13 @@ func (m *Manager) Ensure(sp Spec, recreate bool) error {
 		}
 	}
 	full := append([]string{"run", "-d", "--label", "collie.config=" + want}, args...)
-	_, err := m.podman(ctx, full...)
-	return err
+	if _, err := m.podman(ctx, full...); err != nil {
+		return err
+	}
+	if st.exists {
+		go m.PruneImages() // the old container may have held on to an old image
+	}
+	return nil
 }
 
 // extraMounts lists session directories not covered by the standard mounts.

@@ -1,6 +1,8 @@
 # Collie agent image: the toolbox every isolated project runs in.
 # Built by `collie --build-image` (or from the UI); rebuild to update the agents.
 FROM docker.io/library/ubuntu:26.04
+# Marks every layer as Collie's, so leftovers of rebuilds can be pruned.
+LABEL io.collie.agent=1
 
 ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \

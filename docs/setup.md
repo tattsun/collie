@@ -35,13 +35,22 @@ Logs: `journalctl --user -u collie -f`
 
 ## Update
 
+Collie checks GitHub for new releases. When one is out, admins see `vX → vY` at the bottom of the sidebar, and Admin → **Updates** installs it with one tap. If you turn on **Install updates automatically** there, a new release installs itself once no agent has been working and no terminal has been used for 10 minutes.
+
+- The service restarts. Running agents stop and pick up again on the next message, and open browsers reload by themselves.
+- If the new version doesn't come up, Collie goes back to the previous version and its data, and the Updates screen says what happened. A version that failed is never retried automatically.
+- While the repository is private, set a GitHub token under Updates. Use a fine-grained token with read-only access to the repository's contents.
+- Updating itself only works for the systemd user service that `mise run install` sets up. A server running a build from before self-updating existed has to be updated by hand once, as below.
+
+To update from the source instead:
+
 ```bash
 cd collie && git pull
 mise install
 mise run install --serve    # with the same options you used the first time
 ```
 
-The service restarts. Running agents stop and pick up again on the next message, and open browsers reload by themselves. To update only Claude Code / Codex in the image, run `collie --build-image`.
+To update only Claude Code / Codex in the image, use Admin → Containers → **Agent image** → **Rebuild**, or run `collie --build-image`. Each project's container switches to the new image the next time it restarts while nothing in it is in use.
 
 ## Lost passkeys
 

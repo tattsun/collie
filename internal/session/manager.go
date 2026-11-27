@@ -135,7 +135,8 @@ func (m *Manager) ensureContainer(p model.Project, uid string, notify func(strin
 	if notify != nil {
 		onBuild = func() { notify(noticeBuildingImage) }
 	}
-	if err := m.sb.WaitImage(45*time.Minute, onBuild); err != nil {
+	image, err := m.sb.WaitImage(p.Image, 45*time.Minute, onBuild)
+	if err != nil {
 		return err
 	}
 	var dirs []string
@@ -144,7 +145,7 @@ func (m *Manager) ensureContainer(p model.Project, uid string, notify func(strin
 			dirs = append(dirs, s.Cwd)
 		}
 	}
-	sp := sandbox.Spec{Project: p, UserID: uid, SessionDirs: dirs, MigrateHostState: uid == m.hostOwner && m.hostOwner != ""}
+	sp := sandbox.Spec{Project: p, UserID: uid, SessionDirs: dirs, MigrateHostState: uid == m.hostOwner && m.hostOwner != "", Image: image}
 	if notify != nil {
 		sp.OnSlowStart = func() { notify(noticeSlowStart) }
 	}
@@ -171,9 +172,8 @@ func (m *Manager) EnsureContainer(p model.Project, uid string) error {
 	if m.sb == nil || !m.sb.Available() {
 		return errors.New("podman is not installed on the server")
 	}
-	if !m.sb.Status().Ready {
-		_ = m.sb.Build(false)
-		return errors.New("the agent container image is being built (first run, a few minutes) — try again shortly")
+	if _, err := m.sb.WaitImage(p.Image, 0, nil); err != nil {
+		return err
 	}
 	return m.ensureContainer(p, uid, nil)
 }

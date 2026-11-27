@@ -6,49 +6,11 @@ import { ProjectClaudeAccount } from './ClaudeAccounts'
 import { NetworkSettings } from './NetworkSettings'
 import { EnvEditor } from './Editors'
 import { EffectivePlugins, PluginsEditor } from './Plugins'
+import { ImageLog, ProjectImage, customImageState, projectImage } from './Images'
 import { cls } from '../util'
-import { IAlert, IBox, IRefresh, Spinner } from './icons'
-import { Modal, Segmented, Toggle, rich, ContainerUsage } from './ui'
-import { t, ts } from '../i18n'
-
-/** Substitute JSX parts for {key} placeholders in an already-translated string. */
-
-export function ImageLog({ onClose }: { onClose: () => void }) {
-  const sb = sandbox.value
-  return (
-    <Modal title={t('Agent image')} onClose={onClose} wide>
-      <div class="kv">
-        <span>{t('Image')}</span>
-        <span class="mono small">{sb.image}</span>
-        <span>{t('Status')}</span>
-        <span>{sb.building ? t('Building…') : sb.error ? t('Build failed') : sb.ready ? t('Built') : t('Not built yet')}</span>
-      </div>
-      {sb.error && <div class="error-box">{ts(sb.error)}</div>}
-      {sb.log && <pre class="out build-log">{sb.log}</pre>}
-      <div class="modal-actions">
-        <button class="btn" disabled={sb.building} onClick={() => api('POST', '/api/sandbox/build', { refresh: true }).catch(toastError)}>
-          <IRefresh size={14} /> {t('Rebuild (update agents)')}
-        </button>
-      </div>
-    </Modal>
-  )
-}
-
-/** Sidebar footer indicator while the agent image builds or after a failure. */
-export function ImageIndicator() {
-  const sb = sandbox.value
-  const [open, setOpen] = useState(false)
-  if (!sb.available || (!sb.building && !sb.error)) return null
-  return (
-    <>
-      <button class={cls('foot-btn', sb.error ? 'err' : 'on')} onClick={() => setOpen(true)}>
-        {sb.building ? <Spinner size={12} /> : <IAlert size={13} />}
-        {sb.building ? t('Building agent image…') : t('Image build failed')}
-      </button>
-      {open && <ImageLog onClose={() => setOpen(false)} />}
-    </>
-  )
-}
+import { IAlert, IBox, Spinner } from './icons'
+import { Segmented, Toggle, rich, ContainerUsage } from './ui'
+import { t } from '../i18n'
 
 export function ProjectSettings({ p }: { p: Project }) {
   const sb = sandbox.value
@@ -103,6 +65,7 @@ export function ProjectSettings({ p }: { p: Project }) {
     }
   }
   const limitsUnenforced = ctrs?.some((c) => c.running && c.limitsEnforced === false)
+  const custom = projectImage(p, sb)
 
   return (
     <div class="page-pad narrow psettings">
@@ -173,6 +136,8 @@ export function ProjectSettings({ p }: { p: Project }) {
 
       {isolated && <NetworkSettings p={p} manager={manager} active={active} />}
 
+      {isolated && !p.home && <ProjectImage p={p} />}
+
       {isolated && (
         <section class="card">
           <h3>{t('Containers')}</h3>
@@ -197,8 +162,24 @@ export function ProjectSettings({ p }: { p: Project }) {
           {limitsUnenforced && <p class="warn small">{t('Limits are configured but not enforced on this host.')}</p>}
           <div class="row gap wrap">
             <span class="dim small grow">
-              {t('Image: {status}', { status: sb.building ? t('building…') : sb.error ? t('build failed') : sb.ready ? t('ready') : t('built on first use') })}
-              {admin && (
+              {t('Image: {status}', {
+                status: custom
+                  ? `${custom.name} · ${customImageState(custom).label}`
+                  : sb.building
+                    ? t('building…')
+                    : sb.error
+                      ? t('build failed')
+                      : sb.ready
+                        ? t('ready')
+                        : t('built on first use'),
+              })}
+              {admin && custom && (
+                <>
+                  {' '}
+                  <a href="#/admin/containers">{t('details')}</a>
+                </>
+              )}
+              {admin && !custom && (
                 <>
                   {' '}
                   <button class="link-btn" onClick={() => setShowLog(true)}>

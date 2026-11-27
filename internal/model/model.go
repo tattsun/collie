@@ -34,6 +34,10 @@ type Project struct {
 	// the hosts in NetAllow and the agents' own services (sandbox/network.go).
 	Network  string   `json:"network,omitempty"`
 	NetAllow []string `json:"netAllow,omitempty"`
+	// Image is the agent image the project's containers run: "" follows the
+	// server's default, "standard" is Collie's own, anything else the ID of
+	// an admin-defined image (see sandbox/images.go).
+	Image string `json:"image,omitempty"`
 	// Home marks a user's Home: a workspace outside any project where the
 	// Home agent chats with the user and coordinates their project agents.
 	Home bool `json:"home,omitempty"`

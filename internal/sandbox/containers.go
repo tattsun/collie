@@ -130,6 +130,15 @@ type Spec struct {
 	// OnSlowStart, if set, is called when creating the container takes a
 	// while (see containerCreateTimeout).
 	OnSlowStart func()
+	// Image is the tag to run (from WaitImage); "" = the standard image.
+	Image string
+}
+
+func (m *Manager) imageTag(sp Spec) string {
+	if sp.Image != "" {
+		return sp.Image
+	}
+	return m.tag
 }
 
 // Creating a container can take minutes: the first one on a new image gets
@@ -166,7 +175,7 @@ func (m *Manager) Ensure(sp Spec, recreate bool) error {
 		return fmt.Errorf("start the network proxy: %w", err)
 	}
 	args := m.runArgs(sp, m.extraMounts(p, sp.SessionDirs))
-	want := configHash(append(args, "image-id="+m.imageID(ctx)))
+	want := configHash(append(args, "image-id="+m.imageID(ctx, m.imageTag(sp))))
 	name := Name(p.ID, sp.UserID)
 	st := m.inspect(ctx, name)
 	if st.exists && st.network != networkMode(p) {
@@ -201,7 +210,7 @@ func (m *Manager) Ensure(sp Spec, recreate bool) error {
 		return err
 	}
 	if st.exists {
-		go m.PruneImages() // the old container may have held on to an old image
+		m.background(m.PruneImages) // the old container may have held on to an old image
 	}
 	return nil
 }
@@ -312,8 +321,13 @@ func (m *Manager) runArgs(sp Spec, extra []string) []string {
 	if pids > 0 {
 		args = append(args, "--pids-limit", strconv.Itoa(pids))
 	}
+	if tag := m.imageTag(sp); tag != m.tag {
+		// A custom image runs like the standard one: as the server user
+		// (keep-id alone would honor the image's USER) and Collie's command.
+		args = append(args, "--user", userSpec(), "--entrypoint", "")
+	}
 	// No env files here: Exec passes them to every process instead.
-	args = append(args, m.tag)
+	args = append(args, m.imageTag(sp))
 	return append(args, mainCommand(p)...)
 }
 

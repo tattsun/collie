@@ -145,7 +145,6 @@ const ja: Record<string, string> = {
   'Member invite': 'メンバーの招待',
   'expires in {time}': '有効期限まで {time}',
   Revoke: '取り消し',
-  'Agent image…': 'エージェント用イメージ…',
   'Every (project, user) pair has its own container. Admins see usage, not content.':
     'プロジェクトとユーザーの組み合わせごとに専用のコンテナがあります。管理者に見えるのは使用状況だけで、中身は見えません。',
   'No containers.': 'コンテナはありません。',

@@ -84,7 +84,7 @@ func main() {
 	idle := flag.Duration("idle-timeout", 30*time.Minute, "stop idle agent processes after this long (they resume on the next message; 0 = never)")
 	showToken := flag.Bool("print-token", false, "print the access token and exit")
 	loginURL := flag.Bool("login-url", false, "print sign-in links (containing the access token) and exit")
-	buildImage := flag.Bool("build-image", false, "build (or update) the agent container image and exit")
+	buildImage := flag.Bool("build-image", false, "build (or update) the agent container images (Collie's and the admins' custom ones) and exit")
 	prepareImage := flag.Bool("prepare-image", false, "build the agent container image if it is missing and exit (used by updates)")
 	repo := flag.String("update-repo", env("COLLIE_UPDATE_REPO", defaultUpdateRepo), "GitHub repository (owner/name) whose releases Collie updates to; \"off\" to disable")
 	showVersion := flag.Bool("version", false, "print the version and exit")
@@ -259,7 +259,10 @@ func main() {
 		log.Printf("update marker: %v", err)
 	}
 	upd.Start()
-	go sb.PruneImages()
+	go func() {
+		sb.PruneImages()
+		sb.BuildStale() // e.g. a custom image whose build failed while this version was being prepared
+	}()
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)

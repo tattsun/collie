@@ -322,6 +322,7 @@ type PatchProjectReq struct {
 	// "" the internet, "allowlist" only NetAllow's hosts.
 	Network  *string   `json:"network"`
 	NetAllow *[]string `json:"netAllow"`
+	Image    *string   `json:"image"` // agent image (the project's managers pick it)
 }
 
 var limitRe = regexp.MustCompile(`^(|[0-9]+(\.[0-9]+)?[kmgKMG]?)$`)
@@ -334,7 +335,7 @@ func (m *Manager) PatchProject(a Actor, id string, req PatchProjectReq) (model.P
 	if err != nil {
 		return p, err
 	}
-	if p.Home && (req.Name != nil || req.Runtime != nil || req.Nested != nil || req.Network != nil || req.NetAllow != nil) {
+	if p.Home && (req.Name != nil || req.Runtime != nil || req.Nested != nil || req.Network != nil || req.NetAllow != nil || req.Image != nil) {
 		return p, errHomeFixed
 	}
 	if !m.ProjectManageable(a.ID, p) {
@@ -392,11 +393,21 @@ func (m *Manager) PatchProject(a Actor, id string, req PatchProjectReq) (model.P
 	if req.Pids != nil && *req.Pids < 0 {
 		return p, errors.New("invalid process limit")
 	}
+	image := p.Image
+	if req.Image != nil {
+		image = *req.Image
+		if image != p.Image && (runtime != "container" || m.sb == nil || !m.sb.ValidImage(image)) {
+			if runtime != "container" {
+				return p, errors.New("agent images are for isolated projects")
+			}
+			return p, sandbox.ErrNoImage
+		}
+	}
 	envChanged := (req.Runtime != nil && *req.Runtime != p.Runtime) ||
 		(req.Memory != nil && strings.TrimSpace(*req.Memory) != p.Memory) ||
 		(req.CPUs != nil && strings.TrimSpace(*req.CPUs) != p.CPUs) ||
 		(req.Pids != nil && *req.Pids != p.Pids) ||
-		nested != p.Nested ||
+		nested != p.Nested || image != p.Image ||
 		network != p.Network // the containers restart with the other network
 	if envChanged {
 		if err := m.stopProject(id, false); err != nil {
@@ -423,6 +434,7 @@ func (m *Manager) PatchProject(a Actor, id string, req PatchProjectReq) (model.P
 		// The list applies at once: the proxy looks it up for every
 		// connection.
 		x.Network, x.NetAllow = network, netAllow
+		x.Image = image
 	})
 	m.pushProject(np)
 	return np, nil
@@ -471,6 +483,25 @@ func (m *Manager) SetProjectEnv(a Actor, id, content string) error {
 		return ErrForbidden
 	}
 	return writeEnvFile(m.sb.ProjectEnvPath(id), content)
+}
+
+// DeleteImage removes a custom agent image (admins); the projects that
+// picked it follow the default from now on.
+func (m *Manager) DeleteImage(id string) error {
+	if m.sb == nil {
+		return errors.New("isolation is not available")
+	}
+	if err := m.sb.DeleteImage(id); err != nil {
+		return err
+	}
+	for _, p := range m.st.Projects() {
+		if p.Image == id {
+			if np, ok := m.st.UpdateProject(p.ID, func(x *model.Project) { x.Image = sandbox.ImageDefault }); ok {
+				m.pushProject(np)
+			}
+		}
+	}
+	return nil
 }
 
 // SharedEnv / UserEnv: the global (admin) and personal env files.

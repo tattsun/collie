@@ -3034,3 +3034,9 @@ pre.out.error-box {
 .viewer-note.on {
   color: var(--amber);
 }
+.image-edit {
+  resize: vertical;
+  min-height: 220px;
+  font-family: var(--mono);
+  font-size: 12.5px;
+}

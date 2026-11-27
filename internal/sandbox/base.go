@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 // The agent image is built here in two parts: a base with the slow,
@@ -79,11 +81,21 @@ func (m *Manager) prepareBase(ctx context.Context, dir string, w io.Writer) (str
 	return refs[1], nil
 }
 
-// stream runs podman in dir with its output going to w.
+// stream runs podman in dir with its output going to w. Builds' RUN steps
+// get the agents' network (see buildEnv).
 func (m *Manager) stream(ctx context.Context, dir string, w io.Writer, args ...string) error {
+	conf, err := os.MkdirTemp("", "collie-build-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(conf)
 	cmd := exec.CommandContext(ctx, m.cfg.Podman, append(append([]string(nil), m.global...), args...)...)
 	cmd.Dir = dir
+	cmd.Env = buildEnv(conf)
 	cmd.Stdout, cmd.Stderr = w, w
+	// Out of time: let podman stop its build and clean up first.
+	cmd.Cancel = func() error { return cmd.Process.Signal(os.Interrupt) }
+	cmd.WaitDelay = 30 * time.Second
 	return cmd.Run()
 }
 

@@ -52,6 +52,10 @@ type Status struct {
 	Error     string `json:"error,omitempty"`
 	Log       string `json:"log,omitempty"`
 	Shared    string `json:"shared"`
+	// Admin-defined images on top of the standard one, and the one projects
+	// run unless they pick another ("" = standard).
+	Images       []ImageStatus `json:"images"`
+	DefaultImage string        `json:"defaultImage,omitempty"`
 	// Server-wide default limits.
 	Memory string `json:"memory"`
 	CPUs   string `json:"cpus"`
@@ -74,11 +78,17 @@ type Manager struct {
 	built    chan struct{} // closed when the current build finishes
 	ready    bool
 	locks    map[string]*sync.Mutex
-	selinux  bool            // SELinux is on: containers run without its labels
-	imgID    string          // ID of the image tag, cached briefly
-	imgIDAt  time.Time       // when imgID was looked up
-	stale    map[string]bool // containers left running with an older configuration
-	egress   *egress.Proxy   // for containers on an allowlist (network.go)
+	selinux  bool                 // SELinux is on: containers run without its labels
+	imgIDs   map[string]imageIDAt // IDs of image tags, cached briefly
+	stale    map[string]bool      // containers left running with an older configuration
+	egress   *egress.Proxy        // for containers on an allowlist (network.go)
+
+	// Custom images (images.go).
+	defs      imageDefs
+	custom    map[string]*customImage
+	customSem chan struct{}
+	bg        sync.WaitGroup // background builds and prunes
+	started   time.Time
 
 	// The plugin directory (see PluginCatalog).
 	catMu    sync.Mutex
@@ -95,7 +105,8 @@ func New(cfg Config) *Manager {
 	if cfg.Podman == "" {
 		cfg.Podman = "podman"
 	}
-	m := &Manager{cfg: cfg, locks: map[string]*sync.Mutex{}, stale: map[string]bool{}, buildLog: &tail{max: 6 << 10}, egress: egress.NewProxy()}
+	m := &Manager{cfg: cfg, locks: map[string]*sync.Mutex{}, stale: map[string]bool{}, buildLog: &tail{max: 6 << 10}, egress: egress.NewProxy(),
+		imgIDs: map[string]imageIDAt{}, custom: map[string]*customImage{}, customSem: make(chan struct{}, 1), started: time.Now()}
 	_, err := exec.LookPath(cfg.Podman)
 	m.available = err == nil && Supported()
 	m.tag = "localhost/collie-agent:" + imageHash()
@@ -105,9 +116,11 @@ func New(cfg Config) *Manager {
 		// the systemd cgroup manager cannot work, so use cgroupfs.
 		m.global = append(m.global, "--cgroup-manager=cgroupfs")
 	}
+	m.loadImageDefs()
 	if m.available {
 		m.selinux = selinuxEnabled()
 		m.ready = m.imageExists()
+		m.refreshCustoms()
 	}
 	return m
 }
@@ -143,7 +156,8 @@ func (m *Manager) Status() Status {
 	defer m.mu.Unlock()
 	st := Status{Available: m.available, Limits: m.available && m.LimitsSupported(), Image: m.tag, Ready: m.ready,
 		Building: m.building, Error: m.buildErr, Shared: m.SharedPath(), Memory: m.cfg.Memory, CPUs: m.cfg.CPUs, Pids: m.cfg.Pids,
-		NetAgents: egress.AgentHosts, NetSuggested: egress.Suggested}
+		NetAgents: egress.AgentHosts, NetSuggested: egress.Suggested,
+		Images: m.imageStatusesLocked(), DefaultImage: m.defs.Default}
 	if m.building || m.buildErr != "" {
 		st.Log = m.buildLog.String()
 	}
@@ -216,17 +230,22 @@ func (m *Manager) Build(refresh bool) error {
 	m.mu.Unlock()
 	m.changed()
 
-	go func() {
+	m.background(func() {
 		err := m.build(refresh, logw)
+		if err == nil {
+			log.Printf("agent image %s built", m.tag)
+			m.mu.Lock()
+			m.ready = true
+			m.mu.Unlock()
+			// The custom images are built on this one: they are due before
+			// it is reported done.
+			m.buildAllImages()
+		}
 		m.mu.Lock()
 		m.building = false
 		if err != nil {
 			m.buildErr = err.Error()
 			log.Printf("agent image build failed: %v", err)
-		} else {
-			m.ready = true
-			m.imgID = ""
-			log.Printf("agent image %s built", m.tag)
 		}
 		close(done)
 		m.mu.Unlock()
@@ -234,9 +253,21 @@ func (m *Manager) Build(refresh bool) error {
 		if err == nil {
 			m.PruneImages()
 		}
-	}()
+	})
 	return nil
 }
+
+// background runs fn in a goroutine that Wait waits for.
+func (m *Manager) background(fn func()) {
+	m.bg.Add(1)
+	go func() {
+		defer m.bg.Done()
+		fn()
+	}()
+}
+
+// Wait waits for the background builds and prunes.
+func (m *Manager) Wait() { m.bg.Wait() }
 
 func (m *Manager) build(refresh bool, w io.Writer) error {
 	dir, err := os.MkdirTemp("", "collie-image-")
@@ -260,6 +291,7 @@ func (m *Manager) build(refresh bool, w io.Writer) error {
 	if err := m.stream(ctx, dir, w, append(args, ".")...); err != nil {
 		return fmt.Errorf("image build failed: %w", err)
 	}
+	m.forgetImageIDs()
 	return nil
 }
 
@@ -283,60 +315,82 @@ func extractImage(dir string) error {
 }
 
 // BuildSync builds the image in the foreground, streaming the log to w,
-// refreshing the agents layer.
+// refreshing the agents layer, and then the custom images on top of it.
 func (m *Manager) BuildSync(w io.Writer) error {
 	if !m.available {
 		return ErrUnavailable
 	}
-	return m.build(true, w)
+	if err := m.build(true, w); err != nil {
+		return err
+	}
+	m.buildImagesSync(w, false, 0)
+	return nil
 }
 
-// BuildIfMissing builds the image in the foreground unless it exists (an
-// update prepares the new version's image this way before switching).
+// BuildIfMissing builds the image in the foreground unless it exists, and
+// the custom images that are not up to date (an update prepares the new
+// version's images this way before switching).
 func (m *Manager) BuildIfMissing(w io.Writer) error {
 	if !m.available {
 		return ErrUnavailable
 	}
 	if m.imageExists() {
 		fmt.Fprintf(w, "agent image %s is up to date\n", m.tag)
-		return nil
+	} else if err := m.build(false, w); err != nil {
+		return err
 	}
-	return m.build(false, w)
+	// Within the update's hour: what doesn't fit is built when the new
+	// version starts, and projects keep its last build meanwhile.
+	m.buildImagesSync(w, true, 30*time.Minute)
+	return nil
 }
 
-// imageID returns the ID the image tag points to. It is part of each
+type imageIDAt struct {
+	id string
+	at time.Time
+}
+
+// imageID returns the ID an image tag points to. It is part of each
 // container's configuration, so containers move to a rebuilt image (e.g.
 // with newer agents) the next time they are (re)started while unused.
-func (m *Manager) imageID(ctx context.Context) string {
+func (m *Manager) imageID(ctx context.Context, tag string) string {
 	m.mu.Lock()
-	id, at := m.imgID, m.imgIDAt
+	c := m.imgIDs[tag]
 	m.mu.Unlock()
-	if id != "" && time.Since(at) < time.Minute {
-		return id
+	if c.id != "" && time.Since(c.at) < time.Minute {
+		return c.id
 	}
-	out, err := m.podman(ctx, "image", "inspect", "--format", "{{.Id}}", m.tag)
+	out, err := m.podman(ctx, "image", "inspect", "--format", "{{.Id}}", tag)
 	if err != nil {
 		return ""
 	}
-	id = strings.TrimSpace(out)
+	id := strings.TrimSpace(out)
 	m.mu.Lock()
-	m.imgID, m.imgIDAt = id, time.Now()
+	m.imgIDs[tag] = imageIDAt{id, time.Now()}
 	m.mu.Unlock()
 	return id
+}
+
+func (m *Manager) forgetImageIDs() {
+	m.mu.Lock()
+	m.imgIDs = map[string]imageIDAt{}
+	m.mu.Unlock()
 }
 
 const latestTag = "localhost/collie-agent:latest"
 
 // PruneImages removes agent images older than the current one — earlier
 // versions' tags and what rebuilds left behind — to reclaim their
-// gigabytes. Newer ones (an update being prepared) stay, and podman keeps
-// anything a container still uses; that goes on a later prune.
+// gigabytes, and the custom images' builds no project runs. Newer ones (an
+// update being prepared) stay, and podman keeps anything a container still
+// uses; that goes on a later prune.
 func (m *Manager) PruneImages() {
 	if !m.available {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
+	m.pruneCustom(ctx)
 	out, err := m.podman(ctx, "images", "--format", "json", "--filter", "reference=localhost/collie-agent")
 	if err != nil {
 		return
@@ -364,7 +418,8 @@ func (m *Manager) PruneImages() {
 			continue
 		}
 		for _, n := range im.Names {
-			if n != m.tag && n != latestTag {
+			// The filter is loose: it also matches custom images' names.
+			if strings.HasPrefix(n, "localhost/collie-agent:") && n != m.tag && n != latestTag {
 				if _, err := m.podman(ctx, "rmi", n); err == nil {
 					log.Printf("removed old agent image %s", n)
 				}
@@ -373,43 +428,6 @@ func (m *Manager) PruneImages() {
 	}
 	_, _ = m.podman(ctx, "image", "prune", "-f", "--filter", "label=io.collie.agent=1")
 	m.pruneBases(ctx)
-}
-
-// WaitImage makes sure the image exists, building it if needed, and waits
-// (up to the timeout) for the build to finish. notify is called once if a
-// build has to be waited for.
-func (m *Manager) WaitImage(timeout time.Duration, notify func()) error {
-	if !m.available {
-		return ErrUnavailable
-	}
-	m.mu.Lock()
-	ready, building := m.ready, m.building
-	m.mu.Unlock()
-	if ready {
-		return nil
-	}
-	if !building {
-		if err := m.Build(false); err != nil {
-			return err
-		}
-	}
-	if notify != nil {
-		notify()
-	}
-	m.mu.Lock()
-	done := m.built
-	m.mu.Unlock()
-	select {
-	case <-done:
-	case <-time.After(timeout):
-		return errors.New("timed out waiting for the agent image build")
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if !m.ready {
-		return fmt.Errorf("agent image build failed: %s", m.buildErr)
-	}
-	return nil
 }
 
 // ---- helpers ----

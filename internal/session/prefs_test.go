@@ -97,6 +97,9 @@ func TestHomeChoosesModelAndEffort(t *testing.T) {
 	m.SetAccess(allAdmins{})
 	m.cfg.ClaudeBin = fakeAgent(t, "claude", filepath.Join(t.TempDir(), "started"))
 	m.st.PutProject(model.Project{ID: "pa", Name: "alpha", Path: t.TempDir(), OwnerUser: "alice"})
+	// A server without Podman: Home runs on it too, so it may drive
+	// host-run projects.
+	m.st.PutProject(model.Project{ID: "ha", Name: "Home", Path: t.TempDir(), OwnerUser: "alice", Home: true, Runtime: "host"})
 	m.st.PutSession(model.Session{ID: "a1", ProjectID: "pa", Owner: "alice", Agent: "claude", Title: "fix login",
 		Model: "claude-opus-5-5", Effort: "xhigh", Status: model.StatusIdle, UpdatedAt: model.NowMs()})
 	m.st.PutSession(model.Session{ID: "a2", ProjectID: "pa", Owner: "alice", Agent: "codex", Title: "docs", Status: model.StatusIdle})

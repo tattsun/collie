@@ -473,7 +473,7 @@ func (l *stringList) UnmarshalJSON(b []byte) error {
 }
 
 func (m *Manager) callFollowTool(tc *toolConn, name string, raw json.RawMessage) (string, error) {
-	a := Actor{ID: tc.scope.uid, Admin: m.isAdmin(tc.scope.uid)}
+	a := m.toolActor(tc.scope.uid)
 	var p struct {
 		Session  string     `json:"session"`
 		All      bool       `json:"all"`

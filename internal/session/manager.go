@@ -79,6 +79,10 @@ type Manager struct {
 	schedMu sync.Mutex
 	clock   func() time.Time
 
+	// gitHelper, if set, stands in for git in isolated projects' containers
+	// (tests).
+	gitHelper func(p model.Project, uid string) gitutil.Ops
+
 	// Notify, if set, hears when a session starts waiting for an approval
 	// or answers ("approval" / "question"), finishes its turn ("done") or
 	// fails ("error"), to tell its owner on devices where Collie is closed
@@ -109,7 +113,7 @@ func NewManager(cfg Config, st *store.Store, hub *Hub, sb *sandbox.Manager) *Man
 	}
 	m.settleAll()
 	for _, p := range st.Projects() {
-		git := gitutil.IsRepo(p.Path)
+		git := isRepo(p)
 		st.UpdateProject(p.ID, func(x *model.Project) { x.Git = git })
 	}
 	m.loadCaps()
@@ -513,9 +517,6 @@ func (m *Manager) createSession(a Actor, req CreateSessionReq, via string) (mode
 		s.Title = deriveTitle(req.Prompt)
 	}
 	if req.Worktree {
-		if err := m.prepareWorktrees(a, p); err != nil {
-			return model.Session{}, err
-		}
 		// Grouped per project so an isolated project's container can mount
 		// all of its worktrees at once.
 		wt := filepath.Join(m.st.WorktreesDir(), p.ID, sid)
@@ -523,11 +524,15 @@ func (m *Manager) createSession(a Actor, req CreateSessionReq, via string) (mode
 			return model.Session{}, err
 		}
 		branch := "collie/" + sid[:8]
-		base := gitutil.FreshBase(p.Path)
-		if err := gitutil.AddWorktree(p.Path, wt, branch, base); err != nil {
+		base, err := m.git(p, a.ID, true).NewWorktree(p.Path, wt, branch, m.initialAuthor(a, p))
+		if err != nil {
 			return model.Session{}, err
 		}
 		s.Cwd, s.Worktree, s.Branch, s.Base = wt, true, branch, base
+	} else if p.Isolated() {
+		// Read rather than asked of git in the container, which the agent
+		// starts in afterwards, in the background.
+		s.Branch = gitutil.HeadBranch(p.Path)
 	} else {
 		s.Branch = gitutil.CurrentBranch(p.Path)
 	}
@@ -545,44 +550,35 @@ func (m *Manager) createSession(a Actor, req CreateSessionReq, via string) (mode
 	return s, nil
 }
 
+// Why a session can't get a worktree of its own (see gitutil.CheckWorktrees).
 var (
-	errNoRepo    = errors.New("an isolated worktree needs a git repository")
-	errNoCommits = errors.New("an isolated worktree starts from the latest commit, and this repository has files but no commits yet: commit them first")
+	errNoRepo    = gitutil.ErrNoRepo
+	errNoCommits = gitutil.ErrNoCommits
 )
 
-// checkWorktrees says why sessions in the project at path can't get an
-// isolated worktree (nil if they can). A repository without commits (a new
-// project, a clone of an empty repository) is fine while it holds no files:
-// prepareWorktrees gives it an empty initial commit to branch off. With
-// files, a worktree from that commit would leave them out.
-func checkWorktrees(path string) error {
-	if !gitutil.IsRepo(path) {
-		return errNoRepo
-	}
-	if !gitutil.HasCommits(path) && gitutil.HasFiles(path) {
-		return errNoCommits
-	}
-	return nil
-}
-
-func (m *Manager) prepareWorktrees(a Actor, p model.Project) error {
-	if err := checkWorktrees(p.Path); err != nil {
-		return err
-	}
-	if gitutil.HasCommits(p.Path) {
-		return nil
-	}
-	// Authored as whoever the actor's agents commit as there.
+// initialAuthor authors the empty initial commit a repository without
+// commits gets for its first worktree: whoever the actor's agents commit
+// as there.
+func (m *Manager) initialAuthor(a Actor, p model.Project) gitutil.Author {
 	var name, email string
 	if p.Isolated() && m.sb != nil {
 		name, email = m.sb.GitIdentity(a.ID)
-	} else if gitutil.HasIdentity(p.Path) {
-		return gitutil.InitialCommit(p.Path, "", "")
 	}
 	if name == "" || email == "" {
 		name, email = a.Name, sandbox.NoReplyEmail(a.Name)
 	}
-	return gitutil.InitialCommit(p.Path, name, email)
+	// On the host, git's own identity there comes first.
+	return gitutil.Author{Name: name, Email: email, PreferGit: !p.Isolated()}
+}
+
+// isRepo reports whether the project is a git repository. For an isolated
+// one it only looks: git would read the repository's configuration, which
+// its agents can write.
+func isRepo(p model.Project) bool {
+	if p.Isolated() {
+		return gitutil.HasGitDir(p.Path)
+	}
+	return gitutil.IsRepo(p.Path)
 }
 
 func deriveTitle(prompt string) string {
@@ -846,9 +842,7 @@ func (m *Manager) deleteSession(sid string, removeWorktree bool) error {
 	}
 	if s.Worktree && removeWorktree {
 		if p, ok := m.st.Project(s.ProjectID); ok {
-			if err := gitutil.RemoveWorktree(p.Path, s.Cwd); err != nil {
-				log.Printf("remove worktree %s: %v", s.Cwd, err)
-			}
+			m.removeWorktree(p, s)
 		}
 	}
 	m.mu.Lock()
@@ -876,7 +870,11 @@ func (m *Manager) Changes(a Actor, sid string) (*gitutil.Changes, error) {
 	if err != nil {
 		return nil, err
 	}
-	return gitutil.Diff(s.Cwd, s.Base)
+	p, ok := m.st.Project(s.ProjectID)
+	if !ok {
+		return nil, ErrNotFound
+	}
+	return m.git(p, a.ID, true).Diff(s.Cwd, s.Base)
 }
 
 // Subscribe registers the client for a session's live events and queues a

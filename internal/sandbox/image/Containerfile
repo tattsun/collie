@@ -20,6 +20,13 @@ COPY collie-exec collie-kill /usr/local/bin/
 RUN chmod 755 /usr/local/bin/collie-exec /usr/local/bin/collie-kill \
     && mkdir -p /home/agent && chmod 777 /home/agent
 
+# No setuid or setgid programs (su, passwd, mount …): agents have no use
+# for them, and no-new-privileges, which makes them powerless, is off in
+# projects with containers inside. Last, after everything that installs
+# packages. newuidmap/newgidmap work through file capabilities instead
+# (base/Containerfile), which this keeps.
+RUN find / -xdev -type f -perm /6000 -exec chmod ug-s {} +
+
 # Toolchains a project installs with mise (`mise install` from its
 # mise.toml or .tool-versions) work by name: mise's shims are on PATH. They
 # come last, so what the image has (node, python) stays the image's: Codex

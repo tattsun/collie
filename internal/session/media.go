@@ -142,6 +142,9 @@ func (m *Manager) saveUpload(data []byte, ext string) (string, error) {
 
 const toolSockName = "collie.sock"
 
+// The most connections a tools socket serves at once.
+const maxToolConns = 64
+
 type toolScope struct {
 	uid     string
 	project string // "" for the user's Home
@@ -188,12 +191,23 @@ func (m *Manager) toolSocket(sc toolScope) (string, error) {
 	_ = os.Chmod(sock, 0o600)
 	m.toolLn[sc.key()] = ln
 	go func() {
+		// Each agent process holds one connection; more than this many
+		// at once is an agent hoarding them.
+		slots := make(chan struct{}, maxToolConns)
 		for {
 			c, err := ln.Accept()
 			if err != nil {
 				return
 			}
-			go m.serveTools(&toolConn{scope: sc}, c)
+			select {
+			case slots <- struct{}{}:
+				go func() {
+					defer func() { <-slots }()
+					m.serveTools(&toolConn{scope: sc}, c)
+				}()
+			default:
+				c.Close()
+			}
 		}
 	}()
 	return dir, nil

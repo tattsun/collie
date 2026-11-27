@@ -5,10 +5,13 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 	"unicode/utf8"
 )
@@ -216,7 +219,11 @@ type Changes struct {
 	Base    string       `json:"base,omitempty"`
 }
 
-const maxDiff = 256 << 10
+// What Diff shows of one file, and of all of them.
+const (
+	maxDiff      = 256 << 10
+	maxDiffTotal = 8 << 20
+)
 
 // Diff returns working-tree changes against HEAD, including untracked
 // files, and (for worktree branches) the commits made on top of base.
@@ -246,6 +253,14 @@ func Diff(dir, base string) (*Changes, error) {
 			}
 		}
 	}
+	// Untracked files are read through root: an agent may have swapped
+	// one for a symlink (or a FIFO) since git listed it.
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	total := 0
 	entries := strings.Split(status, "\x00")
 	for i := 0; i < len(entries); i++ {
 		e := entries[i]
@@ -259,7 +274,7 @@ func Diff(dir, base string) (*Changes, error) {
 		fc := FileChange{Path: path, Status: strings.TrimSpace(code)}
 		if code == "??" {
 			fc.Status = "?"
-			fc.Diff, fc.Binary = untrackedDiff(dir, path)
+			fc.Diff, fc.Binary = untrackedDiff(root, path)
 		} else if hasHead {
 			d, _ := run(c, dir, "diff", "--no-color", "--no-ext-diff", against, "--", path)
 			fc.Diff = d
@@ -270,6 +285,9 @@ func Diff(dir, base string) (*Changes, error) {
 		}
 		if len(fc.Diff) > maxDiff {
 			fc.Diff = fc.Diff[:maxDiff] + "\n… diff truncated …\n"
+		}
+		if total += len(fc.Diff); total > maxDiffTotal {
+			fc.Diff = "… diff left out: too many changes to show …\n"
 		}
 		res.Files = append(res.Files, fc)
 	}
@@ -312,17 +330,39 @@ func mergeCommitted(status, nameStatus string) string {
 	return status
 }
 
-func untrackedDiff(dir, path string) (string, bool) {
-	full := filepath.Join(dir, path)
-	st, err := os.Stat(full)
-	if err != nil || st.IsDir() {
+// untrackedDiff shows an untracked file as added. A symlink shows as its
+// target, as git shows committed ones.
+func untrackedDiff(root *os.Root, path string) (string, bool) {
+	st, err := root.Lstat(path)
+	if err != nil {
 		return "", false
 	}
-	if st.Size() > maxDiff {
-		return fmt.Sprintf("new file, %d bytes (too large to show)\n", st.Size()), false
-	}
-	b, err := os.ReadFile(full)
-	if err != nil {
+	var b []byte
+	switch {
+	case st.Mode()&fs.ModeSymlink != 0:
+		target, err := root.Readlink(path)
+		if err != nil {
+			return "", false
+		}
+		b = []byte(target + "\n")
+	case st.Mode().IsRegular():
+		if st.Size() > maxDiff {
+			return fmt.Sprintf("new file, %d bytes (too large to show)\n", st.Size()), false
+		}
+		// Not following a symlink, and not waiting on a FIFO, in case it
+		// was swapped for one since the Lstat.
+		f, err := root.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+		if err != nil {
+			return "", false
+		}
+		defer f.Close()
+		if fi, err := f.Stat(); err != nil || !fi.Mode().IsRegular() {
+			return "", false
+		}
+		if b, err = io.ReadAll(io.LimitReader(f, maxDiff)); err != nil {
+			return "", false
+		}
+	default:
 		return "", false
 	}
 	if bytes.IndexByte(b, 0) >= 0 || !utf8.Valid(b) {

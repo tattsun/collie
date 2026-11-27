@@ -171,6 +171,12 @@ func (m *Manager) Ensure(sp Spec, recreate bool) error {
 	if err := m.prepare(sp); err != nil {
 		return err
 	}
+	if sp.CollieBin == "" {
+		// Collie runs git in the container with it (gitutil.Helper).
+		if exe, err := os.Executable(); err == nil {
+			sp.CollieBin = exe
+		}
+	}
 	if err := m.prepareNetwork(&sp); err != nil {
 		return fmt.Errorf("start the network proxy: %w", err)
 	}
@@ -294,7 +300,9 @@ func (m *Manager) runArgs(sp Spec, extra []string) []string {
 		args = append(args, "-v", d+":"+d+":ro")
 	}
 	if sp.CollieRun != "" {
-		args = append(args, "-v", sp.CollieRun+":"+CollieRunDir)
+		// Read-only: connecting needs no write access, and the agent can't
+		// swap the socket for something else.
+		args = append(args, "-v", sp.CollieRun+":"+CollieRunDir+":ro")
 	}
 	if sp.CollieBin != "" {
 		args = append(args, "-v", sp.CollieBin+":"+CollieBinPath+":ro")
@@ -555,6 +563,17 @@ func (m *Manager) Stale(projectID, userID string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.stale[Name(projectID, userID)]
+}
+
+// Exists reports whether the user has a container for the project (running
+// or not).
+func (m *Manager) Exists(projectID, userID string) bool {
+	if !m.available {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return m.inspect(ctx, Name(projectID, userID)).exists
 }
 
 // ReadFile reads a file as the user's agents see it in their container for

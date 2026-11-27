@@ -466,6 +466,7 @@ func gitIn(t *testing.T, dir string, args ...string) {
 
 func TestReadDiffShowsTheChangesTab(t *testing.T) {
 	m := homeFixture(t)
+	gitInProcess(m)
 	repo := t.TempDir()
 	gitIn(t, repo, "init", "-q")
 	write := func(name, text string) {

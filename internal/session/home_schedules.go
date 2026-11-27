@@ -108,9 +108,11 @@ func (m *Manager) toolCreateSchedule(a Actor, project, prompt, cronExpr, tz, age
 	if err != nil {
 		return "", err
 	}
-	switch mode {
-	case "bypassPermissions", "dontAsk", "full":
+	if unattendedMode(mode) {
 		return "", errors.New("the Home agent cannot schedule sessions without permission checks; the user can make such a schedule in Collie (Schedules)")
+	}
+	if !p.Isolated() && !a.Admin {
+		return "", errHomeHostRun
 	}
 	given := func(v string) *string { // omitted: the default
 		if strings.TrimSpace(v) == "" {

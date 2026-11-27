@@ -43,10 +43,11 @@ import (
 //   - the inner image storage in its own host directory, outside the home
 //     (whose ownership Collie repairs, which would break the images).
 //
-// This widens what the agent can reach — setuid binaries work, and more
-// of the kernel (FUSE, tun, fresh proc mounts) is exposed — but everything
-// still runs in the outer container's user namespace as the server user's
-// ids. It is for trusted projects.
+// This widens what the agent can reach — setuid binaries work (in images
+// that have any: the standard one has none), and more of the kernel (FUSE,
+// tun, fresh proc mounts) is exposed — but everything still runs in the
+// outer container's user namespace as the server user's ids. It is for
+// trusted projects.
 
 func (m *Manager) nestedDir() string { return filepath.Join(m.cfg.DataDir, "nested") }
 

@@ -11,7 +11,7 @@
 
 A **project** is a folder on the server. You can create a new one, clone a repository, or, as an admin, register an existing folder. A **session** is one conversation with one agent (Claude Code or Codex) in a project.
 
-- With **Isolated worktree**, a session gets its own `collie/<id>` branch and checkout, so several sessions can work on the same repository at once. When it is created, Collie fetches the branch's upstream (or the remote's default branch if it has none) and starts from its tip if your local branch is behind. Your local branch is never moved, and unpushed local commits are kept. A repository with no commits yet (a new project, a clone of an empty repository) gets an empty "Initial commit" to branch off when its first worktree session starts.
+- With **Isolated worktree**, a session gets its own `collie/<id>` branch and checkout, so several sessions can work on the same repository at once. When it is created, Collie fetches the branch's upstream (or the remote's default branch if it has none) and starts from its tip if your local branch is behind. Your local branch is never moved, and unpushed local commits are kept. In an isolated project this happens in the project's container, so the fetch uses that project's network setting and its agents' credentials. A repository with no commits yet (a new project, a clone of an empty repository) gets an empty "Initial commit" to branch off when its first worktree session starts.
 - An agent process stops after 30 idle minutes. Your next message resumes the conversation, and that works after a server restart too.
 - Messages you send while the agent is running reach it as extra instructions. A message typed while an approval is waiting denies the request and passes your text along with the denial.
 
@@ -124,7 +124,7 @@ Project → Settings shows which plugins your agents get there and which level d
 - "Every Friday at 18:00, sum up what was merged this week." It can create, list and delete your schedules.
 - "Tell me when it's done, and check the diff first." Home follows the sessions it starts. When one finishes its turn, waits for you, or fails, Collie wakes Home with a short notification. Home then reads the session and its changes and takes the work forward. It can also stop and archive your sessions.
 
-Home can't edit projects itself. The sessions it starts do the editing, and their approvals still come to **Needs you**. It sees only what you can see.
+Home can't edit projects itself. The sessions it starts do the editing, and their approvals still come to **Needs you**. It sees only what you can see. When Home runs in a container (on Linux with Podman), it doesn't start, instruct or schedule agents in host-run projects. Do that yourself in Collie.
 
 When Home follows sessions:
 

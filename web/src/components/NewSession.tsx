@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from 'preact/hooks'
+import { useEffect, useRef, useState } from 'preact/hooks'
 import type { Agent, Project, Session } from '../types'
 import { api } from '../api'
-import { agentCaps, agentsAvail, go, groupById, homeProject, modes, projectById, projects, route, toastError } from '../store'
+import { agentsAvail, go, groupById, homeProject, modes, projectById, projects, route, sessionPrefs, toast, toastError } from '../store'
 import { cls, home, isTouch } from '../util'
 import { IBack, IBranch, IHome, IImage, IPlus, ISend, Spinner } from './icons'
 import { Segmented, Toggle } from './ui'
 import { Thumbs, pastedImages, useAttachments } from './attach'
+import { ModelEffortFields, patchSessionPrefs } from './SessionPrefs'
 import { t, ts } from '../i18n'
 
 const pref = (k: string, d = '') => localStorage.getItem('collie.new.' + k) ?? d
@@ -15,10 +16,10 @@ const setPref = (k: string, v: string) => localStorage.setItem('collie.new.' + k
 // that never picked one. ("mode2": "mode" also stored untouched defaults.)
 const modeKey = (agent: string) => 'mode2.' + agent
 
-const EFFORTS: Record<Agent, string[]> = {
-  claude: ['low', 'medium', 'high', 'xhigh', 'max'],
-  codex: ['low', 'medium', 'high', 'xhigh'],
-}
+// The model and effort start from my defaults (kept on the server, so the
+// Home agent uses them too); they were once remembered on each device.
+for (const k of ['model.claude', 'model.codex', 'effort.claude', 'effort.codex']) localStorage.removeItem('collie.new.' + k)
+const defaults = (agent: Agent) => sessionPrefs.value.agents[agent] || {}
 
 export function NewSession() {
   const r = route.value
@@ -31,8 +32,8 @@ export function NewSession() {
   })
   const [agent, setAgent] = useState<Agent>(() => (pref('agent', 'claude') as Agent) || 'claude')
   const [mode, setMode] = useState(() => pref(modeKey(agent)))
-  const [model, setModel] = useState(() => pref('model.' + agent))
-  const [effort, setEffort] = useState(() => pref('effort.' + agent))
+  const [model, setModel] = useState(() => defaults(agent).model || '')
+  const [effort, setEffort] = useState(() => defaults(agent).effort || '')
   const [worktree, setWorktree] = useState(() => pref('worktree') === '1')
   const [shared, setShared] = useState(true)
   const [prompt, setPrompt] = useState(() => sessionStorage.getItem('collie.newprompt') || '')
@@ -52,8 +53,8 @@ export function NewSession() {
 
   useEffect(() => {
     setMode(pref(modeKey(agent)))
-    setModel(pref('model.' + agent))
-    setEffort(pref('effort.' + agent))
+    setModel(defaults(agent).model || '')
+    setEffort(defaults(agent).effort || '')
   }, [agent])
 
   useEffect(() => {
@@ -73,11 +74,8 @@ export function NewSession() {
   const ownerGroupName = project?.ownerGroup ? groupById.value.get(project.ownerGroup)?.name : ''
   const modeList = modes.value[agent] || []
   const effMode = modeList.some((m) => m.id === mode) ? mode : modeList[0]?.id || ''
-  const models = agentCaps.value[agent]?.models?.length
-    ? agentCaps.value[agent]!.models!
-    : agent === 'claude'
-      ? [{ id: 'opus', label: 'Opus' }, { id: 'sonnet', label: 'Sonnet' }, { id: 'haiku', label: 'Haiku' }]
-      : []
+  const def = defaults(agent)
+  const notDefault = model !== (def.model || '') || effort !== (def.effort || '')
   const canStart = !!project && project.status !== 'cloning' && (prompt.trim() || atts.length) && !uploading && !busy && agentsAvail.value[agent] !== false
 
   const start = async () => {
@@ -88,7 +86,7 @@ export function NewSession() {
         projectId,
         agent,
         mode: effMode,
-        model: model === 'default' ? '' : model,
+        model,
         effort,
         prompt,
         images: ids(),
@@ -99,8 +97,6 @@ export function NewSession() {
       setPref('agent', agent)
       if (effMode === modeList[0]?.id) localStorage.removeItem('collie.new.' + modeKey(agent))
       else setPref(modeKey(agent), effMode)
-      setPref('model.' + agent, model)
-      setPref('effort.' + agent, effort)
       setPref('worktree', worktree ? '1' : '0')
       sessionStorage.removeItem('collie.newprompt')
       setPrompt('')
@@ -111,12 +107,6 @@ export function NewSession() {
       setBusy(false)
     }
   }
-
-  const modelOptions = useMemo(() => {
-    const opts = models.map((m) => ({ id: m.id, label: m.label || m.id }))
-    if (model && model !== 'default' && !opts.some((o) => o.id === model)) opts.push({ id: model, label: model })
-    return opts
-  }, [models, model])
 
   const homeId = homeProject.value?.id
   if (!plist.length && !(homeId && projectId === homeId)) {
@@ -250,31 +240,20 @@ export function NewSession() {
             </select>
           </label>
 
-          <div class="row gap wrap">
-            <label class="field grow">
-              <span class="field-l">{t('Model')}</span>
-              <select class="select" value={model || 'default'} onChange={(e) => setModel((e.target as HTMLSelectElement).value)}>
-                <option value="default">{t('Default')}</option>
-                {modelOptions
-                  .filter((m) => m.id !== 'default')
-                  .map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.label}
-                    </option>
-                  ))}
-              </select>
-            </label>
-            <label class="field">
-              <span class="field-l">{t('Effort')}</span>
-              <select class="select" value={effort} onChange={(e) => setEffort((e.target as HTMLSelectElement).value)}>
-                <option value="">{t('Default')}</option>
-                {EFFORTS[agent].map((x) => (
-                  <option key={x} value={x}>
-                    {x}
-                  </option>
-                ))}
-              </select>
-            </label>
+          <div class="col gap">
+            <ModelEffortFields agent={agent} model={model} effort={effort} onModel={setModel} onEffort={setEffort} />
+            <span class="field-h">
+              {notDefault ? (
+                <button
+                  class="link-btn"
+                  onClick={() => patchSessionPrefs({ agents: { [agent]: { model, effort } } }).then(() => toast(t('Saved as your default')), toastError)}
+                >
+                  {t('Make these my defaults')}
+                </button>
+              ) : (
+                <a href="#/account/agents">{t('Change defaults')}</a>
+              )}
+            </span>
           </div>
 
           <div class={cls('field', !project?.git && 'muted')}>

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"maps"
 	"net"
 	"os"
 	"path/filepath"
@@ -17,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tattsun/collie/internal/agent"
 	"github.com/tattsun/collie/internal/model"
 	"github.com/tattsun/collie/internal/sandbox"
 )
@@ -153,7 +155,7 @@ You are the user's **Home agent** in Collie, the web app where they run coding a
 
 ## Your tools (the ` + "`collie`" + ` MCP server)
 - ` + "`list_projects`, `list_sessions`, `read_session`" + `: the user's projects, what each session is doing, and what was said in it.
-- ` + "`start_session`" + `: start an agent in a project with your instructions.
+- ` + "`start_session`" + `: start an agent in a project with your instructions. It runs with the user's default model and reasoning effort for that agent unless you pass ` + "`model` / `effort`" + `; the effort cannot be changed once it runs.
 - ` + "`send_message`" + `: give an existing session more instructions.
 - ` + "`show_media`" + `: show the user images, videos or an HTML page right in this chat.
 
@@ -161,6 +163,8 @@ You are the user's **Home agent** in Collie, the web app where they run coding a
 - You are the coordinator. Changes to a project are made by a session in that project: start one (or instruct an existing one) with clear, self-contained instructions — that agent does not see this conversation.
 - The user's projects are mounted read-only at the paths ` + "`list_projects`" + ` shows. Read code there to answer questions or to write better instructions. You cannot edit them; this folder is your own writable workspace.
 - Sessions' permission prompts and questions go to the user (Collie shows them under "Needs you"); you cannot answer them. A message sent to a session that is waiting for an approval rejects the pending request with your text, so leave approvals to the user unless they ask otherwise.
+- Leave ` + "`model` and `effort`" + ` out unless the user asks for them or the task clearly calls for it (a higher effort for hard design or debugging work, a lower one for a quick lookup). ` + "`list_sessions` and `read_session`" + ` show what each session runs with.
+- The user's instructions for all sessions (set in Collie) reach every session they start, including yours and the ones you start, so don't repeat them in prompts.
 - Confirm with the user before starting work that is large, costly or hard to undo. Clearly requested, simple tasks need no confirmation.
 - After starting or instructing a session, tell the user its title and project so they can follow it in Collie. When asked how it is going, check with ` + "`read_session`" + `.
 - Answer in the user's language. Keep replies short and conversational; they are often read on a phone.
@@ -264,7 +268,7 @@ func (m *Manager) handleRPC(tc *toolConn, line []byte) (resp any) {
 	case "tools/list":
 		tools := []map[string]any{showMediaDef}
 		if home {
-			tools = append(slices.Clone(homeToolDefs), showMediaDef)
+			tools = append(withModels(homeToolDefs, m.AgentCaps()), showMediaDef)
 		}
 		return rpcResult(req.ID, map[string]any{"tools": tools})
 	case "tools/call":
@@ -316,6 +320,9 @@ func obj(props map[string]any, required ...string) map[string]any {
 
 func prop(typ, desc string) map[string]any { return map[string]any{"type": typ, "description": desc} }
 
+var effortHelp = `Reasoning effort (default: the user's default for that agent; "default" is the agent's own). Claude: ` +
+	strings.Join(agent.Efforts["claude"], ", ") + ". Codex: " + strings.Join(agent.Efforts["codex"], ", ") + ". It cannot be changed once the session runs"
+
 var homeToolDefs = []map[string]any{
 	{
 		"name":        "list_projects",
@@ -324,7 +331,7 @@ var homeToolDefs = []map[string]any{
 	},
 	{
 		"name":        "list_sessions",
-		"description": "List sessions (agent conversations), most recent first, with status: running, waiting (needs the user), idle, stopped or error. `background` lists work an agent left running after its turn (builds, tests, sub-agents); it reports back when that ends.",
+		"description": "List sessions (agent conversations), most recent first, with their model, reasoning effort and status: running, waiting (needs the user), idle, stopped or error. `background` lists work an agent left running after its turn (builds, tests, sub-agents); it reports back when that ends.",
 		"inputSchema": obj(map[string]any{
 			"project":          prop("string", "Project id or name; omit for all projects"),
 			"include_archived": prop("boolean", "Include archived sessions"),
@@ -342,12 +349,14 @@ var homeToolDefs = []map[string]any{
 	{
 		"name": "start_session",
 		"description": "Start an agent session in a project and give it instructions. The agent does not see this conversation, so make the prompt self-contained. " +
-			"Its permission prompts go to the user. Returns the new session's id and title.",
+			"Its permission prompts go to the user. Returns the new session's id, title, model and effort.",
 		"inputSchema": obj(map[string]any{
 			"project":  prop("string", "Project id or name"),
 			"prompt":   prop("string", "Instructions for the agent"),
 			"agent":    map[string]any{"type": "string", "enum": []string{"claude", "codex"}, "description": "Which agent (default claude)"},
 			"mode":     prop("string", "Permission mode (default auto). Claude: auto, default (ask first), acceptEdits, plan. Codex: auto, untrusted, read-only"),
+			"model":    prop("string", `Model (default: the user's default for that agent). An alias or model id the agent accepts; "default" is the agent's own default`),
+			"effort":   prop("string", effortHelp),
 			"worktree": prop("boolean", "Work on a separate git branch and checkout, so it does not collide with other sessions in the project"),
 			"title":    prop("string", "Short title (default: from the prompt)"),
 		}, "project", "prompt"),
@@ -361,6 +370,36 @@ var homeToolDefs = []map[string]any{
 			"text":    prop("string", "The message"),
 		}, "session", "text"),
 	},
+}
+
+// withModels returns the tool definitions with the models each agent
+// offers (as last reported) added to start_session's model description.
+func withModels(defs []map[string]any, caps map[string]model.Caps) []map[string]any {
+	var known []string
+	for _, name := range []string{"claude", "codex"} {
+		var ids []string
+		for _, mo := range caps[name].Models {
+			ids = append(ids, mo.ID)
+		}
+		if len(ids) > 0 {
+			known = append(known, name+": "+strings.Join(ids, ", "))
+		}
+	}
+	out := slices.Clone(defs)
+	for i, d := range out {
+		if d["name"] != "start_session" || len(known) == 0 {
+			continue
+		}
+		schema := maps.Clone(d["inputSchema"].(map[string]any))
+		props := maps.Clone(schema["properties"].(map[string]any))
+		mp := maps.Clone(props["model"].(map[string]any))
+		mp["description"] = mp["description"].(string) + ". Offered now: " + strings.Join(known, "; ")
+		props["model"], schema["properties"] = mp, props
+		def := maps.Clone(d)
+		def["inputSchema"] = schema
+		out[i] = def
+	}
+	return out
 }
 
 // ---- tools ----
@@ -396,13 +435,16 @@ func (m *Manager) callTool(uid, name string, raw json.RawMessage) (string, error
 			Prompt   string `json:"prompt"`
 			Agent    string `json:"agent"`
 			Mode     string `json:"mode"`
+			Model    string `json:"model"`
+			Effort   string `json:"effort"`
 			Worktree bool   `json:"worktree"`
 			Title    string `json:"title"`
 		}
 		if err := json.Unmarshal(raw, &p); err != nil {
 			return "", err
 		}
-		return m.toolStartSession(a, p.Project, p.Prompt, p.Agent, p.Mode, p.Title, p.Worktree)
+		return m.toolStartSession(a, p.Project, CreateSessionReq{Prompt: p.Prompt, Agent: p.Agent, Mode: p.Mode,
+			Model: p.Model, Effort: p.Effort, Title: p.Title, Worktree: p.Worktree})
 	case "send_message":
 		var p struct {
 			Session string `json:"session"`
@@ -546,6 +588,8 @@ func (m *Manager) toolListSessions(a Actor, project string, archived bool, limit
 		Project  string `json:"project"`
 		Title    string `json:"title"`
 		Agent    string `json:"agent"`
+		Model    string `json:"model"`
+		Effort   string `json:"effort"`
 		Status   string `json:"status"`
 		Mode     string `json:"mode"`
 		Updated  string `json:"updated"`
@@ -572,7 +616,7 @@ func (m *Manager) toolListSessions(a Actor, project string, archived bool, limit
 			break
 		}
 		p, _ := m.st.Project(s.ProjectID)
-		o := out{ID: s.ID, Project: p.Name, Title: s.Title, Agent: s.Agent, Status: s.Status, Mode: s.Mode,
+		o := out{ID: s.ID, Project: p.Name, Title: s.Title, Agent: s.Agent, Model: orDefault(s.Model), Effort: orDefault(s.Effort), Status: s.Status, Mode: s.Mode,
 			Updated: ago(s.UpdatedAt), Preview: s.Preview, Branch: s.Branch, Worktree: s.Worktree, Archived: s.Archived,
 			Others: s.Owner != a.ID}
 		for _, t := range s.Tasks {
@@ -605,7 +649,8 @@ func (m *Manager) toolReadSession(a Actor, sid string, last int) (string, error)
 		return "", err
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "Session %q (%s) in project %s — %s, mode %s, status %s, updated %s.\n", s.Title, s.ID, p.Name, s.Agent, s.Mode, s.Status, ago(s.UpdatedAt))
+	fmt.Fprintf(&b, "Session %q (%s) in project %s — %s (model %s, effort %s), mode %s, status %s, updated %s.\n",
+		s.Title, s.ID, p.Name, s.Agent, orDefault(s.Model), orDefault(s.Effort), s.Mode, s.Status, ago(s.UpdatedAt))
 	if start > 0 {
 		fmt.Fprintf(&b, "Showing the last %d entries; %d earlier ones are omitted.\n", len(items), start)
 	}
@@ -716,27 +761,34 @@ func formatItem(it *model.Item) string {
 	return ""
 }
 
-func (m *Manager) toolStartSession(a Actor, project, prompt, agentName, mode, title string, worktree bool) (string, error) {
+func (m *Manager) toolStartSession(a Actor, project string, req CreateSessionReq) (string, error) {
 	p, err := m.workProject(a.ID, project)
 	if err != nil {
 		return "", err
 	}
-	if strings.TrimSpace(prompt) == "" {
+	if strings.TrimSpace(req.Prompt) == "" {
 		return "", errors.New("prompt is empty")
 	}
-	if agentName == "" {
-		agentName = "claude"
+	if req.Agent == "" {
+		req.Agent = "claude"
 	}
-	switch mode {
+	switch req.Mode {
 	case "bypassPermissions", "dontAsk", "full":
 		return "", errors.New("the Home agent cannot start sessions without permission checks; ask the user to start it from Collie")
 	}
-	s, err := m.createSession(a, CreateSessionReq{ProjectID: p.ID, Agent: agentName, Mode: mode, Title: title, Prompt: prompt, Worktree: worktree}, "home")
+	req.ProjectID = p.ID
+	req.Model, req.Effort = m.ResolveModelEffort(a.ID, req.Agent, req.Model, req.Effort)
+	s, err := m.createSession(a, req, "home")
 	if err != nil {
 		return "", err
 	}
-	return pretty(map[string]any{"id": s.ID, "title": s.Title, "project": p.Name, "agent": s.Agent, "mode": s.Mode, "status": s.Status, "branch": s.Branch}), nil
+	return pretty(map[string]any{"id": s.ID, "title": s.Title, "project": p.Name, "agent": s.Agent, "model": orDefault(s.Model),
+		"effort": orDefault(s.Effort), "mode": s.Mode, "status": s.Status, "branch": s.Branch}), nil
 }
+
+// orDefault names an unset model or effort for the Home agent: the agent's
+// own default.
+func orDefault(v string) string { return cmp.Or(v, "default") }
 
 func (m *Manager) toolSendMessage(a Actor, sid, text string) (string, error) {
 	s, p, err := m.workSession(a.ID, sid)

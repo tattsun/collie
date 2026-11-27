@@ -59,6 +59,10 @@ type Config struct {
 	Wrap func(argv []string, dir string) ([]string, func(sig string))
 	// ExtraArgs are appended to the agent's command line.
 	ExtraArgs []string
+	// Instructions are added to the agent's system prompt (Claude's
+	// --append-system-prompt, Codex's developer instructions), leaving the
+	// user's messages and the project's files as they are.
+	Instructions string
 }
 
 type Image struct {
@@ -111,6 +115,13 @@ var Modes = map[string][]ModeInfo{
 		{ID: "read-only", Label: "Read only"},
 		{ID: "full", Label: "Full access (no sandbox)"},
 	},
+}
+
+// Efforts lists the reasoning efforts each agent takes, lowest first ("" is
+// the agent's own default).
+var Efforts = map[string][]string{
+	"claude": {"low", "medium", "high", "xhigh", "max"},
+	"codex":  {"low", "medium", "high", "xhigh"},
 }
 
 type ModeInfo struct {

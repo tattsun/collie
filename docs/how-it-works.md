@@ -65,6 +65,13 @@ Personal settings win when names clash. The repository's own `.claude/`, `.mcp.j
 
 Claude's auto memory is shared across your sessions in a project. In a group project, it is shared by all members.
 
+**Your defaults for new sessions** are in Account → Agent accounts → New sessions: a model and reasoning effort for each agent, and instructions for all of your sessions (e.g. "Write PR titles in English").
+
+- New session starts with your model and effort, and your Home agent uses them unless it picks its own. The effort can't be changed once a session runs.
+- The instructions are added to the agent's system prompt (Claude Code's `--append-system-prompt`, Codex's developer instructions), in host-run projects and Home too. Your messages and the repository's files are left as they are. For Codex, they take the place of `developer_instructions` in your own Codex config.
+- Only you see them, and they go only to the sessions you started. A shared session in a group project gets the instructions of the member who started it.
+- Changes apply to sessions started afterwards. A session already under way may keep the earlier instructions.
+
 ## Claude Code plugins
 
 Plugins can be turned on at five levels. A later level wins, and **Turn off** keeps a plugin turned on at a broader level out of that scope:

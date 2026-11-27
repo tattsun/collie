@@ -121,6 +121,11 @@ func (c *Codex) Start() error {
 	if c.cfg.Model != "" && c.cfg.Model != "default" {
 		params["model"] = c.cfg.Model
 	}
+	if c.cfg.Instructions != "" {
+		// Set only when there are some: they replace any
+		// developer_instructions in the user's Codex config.
+		params["developerInstructions"] = c.cfg.Instructions
+	}
 	var res json.RawMessage
 	if c.cfg.Resume && c.cfg.Ref != "" {
 		rp := cloneMap(params)

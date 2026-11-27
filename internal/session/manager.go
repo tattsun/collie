@@ -432,11 +432,15 @@ func (m *Manager) createSession(a Actor, req CreateSessionReq, via string) (mode
 	if !validMode(req.Agent, req.Mode) {
 		return model.Session{}, fmt.Errorf("unknown mode %q", req.Mode)
 	}
+	req.Effort = strings.TrimSpace(req.Effort)
+	if err := checkEffort(req.Agent, req.Effort); err != nil {
+		return model.Session{}, err
+	}
 	sid := model.NewID()
 	now := model.NowMs()
 	s := model.Session{
 		ID: sid, ProjectID: p.ID, Agent: req.Agent, Mode: req.Mode,
-		Model: strings.TrimSpace(req.Model), Effort: strings.TrimSpace(req.Effort),
+		Model: strings.TrimSpace(req.Model), Effort: req.Effort,
 		Cwd: p.Path, Status: model.StatusStopped, CreatedAt: now, UpdatedAt: now,
 		Title: strings.TrimSpace(req.Title), Owner: a.ID,
 	}

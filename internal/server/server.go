@@ -459,6 +459,8 @@ func (s *Server) stateFor(u auth.User, legacy bool) map[string]any {
 		"agentCaps": s.m.AgentCaps(),
 		"usage":     s.m.UsageFor(u.ID),
 		"modes":     agentModes(),
+		"efforts":   agentEfforts(),
+		"prefs":     s.m.SessionPrefs(u.ID),
 		"agents":    s.agentsAvail,
 		"root":      root,
 		"rootBase":  cfg.ProjectRoot,

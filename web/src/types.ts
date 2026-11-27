@@ -1,5 +1,18 @@
 export type Agent = 'claude' | 'codex'
 
+/** The model and reasoning effort my new sessions of an agent start with ('' = the agent's own). */
+export interface AgentDefaults {
+  model?: string
+  effort?: string
+}
+
+/** What the sessions I start get unless I choose otherwise. */
+export interface SessionPrefs {
+  agents: Partial<Record<Agent, AgentDefaults>>
+  /** added to the system prompt of every agent I start */
+  instructions?: string
+}
+
 export interface Project {
   id: string
   name: string

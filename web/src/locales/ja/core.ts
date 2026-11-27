@@ -103,6 +103,7 @@ const ja: Record<string, string> = {
   'no such user': 'そのユーザーは存在しません',
   'empty message': 'メッセージが空です',
   'agent must be claude or codex': 'エージェントは claude か codex を指定してください',
+  'the instructions contain a NUL character': '指示に NUL 文字が含まれています',
   // auth
   'not an invitation': '招待リンクではありません',
   'this link has expired': 'このリンクは期限切れです',
@@ -221,6 +222,9 @@ export const patterns: [RegExp, string][] = [
   [/^invalid JSON: (.*)$/, 'JSON が正しくありません: $1'],
   [/^invalid limit "(.+)"$/, '上限の値が正しくありません: $1'],
   [/^unknown mode "(.+)"$/, '不明なモードです: $1'],
+  [/^unknown effort "(.*)" for (\S+) \(one of: (.+)\)$/, '$2 の推論レベルに「$1」はありません（$3 のいずれか）'],
+  [/^unknown agent "(.*)"$/, '不明なエージェントです: $1'],
+  [/^the instructions are too long \(at most (\d+) KB\)$/, '指示が長すぎます（最大 $1 KB）'],
   [/^unknown runtime "(.+)"$/, '不明な実行環境です: $1'],
   [/^git clone: ([\s\S]*)$/, 'git clone に失敗しました: $1'],
   [/^(?:agent )?image build failed: ([\s\S]*)$/, 'エージェント用イメージの作成に失敗しました: $1'],

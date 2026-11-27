@@ -452,7 +452,8 @@ var homeFollowToolDefs = []map[string]any{
 	{
 		"name": "archive_session",
 		"description": "Archive a session whose work is done, so it leaves the user's session list (nothing is deleted: the conversation, worktree and branch stay), or bring it back with archived=false. " +
-			"Archiving does not stop a running agent (stop_session does). Only for sessions the user started.",
+			"Archiving does not stop a running agent (stop_session does). Only for sessions the user started. " +
+			"It also archives (or brings back) the user's other Home conversations, but not the one you are in.",
 		"inputSchema": obj(map[string]any{
 			"session":  prop("string", "Session id"),
 			"archived": prop("boolean", "false to unarchive (default true)"),
@@ -487,7 +488,7 @@ func (m *Manager) callFollowTool(tc *toolConn, name string, raw json.RawMessage)
 	}
 	switch name {
 	case "start_session":
-		text, err := m.callTool(tc.scope.uid, name, raw)
+		text, err := m.callTool(tc, name, raw)
 		if err != nil || (p.Watch != nil && !*p.Watch) || tc.session == "" {
 			return text, err
 		}
@@ -564,13 +565,18 @@ func (m *Manager) toolStopSession(a Actor, sid string) (string, error) {
 	return fmt.Sprintf("Stopping %q in %s: its agent is still shutting down.", s.Title, p.Name), nil
 }
 
+// toolArchiveSession archives a session, or one of the user's Home
+// conversations other than home, the one calling.
 func (m *Manager) toolArchiveSession(a Actor, home, sid string, archived bool) (string, error) {
-	s, p, err := m.workSession(a.ID, sid)
+	s, p, err := m.viewSession(a.ID, sid)
 	if err != nil {
 		return "", err
 	}
 	if err := ownSession(a, s); err != nil {
 		return "", err
+	}
+	if p.Home {
+		return m.archiveHomeConversation(a, home, s, archived)
 	}
 	if s.Archived != archived {
 		if _, err := m.Patch(a, s.ID, PatchSessionReq{Archived: &archived}); err != nil {
@@ -592,6 +598,34 @@ func (m *Manager) toolArchiveSession(a Actor, home, sid string, archived bool) (
 	switch cur, _ := m.st.Session(s.ID); cur.Status {
 	case model.StatusStarting, model.StatusRunning, model.StatusWaiting:
 		msg += " It is still working (stop_session stops it)."
+	}
+	return msg, nil
+}
+
+func (m *Manager) archiveHomeConversation(a Actor, home string, s model.Session, archived bool) (string, error) {
+	if archived {
+		switch {
+		case s.ID == home:
+			return "", errors.New("that is this Home conversation, the one you are in; Home does not archive it (the user can, in Collie)")
+		case home == "":
+			return "", errors.New("Collie cannot tell which Home conversation this is, so it does not archive Home conversations from here (it could be this one); restart it, or the user can archive them in Collie")
+		}
+	}
+	if s.Archived != archived {
+		if _, err := m.Patch(a, s.ID, PatchSessionReq{Archived: &archived}); err != nil {
+			return "", err
+		}
+	}
+	if !archived {
+		return fmt.Sprintf("The Home conversation %q is back in the user's list in Home.", s.Title), nil
+	}
+	msg := fmt.Sprintf("Archived the Home conversation %q: it is out of the user's list in Home; the conversation is kept.", s.Title)
+	if len(s.Watching) > 0 {
+		msg += " While it is archived, Collie does not tell it about the sessions it watches."
+	}
+	switch cur, _ := m.st.Session(s.ID); cur.Status {
+	case model.StatusStarting, model.StatusRunning, model.StatusWaiting:
+		msg += " Its agent is still working (only the user can stop it, in Collie)."
 	}
 	return msg, nil
 }

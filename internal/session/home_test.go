@@ -128,7 +128,7 @@ func TestHomeToolsSeeOnlyTheUsersWork(t *testing.T) {
 		t.Errorf("list_projects shows bob's project or a Home: %s", text)
 	}
 	text, _ = call(t, m, "alice", "list_sessions", nil)
-	if !strings.Contains(text, "fix login") || strings.Contains(text, "bob private") || strings.Contains(text, `"chat"`) {
+	if !strings.Contains(text, "fix login") || strings.Contains(text, "bob private") || !strings.Contains(text, `"chat"`) {
 		t.Errorf("list_sessions: %s", text)
 	}
 	if text, isErr = call(t, m, "alice", "list_sessions", map[string]any{"project": "nosuch"}); !isErr {

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -133,8 +134,8 @@ func TestHomeStopAndArchiveOnlyTheUsersSessions(t *testing.T) {
 		{alice, "t-bob", "another member's shared session", "someone else"},
 		{bob, "t-alice", "another member's shared session", "someone else"},
 		{alice, "t-bob-private", "an invisible session", "no session"},
-		{alice, "h2", "a Home conversation", "Home conversation"},
 		{alice, "nosuch", "an unknown session", "no session"},
+		{alice, "hb1", "someone else's Home conversation", "no session"},
 	}
 	for _, tool := range []string{"stop_session", "archive_session"} {
 		for _, c := range refused {
@@ -143,7 +144,12 @@ func TestHomeStopAndArchiveOnlyTheUsersSessions(t *testing.T) {
 			}
 		}
 	}
-	for _, id := range []string{"t-bob", "t-alice", "h2"} {
+	// Home conversations of one's own are archived (see
+	// TestHomeReachesOnlyTheUsersOwnHomeConversations), never stopped.
+	if text, isErr := callOn(t, m, alice, "stop_session", map[string]any{"session": "h2"}); !isErr || !strings.Contains(text, "Home conversation") {
+		t.Errorf("stop_session on a Home conversation: %v %s", isErr, text)
+	}
+	for _, id := range []string{"t-bob", "t-alice", "hb1"} {
 		if s, _ := m.st.Session(id); s.Archived {
 			t.Errorf("%s was archived", id)
 		}
@@ -167,6 +173,190 @@ func TestHomeStopAndArchiveOnlyTheUsersSessions(t *testing.T) {
 	}
 	if s, _ := m.st.Session("a2"); s.Archived {
 		t.Error("a2 still archived")
+	}
+}
+
+// TestHomeReachesOnlyTheUsersOwnHomeConversations: Home lists, reads and
+// archives the user's other Home conversations (not the one calling), and
+// nobody else's, admins' Homes included. It does nothing else to them.
+func TestHomeReachesOnlyTheUsersOwnHomeConversations(t *testing.T) {
+	m := homeFixture(t)
+	// root is an admin (fakeAccess) whose Home runs on the host, so its
+	// tools act with an admin's rights.
+	m.st.PutProject(model.Project{ID: "hr", Name: "Home", Path: t.TempDir(), OwnerUser: "root", Home: true, Runtime: "host"})
+	m.st.PutSession(model.Session{ID: "r1", ProjectID: "hr", Owner: "root", Title: "root chat", Status: model.StatusIdle})
+	m.st.PutSession(model.Session{ID: "h3", ProjectID: "ha", Owner: "alice", Title: "old chat", Archived: true, Status: model.StatusIdle})
+	if !m.toolActor("root").Admin {
+		t.Fatal("root's Home tools do not act as an admin")
+	}
+	r, _ := m.runtime("h2")
+	r.sinkPut(&model.Item{ID: "u1", Kind: model.KindUser, Text: "plan my trip", Done: true})
+	r.sinkPut(&model.Item{ID: "x1", Kind: model.KindText, Text: "Here is the plan for the trip.", Done: true})
+	r.sinkPut(&model.Item{ID: "n1", Kind: model.KindUser, Via: "collie", Text: "[Collie] Update on sessions you watch", Done: true})
+	m.updateSession("h2", func(s *model.Session) { s.Watching = []string{"a1"} })
+
+	// The bridge names the conversation calling; only one of the user's own
+	// Home conversations is taken.
+	alice, aliceUnknown := homeConn("alice", ""), homeConn("alice", "")
+	for _, sid := range []string{"hb1", "r1", "a1", "h1"} {
+		line, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "method": "collie/session", "params": map[string]string{"id": sid}})
+		m.handleRPC(alice, line)
+		if want := map[bool]string{true: "h1"}[sid == "h1"]; alice.session != want {
+			t.Fatalf("after naming %s, alice's Home socket serves %q", sid, alice.session)
+		}
+	}
+	bob, root := homeConn("bob", "hb1"), homeConn("root", "r1")
+
+	type row struct {
+		ID       string `json:"id"`
+		Project  string `json:"project"`
+		Home     bool   `json:"home"`
+		This     bool   `json:"thisConversation"`
+		Archived bool   `json:"archived"`
+	}
+	list := func(tc *toolConn, args map[string]any) map[string]row {
+		t.Helper()
+		text, isErr := callOn(t, m, tc, "list_sessions", args)
+		var rows []row
+		if isErr || json.Unmarshal([]byte(text), &rows) != nil {
+			t.Fatalf("list_sessions %v: %s", args, text)
+		}
+		out := map[string]row{}
+		for _, r := range rows {
+			out[r.ID] = r
+		}
+		return out
+	}
+	ids := func(rows map[string]row) []string {
+		out := slices.Collect(maps.Keys(rows))
+		slices.Sort(out)
+		return out
+	}
+
+	// Listing: with the projects' sessions, or alone.
+	all := list(alice, nil)
+	if got := ids(all); !slices.Equal(got, []string{"a1", "a2", "h1", "h2", "t-alice", "t-bob"}) {
+		t.Errorf("alice's list: %v", got)
+	}
+	if h := all["h1"]; !h.Home || !h.This || h.Project != "Home" {
+		t.Errorf("the calling conversation: %+v", h)
+	}
+	if h := all["h2"]; !h.Home || h.This {
+		t.Errorf("another Home conversation: %+v", h)
+	}
+	if a := all["a1"]; a.Home || a.This || a.Project != "alpha" {
+		t.Errorf("a project session: %+v", a)
+	}
+	if got := ids(list(alice, map[string]any{"project": "home"})); !slices.Equal(got, []string{"h1", "h2"}) {
+		t.Errorf("alice's Home conversations: %v", got)
+	}
+	if got := ids(list(alice, map[string]any{"project": "Home", "include_archived": true})); !slices.Equal(got, []string{"h1", "h2", "h3"}) {
+		t.Errorf("with the archived ones: %v", got)
+	}
+	if h := list(aliceUnknown, map[string]any{"project": "home"})["h1"]; h.This {
+		t.Error("marked as this conversation without knowing which one calls")
+	}
+	if got := ids(list(bob, map[string]any{"project": "home"})); !slices.Equal(got, []string{"hb1"}) {
+		t.Errorf("bob's Home conversations: %v", got)
+	}
+	if got := ids(list(root, nil)); !slices.Equal(got, []string{"r1"}) {
+		t.Errorf("the admin's list: %v", got)
+	}
+	if got := ids(list(root, map[string]any{"project": "home", "include_archived": true})); !slices.Equal(got, []string{"r1"}) {
+		t.Errorf("the admin's Home conversations: %v", got)
+	}
+	if text, isErr := callOn(t, m, root, "list_sessions", map[string]any{"project": "ha"}); !isErr {
+		t.Errorf("the admin listed alice's Home by its id: %s", text)
+	}
+
+	// Reading.
+	text, isErr := callOn(t, m, alice, "read_session", map[string]any{"session": "h2"})
+	for _, want := range []string{`Home conversation "other chat" (h2)`, "### user\nplan my trip", "Here is the plan for the trip.", "### Collie (a notification"} {
+		if isErr || !strings.Contains(text, want) {
+			t.Errorf("read_session h2 lacks %q: %s", want, text)
+		}
+	}
+	if strings.Contains(text, "in project") {
+		t.Errorf("a Home conversation read as a project's: %s", text)
+	}
+	if text, isErr := callOn(t, m, alice, "read_session", map[string]any{"session": "h1"}); isErr || !strings.Contains(text, "This Home conversation (the one you are in)") {
+		t.Errorf("read_session on the calling conversation: %s", text)
+	}
+
+	// Others' Home conversations: not found, for an admin too.
+	for _, c := range []struct {
+		tc  *toolConn
+		sid string
+	}{{alice, "hb1"}, {alice, "r1"}, {bob, "h2"}, {root, "h1"}, {root, "h2"}, {root, "hb1"}} {
+		for _, tool := range []string{"read_session", "archive_session"} {
+			if text, isErr := callOn(t, m, c.tc, tool, map[string]any{"session": c.sid}); !isErr || !strings.Contains(text, "no session") {
+				t.Errorf("%s of %s by %s: %v %s", tool, c.sid, c.tc.scope.uid, isErr, text)
+			}
+		}
+		if text, isErr := callOn(t, m, c.tc, "archive_session", map[string]any{"session": c.sid, "archived": false}); !isErr {
+			t.Errorf("%s unarchived %s: %s", c.tc.scope.uid, c.sid, text)
+		}
+	}
+
+	// Archiving: not the calling conversation, nor any while Collie can't
+	// tell which one calls.
+	if text, isErr := callOn(t, m, alice, "archive_session", map[string]any{"session": "h1"}); !isErr || !strings.Contains(text, "the one you are in") {
+		t.Errorf("archived the calling conversation: %s", text)
+	}
+	if text, isErr := callOn(t, m, aliceUnknown, "archive_session", map[string]any{"session": "h2"}); !isErr || !strings.Contains(text, "cannot tell") {
+		t.Errorf("archived without knowing which conversation calls: %s", text)
+	}
+	for _, id := range []string{"h1", "h2", "hb1", "r1"} {
+		if s, _ := m.st.Session(id); s.Archived {
+			t.Fatalf("%s was archived", id)
+		}
+	}
+	text, isErr = callOn(t, m, alice, "archive_session", map[string]any{"session": "h2"})
+	if isErr || !strings.Contains(text, "Archived the Home conversation") || !strings.Contains(text, "sessions it watches") {
+		t.Errorf("archive_session h2: %s", text)
+	}
+	if s, _ := m.st.Session("h2"); !s.Archived {
+		t.Error("h2 not archived")
+	}
+	if _, ok := list(alice, nil)["h2"]; ok {
+		t.Error("an archived Home conversation is listed without include_archived")
+	}
+	if text, isErr := callOn(t, m, alice, "archive_session", map[string]any{"session": "h2", "archived": false}); isErr || !strings.Contains(text, "back") {
+		t.Errorf("unarchive h2: %s", text)
+	}
+	if text, isErr := callOn(t, m, aliceUnknown, "archive_session", map[string]any{"session": "h3", "archived": false}); isErr {
+		t.Errorf("unarchive h3: %s", text)
+	}
+	for _, id := range []string{"h2", "h3"} {
+		if s, _ := m.st.Session(id); s.Archived {
+			t.Errorf("%s still archived", id)
+		}
+	}
+
+	// Nothing else reaches a Home conversation, so that two cannot keep
+	// setting each other off.
+	m.setStatus("h2", model.StatusRunning)
+	for _, c := range []struct {
+		tool string
+		args map[string]any
+	}{
+		{"send_message", map[string]any{"session": "h2", "text": "hi"}},
+		{"stop_session", map[string]any{"session": "h2"}},
+		{"watch_session", map[string]any{"session": "h2"}},
+		{"read_diff", map[string]any{"session": "h2"}},
+	} {
+		if text, isErr := callOn(t, m, alice, c.tool, c.args); !isErr || !strings.Contains(text, "Home conversation") {
+			t.Errorf("%s on a Home conversation: %v %s", c.tool, isErr, text)
+		}
+	}
+	if text, isErr := callOn(t, m, alice, "start_session", map[string]any{"project": "home", "prompt": "go"}); !isErr {
+		t.Errorf("start_session in Home: %s", text)
+	}
+	if h, _ := m.st.Session("h1"); len(h.Watching) > 0 {
+		t.Errorf("a Home conversation is watched: %v", h.Watching)
+	}
+	if s, _ := m.st.Session("h2"); s.Status != model.StatusRunning {
+		t.Errorf("h2 is %s", s.Status)
 	}
 }
 

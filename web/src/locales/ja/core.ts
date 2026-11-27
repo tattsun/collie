@@ -141,6 +141,7 @@ const ja: Record<string, string> = {
   'only the person who started the session can change who sees it': '公開範囲を変更できるのはセッションを始めた人だけです',
   'the person who started this session no longer has access to the project, so it is read-only': 'このセッションを始めた人がプロジェクトにアクセスできなくなったため、読み取り専用です',
   'the agent is not running anymore; send a message to resume': 'エージェントはもう動いていません。メッセージを送ると再開します',
+  'the agent is not running anymore': 'エージェントはもう動いていません',
   // containers
   'isolation is not available': '隔離実行は使えません',
   'podman is not installed on the server': 'サーバに podman がインストールされていません',
@@ -192,6 +193,9 @@ export const patterns: [RegExp, string][] = [
   // agent notices / errors
   [/^API retry: ([\s\S]*)$/, 'API を再試行中: $1'],
   [/^Retrying: ([\s\S]*)$/, '再試行中: $1'],
+  [/^Background task finished: ([\s\S]*)$/, 'バックグラウンドのタスクが完了しました: $1'],
+  [/^Background task failed: ([\s\S]*)$/, 'バックグラウンドのタスクが失敗しました: $1'],
+  [/^Background task stopped: ([\s\S]*)$/, 'バックグラウンドのタスクを停止しました: $1'],
   [/^Could not resume the previous Codex thread \(([\s\S]*)\); starting a new one\.$/, '前の Codex スレッドを再開できませんでした（$1）。新しいスレッドで続けます。'],
   [/^agent process exited: ([\s\S]*)$/, 'エージェントのプロセスが終了しました: $1'],
   [/^agent process exited\n([\s\S]*)$/, 'エージェントのプロセスが終了しました\n$1'],

@@ -5,6 +5,7 @@ import { api } from '../api'
 import { go, groupById, markSeen, me, projectById, route, sessionById, subscribe, timeline, toastError, agentCaps, userName } from '../store'
 import { Timeline } from './Timeline'
 import { Composer } from './Composer'
+import { TasksBar } from './Tasks'
 import { ChangesView } from './Changes'
 import { AgentBadge, Menu, Modal, StatusPill } from './ui'
 import { SessionMeter } from './Usage'
@@ -170,7 +171,7 @@ export function SessionView({ id }: { id: string }) {
             {s.model && <span class="sub-item wide-only">{s.model}</span>}
           </div>
         </div>
-        <StatusPill status={s.status} />
+        <StatusPill status={s.status} bg={!!s.tasks?.length} />
         <Menu
           align="right"
           label={t('Session menu')}
@@ -222,6 +223,7 @@ export function SessionView({ id }: { id: string }) {
       {tab === 'chat' && (
         <>
           <Timeline session={s} />
+          <TasksBar s={s} />
           <Composer session={s} caps={caps} />
         </>
       )}

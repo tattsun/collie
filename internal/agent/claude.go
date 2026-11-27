@@ -21,21 +21,23 @@ type Claude struct {
 	sink Sink
 	p    *proc
 
-	mu        sync.Mutex
-	seq       int
-	waiters   map[string]chan map[string]any
-	pending   map[string]*claudeAsk
-	order     []string
-	blocks    map[string][]*streamBlock // message id -> blocks in stream order
-	curMsg    map[string]string         // parent tool id -> streaming message id
-	byIdx     map[string]*streamBlock   // parent:index -> block (for deltas)
-	textSeq   int
-	lastCost  float64
-	busy      bool
-	ctxWindow int64
-	sawCtx    bool      // a reply has reported the context size
-	planAt    time.Time // last get_usage request
-	noPlan    bool      // get_usage has no plan limits for this login
+	mu         sync.Mutex
+	seq        int
+	waiters    map[string]chan map[string]any
+	pending    map[string]*claudeAsk
+	order      []string
+	blocks     map[string][]*streamBlock // message id -> blocks in stream order
+	curMsg     map[string]string         // parent tool id -> streaming message id
+	byIdx      map[string]*streamBlock   // parent:index -> block (for deltas)
+	textSeq    int
+	lastCost   float64
+	busy       bool
+	tasks      map[string]*claudeTask // task id -> task (see claude_tasks.go)
+	shownTasks []model.Task           // last list reported to the session
+	ctxWindow  int64
+	sawCtx     bool      // a reply has reported the context size
+	planAt     time.Time // last get_usage request
+	noPlan     bool      // get_usage has no plan limits for this login
 }
 
 type streamBlock struct {
@@ -62,6 +64,7 @@ func NewClaude(cfg Config, sink Sink) *Claude {
 		blocks:  map[string][]*streamBlock{},
 		curMsg:  map[string]string{},
 		byIdx:   map[string]*streamBlock{},
+		tasks:   map[string]*claudeTask{},
 	}
 }
 
@@ -454,6 +457,8 @@ func (c *Claude) onSystem(o map[string]any) {
 				s.Model = m
 			}
 		})
+	case "task_started", "task_progress", "task_updated", "task_notification":
+		c.onTask(o)
 	case "compact_boundary":
 		c.sink.Put(&model.Item{ID: model.NewID(), Kind: model.KindNotice, TS: model.NowMs(), Text: "Context compacted", Done: true})
 	case "api_retry", "api_error":
@@ -476,7 +481,16 @@ func (c *Claude) onStream(ev map[string]any, parent string) {
 		msg := obj(ev, "message")
 		c.mu.Lock()
 		c.curMsg[parent] = str(msg, "id")
+		// A reply nobody sent a message for: the agent started a turn by
+		// itself, e.g. to report on a background task that ended.
+		woke := parent == "" && !c.busy
+		if woke {
+			c.busy = true
+		}
 		c.mu.Unlock()
+		if woke {
+			c.sink.Status(model.StatusRunning)
+		}
 	case "content_block_start":
 		cb := obj(ev, "content_block")
 		idx := int(num(ev, "index"))

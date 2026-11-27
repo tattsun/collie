@@ -15,12 +15,14 @@ export const listTab = signal<'sessions' | 'projects'>((localStorage.getItem('co
 export const projectFilter = signal<string>(localStorage.getItem('collie.filter') || '')
 const showArchived = signal(false)
 
-const rank = (s: Session) => (s.status === 'waiting' ? 0 : s.status === 'error' ? 1 : s.status === 'running' || s.status === 'starting' ? 2 : 3)
+// Busy: its agent is working, in a turn or in the background.
+const busy = (s: Session) => s.status === 'running' || s.status === 'starting' || !!s.tasks?.length
+const rank = (s: Session) => (s.status === 'waiting' ? 0 : s.status === 'error' ? 1 : busy(s) ? 2 : 3)
 
 const SessionRow = memo(function SessionRow({ s, active, project }: { s: Session; active: boolean; project?: string }) {
   return (
     <a href={`#/s/${s.id}`} class={cls('srow', active && 'active', s.unread && 'unread', s.archived && 'archived')}>
-      <StatusDot status={s.status} unread={s.unread} />
+      <StatusDot status={s.status} unread={s.unread} bg={!!s.tasks?.length} />
       <div class="srow-main">
         <div class="srow-top">
           <span class="srow-title">{s.title}</span>
@@ -38,6 +40,11 @@ const SessionRow = memo(function SessionRow({ s, active, project }: { s: Session
             <span class="srow-branch">
               <IBranch size={11} />
               {s.branch.replace(/^collie\//, '')}
+            </span>
+          )}
+          {!!s.tasks?.length && (
+            <span class="srow-bg" title={s.tasks.map((x) => x.title).join('\n')}>
+              {t('{n} in background', { n: s.tasks.length })}
             </span>
           )}
         </div>
@@ -135,7 +142,7 @@ function ProjectList() {
       if (s.archived) continue
       const c = m.get(s.projectId) || { n: 0, busy: 0 }
       c.n++
-      if (s.status === 'running' || s.status === 'waiting') c.busy++
+      if (busy(s) || s.status === 'waiting') c.busy++
       m.set(s.projectId, c)
     }
     return m
@@ -181,7 +188,7 @@ function HomeRow() {
   if (!h) return null
   const mine = sessions.value.filter((s) => s.projectId === h.id && !s.archived)
   const waiting = mine.some((s) => s.status === 'waiting')
-  const busy = mine.some((s) => s.status === 'running' || s.status === 'starting')
+  const working = mine.some(busy)
   const active = (r.name === 'project' && r.id === h.id) || (r.name === 'session' && sessionById.value.get(r.id || '')?.projectId === h.id)
   return (
     <a href={`#/p/${h.id}`} class={cls('prow home-row', active && 'active')}>
@@ -189,7 +196,7 @@ function HomeRow() {
       <div class="srow-main">
         <div class="srow-top">
           <span class="srow-title">{t('Home')}</span>
-          {waiting ? <StatusDot status="waiting" /> : busy ? <Spinner size={12} /> : null}
+          {waiting ? <StatusDot status="waiting" /> : working ? <Spinner size={12} /> : null}
         </div>
         <div class="srow-preview">{t('Talk about anything · coordinate your projects')}</div>
       </div>

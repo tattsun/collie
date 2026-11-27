@@ -512,6 +512,10 @@ func (s *sink) Exited(err error) {
 		}
 	}
 	r.mu.Unlock()
+	if len(sess.Tasks) > 0 {
+		// Its background tasks ended with it.
+		r.m.updateSession(r.id, func(s *model.Session) { s.Tasks = nil })
+	}
 	if duringStart {
 		return
 	}

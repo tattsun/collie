@@ -78,6 +78,21 @@ type Session struct {
 	// be driven by, every member of the group.
 	Owner  string `json:"owner,omitempty"`
 	Shared bool   `json:"shared,omitempty"`
+	// Tasks is the work the agent has running in the background (commands,
+	// sub-agents...), which goes on after its turn has ended. It lives only
+	// as long as the agent process.
+	Tasks []Task `json:"tasks,omitempty"`
+}
+
+// Task is one piece of background work. Drivers replace Session.Tasks as a
+// whole, never edit it in place: copies of a Session share the slice.
+type Task struct {
+	ID      string `json:"id"`
+	Kind    string `json:"kind,omitempty"` // the agent's task type: local_bash, local_agent...
+	Title   string `json:"title"`
+	Summary string `json:"summary,omitempty"` // latest progress, if the agent reports any
+	ToolID  string `json:"toolId,omitempty"`  // the tool call that started it (a timeline item)
+	Started int64  `json:"started"`
 }
 
 // Item kinds.

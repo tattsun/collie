@@ -550,7 +550,7 @@ export function Timeline({ session }: { session: Session }) {
         )}
         {loaded && top.length === 0 && !busy && <div class="empty-chat dim">{t('Send a message to start.')}</div>}
         {top.map((it) => (
-          <div key={it.id} class={'it it-' + it.kind}>
+          <div key={it.id} class={'it it-' + it.kind} data-item={it.id}>
             <ItemView item={it} kids={kids.get(it.id)} sid={session.id} cwd={session.cwd} />
           </div>
         ))}

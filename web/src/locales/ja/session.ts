@@ -15,6 +15,15 @@ const ja: Record<string, string> = {
   'Scripts are running — sandboxed, offline and without access to Collie.': 'スクリプト実行中（サンドボックス内・オフライン・Collie には触れられません）',
   'Scripts are off and nothing is loaded from the network.': 'スクリプトは無効、ネットワークからの読み込みもありません',
   'Show files': 'ファイルを表示',
+  // ---- Background tasks (Tasks.tsx)
+  'In background': 'バックグラウンド実行中',
+  '1 task running in the background': 'バックグラウンドで 1 件実行中',
+  '{n} tasks running in the background': 'バックグラウンドで {n} 件実行中',
+  Task: 'タスク',
+  'Show where it started': '開始した場所を表示',
+  'Stop task': 'タスクを停止',
+  'Stop “{title}”?': '「{title}」を停止しますか？',
+  '{n} in background': '裏で {n} 件実行中',
   // ---- SessionView
   'Session settings': 'セッションの設定',
   Title: 'タイトル',

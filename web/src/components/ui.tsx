@@ -135,15 +135,20 @@ const statusLabel: Record<string, string> = {
   error: 'Error',
 }
 
-export function StatusDot({ status, unread }: { status: Status; unread?: boolean }) {
-  return <span class={cls('dot', status, unread && 'unread')} title={statusLabel[status] ? t(statusLabel[status]) : status} />
+// bg: the turn is over but the agent still has work running in the
+// background (it reports back when that ends).
+const label = (status: Status, bg?: boolean) => (bg && status === 'idle' ? t('In background') : statusLabel[status] ? t(statusLabel[status]) : status)
+
+export function StatusDot({ status, unread, bg }: { status: Status; unread?: boolean; bg?: boolean }) {
+  return <span class={cls('dot', status, unread && 'unread', bg && status === 'idle' && 'bg')} title={label(status, bg)} />
 }
 
-export function StatusPill({ status }: { status: Status }) {
+export function StatusPill({ status, bg }: { status: Status; bg?: boolean }) {
+  const b = bg && status === 'idle'
   return (
-    <span class={cls('pill', status)}>
-      <span class={cls('dot', status)} />
-      {statusLabel[status] ? t(statusLabel[status]) : status}
+    <span class={cls('pill', status, b && 'bg')}>
+      <span class={cls('dot', status, b && 'bg')} />
+      {label(status, bg)}
     </span>
   )
 }

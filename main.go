@@ -133,7 +133,7 @@ func main() {
 	srv := server.New(mgr, terms, users, server.Options{Token: *token, NoAuth: *noAuth, Web: web.FS(),
 		ProxyUID: *proxyUID, PublicURL: *publicURL, Owner: owner})
 	if web.FS() == nil {
-		log.Printf("warning: web UI is not built (run `make`); only the API is available")
+		log.Printf("warning: web UI is not built (run `mise run build`); only the API is available")
 	}
 
 	ln, err := net.Listen("tcp", *addr)

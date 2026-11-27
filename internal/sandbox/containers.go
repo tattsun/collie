@@ -224,6 +224,15 @@ func (m *Manager) runArgs(sp Spec, extra []string) []string {
 		"--userns=keep-id",
 		"--passwd-entry", fmt.Sprintf("%s:*:$UID:$GID::%s:/bin/bash", currentUser(), Home),
 		"--cap-drop", "all",
+	}
+	if m.selinux {
+		// The container shares the project's files with the host by design,
+		// and SELinux would keep it from them (or relabel them for
+		// containers only). Its other walls stay: the user namespace, no
+		// capabilities, seccomp, the mounts.
+		args = append(args, "--security-opt", "label=disable")
+	}
+	args = append(args,
 		// No shortcuts to the host: neither its loopback nor the
 		// host.containers.internal alias is mapped into the container. (The
 		// host's other addresses are blocked by deploy/setup-host.sh's
@@ -232,16 +241,16 @@ func (m *Manager) runArgs(sp Spec, extra []string) []string {
 		// Our own minimal /etc/hosts: podman's would add host aliases and
 		// copy the server's entries.
 		"--no-hosts",
-		"-v", m.hostsPath(p.ID) + ":/etc/hosts:ro",
-		"-e", "HOME=" + Home,
-		"-e", "COLLIE_PROJECT=" + p.Name,
-		"-v", home + ":" + Home,
-		"-v", m.CodexDir(uid) + ":" + Home + "/.codex",
-		"-v", p.Path + ":" + p.Path,
-		"-v", m.WorktreeRoot(p.ID) + ":" + m.WorktreeRoot(p.ID),
-		"-v", eff + ":" + ProfileDir + ":ro",
+		"-v", m.hostsPath(p.ID)+":/etc/hosts:ro",
+		"-e", "HOME="+Home,
+		"-e", "COLLIE_PROJECT="+p.Name,
+		"-v", home+":"+Home,
+		"-v", m.CodexDir(uid)+":"+Home+"/.codex",
+		"-v", p.Path+":"+p.Path,
+		"-v", m.WorktreeRoot(p.ID)+":"+m.WorktreeRoot(p.ID),
+		"-v", eff+":"+ProfileDir+":ro",
 		"-w", p.Path,
-	}
+	)
 	args = append(args, m.nestedArgs(p, uid)...)
 	for _, d := range extra {
 		args = append(args, "-v", d+":"+d)

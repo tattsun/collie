@@ -3,10 +3,12 @@
 #
 #   sudo ./deploy/setup-host.sh [--user collie] [--port 7878] [--allow CIDR]... [--public]
 #
-# It
+# It works on systemd-based distributions with apt, dnf, zypper or pacman
+# (Debian, Ubuntu, Fedora, RHEL and its rebuilds, openSUSE, Arch …). It
 #   1. installs podman (rootless containers) and nftables,
 #   2. creates a dedicated user (default: collie) that will run Collie and all
-#      agents, with lingering so its services keep running,
+#      agents, with lingering so its services keep running, and makes sure
+#      its containers can get resource limits,
 #   3. installs a firewall rule: every process of that user — including the
 #      project containers — may reach the internet but NOT your LAN, your
 #      tailnet, link-local addresses, any of this server's own addresses, or
@@ -14,7 +16,7 @@
 #      (--allow adds exceptions, e.g. --allow 192.168.1.20/32 for a NAS.)
 #   4. with --public (for `mise run install --domain …`): lets unprivileged
 #      users bind ports 80 and up, so Collie can serve HTTPS itself, opens
-#      80/443 in ufw if it is active, and keeps agents off those ports too.
+#      80/443 in ufw or firewalld if active, and keeps agents off those ports.
 #
 # Then switch to that user and install Collie itself (see docs/setup.md).
 set -euo pipefail
@@ -29,30 +31,85 @@ while [[ $# -gt 0 ]]; do
     --port) port="$2"; shift 2 ;;
     --allow) allow+=("$2"); shift 2 ;;
     --public) public=1; shift ;;
-    -h|--help) sed -n '2,19p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,21p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
 
 [[ $EUID -eq 0 ]] || { echo "run with sudo" >&2; exit 1; }
-
-. /etc/os-release
-if [[ "${ID:-}" != ubuntu ]] || dpkg --compare-versions "${VERSION_ID:-0}" lt 26.04; then
-  echo "warning: tested on Ubuntu 26.04+, this is ${PRETTY_NAME:-unknown}" >&2
+[[ "$(uname -s)" == Linux ]] || { echo "this script prepares a Linux server (on a Mac, see docs/setup.md)" >&2; exit 1; }
+if [[ ! -d /run/systemd/system ]]; then
+  echo "Collie's setup needs systemd (the service, lingering and the firewall are systemd units)." >&2
+  exit 1
 fi
 
-echo "== packages"
-apt-get update -qq
-apt-get install -y podman passt uidmap nftables systemd-container git curl ca-certificates
+# shellcheck source=/dev/null
+. /etc/os-release
+echo "== packages (${PRETTY_NAME:-unknown system})"
+# newuidmap/newgidmap (rootless podman) and machinectl come in different
+# packages per distribution.
+common=(podman passt nftables git)
+command -v curl >/dev/null 2>&1 || common+=(curl)  # RHEL's curl-minimal conflicts with curl
+if command -v apt-get >/dev/null 2>&1; then
+  apt-get update -qq
+  DEBIAN_FRONTEND=noninteractive apt-get install -y "${common[@]}" uidmap systemd-container ca-certificates
+elif command -v dnf >/dev/null 2>&1; then
+  dnf install -y "${common[@]}" shadow-utils systemd-container ca-certificates
+elif command -v zypper >/dev/null 2>&1; then
+  zypper --non-interactive install "${common[@]}" shadow systemd-container ca-certificates
+elif command -v pacman >/dev/null 2>&1; then
+  # (machinectl is part of systemd here)
+  pacman -S --needed --noconfirm "${common[@]}" shadow ca-certificates || {
+    echo "pacman failed; if packages were not found, update first (pacman -Syu) and run this again" >&2
+    exit 1
+  }
+else
+  echo "warning: no apt-get, dnf, zypper or pacman; install these yourself:" >&2
+  echo "  podman (5+), passt, nftables, git, curl, newuidmap/newgidmap, machinectl" >&2
+fi
+for tool in podman nft newuidmap machinectl git; do
+  command -v "$tool" >/dev/null 2>&1 || { echo "missing: $tool" >&2; exit 1; }
+done
+podman_version="$(podman --version | awk '{print $NF}')"
+if (( ${podman_version%%.*} < 5 )); then
+  echo "warning: Collie needs Podman 5 or later, this is $podman_version — isolated projects will not start" >&2
+fi
 
 echo "== user '$user'"
+created=0
 if ! id "$user" >/dev/null 2>&1; then
   useradd --create-home --shell /bin/bash "$user"
+  created=1
 fi
 uid="$(id -u "$user")"
 grep -q "^$user:" /etc/subuid || usermod --add-subuids 200000-265535 "$user"
 grep -q "^$user:" /etc/subgid || usermod --add-subgids 200000-265535 "$user"
 loginctl enable-linger "$user"
+
+# Memory/CPU/process limits for rootless containers need those cgroup
+# controllers delegated to the user's systemd instance. Recent systemd does
+# that by default; older setups get a drop-in.
+systemctl start "user@$uid.service" || true
+controllers="/sys/fs/cgroup/user.slice/user-$uid.slice/user@$uid.service/cgroup.controllers"
+if [[ ! -f /sys/fs/cgroup/cgroup.controllers ]]; then
+  echo "warning: this host uses cgroup v1, where rootless containers get no resource limits" >&2
+elif [[ -r $controllers ]]; then
+  missing=""
+  for c in cpu memory pids; do
+    grep -qw "$c" "$controllers" || missing+=" $c"
+  done
+  if [[ -n $missing ]]; then
+    echo "delegating cgroup controllers to user services (missing:$missing)"
+    mkdir -p /etc/systemd/system/user@.service.d
+    printf '[Service]\nDelegate=cpu cpuset io memory pids\n' > /etc/systemd/system/user@.service.d/60-collie-delegate.conf
+    systemctl daemon-reload
+    if [[ $created == 1 ]]; then
+      systemctl restart "user@$uid.service"
+    else
+      echo "note: takes effect when $user's services restart (reboot, or: systemctl restart user@$uid.service — stops Collie)"
+    fi
+  fi
+fi
 if command -v tailscale >/dev/null 2>&1; then
   # lets the user run `tailscale serve` for Collie
   tailscale set --operator="$user" || true
@@ -69,6 +126,10 @@ if [[ $public == 1 ]]; then
   if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
     ufw allow 80/tcp
     ufw allow 443/tcp
+  fi
+  if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
+    firewall-cmd --permanent --add-service=http --add-service=https
+    firewall-cmd --reload
   fi
 fi
 
@@ -118,6 +179,7 @@ table inet collie {
 EOF
 nft -c -f /etc/collie/nftables.nft
 
+nft="$(command -v nft)"
 cat > /etc/systemd/system/collie-firewall.service <<EOF
 [Unit]
 Description=Collie egress firewall for user $user (no LAN / tailnet access)
@@ -127,8 +189,8 @@ Before=network-pre.target
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/usr/sbin/nft -f /etc/collie/nftables.nft
-ExecStop=/usr/sbin/nft delete table inet collie
+ExecStart=$nft -f /etc/collie/nftables.nft
+ExecStop=$nft delete table inet collie
 
 [Install]
 WantedBy=multi-user.target

@@ -4,7 +4,7 @@
 
 A self-hosted web UI for running many Claude Code and Codex sessions at once, from your phone or any other device: over the internet on your own domain, or privately over Tailscale.
 
-Put it on an Ubuntu server, then start agents, approve their actions and review their diffs from anywhere.
+Put it on a Linux server (or your Mac), then start agents, approve their actions and review their diffs from anywhere.
 
 <p align="center">
   <img src="docs/images/demo-dark.gif" width="320" alt="On a phone: start a task, watch the agent work, approve a command, look at the screenshots it shows and review the diff">

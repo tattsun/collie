@@ -76,8 +76,11 @@ body {
   overscroll-behavior: none;
   overflow: hidden;
 }
+/* The shell takes the height of html/body (the layout viewport) rather than
+   a viewport unit: WebKit has had several bugs where 100vh/100dvh in a Home
+   Screen app don't match the space the page actually gets. */
 #app {
-  height: 100dvh;
+  height: 100%;
 }
 a {
   color: var(--accent);
@@ -151,7 +154,7 @@ h2 {
 .app {
   display: grid;
   grid-template-columns: var(--sidebar) minmax(0, 1fr);
-  height: 100dvh;
+  height: 100%;
 }
 .sidebar {
   display: flex;
@@ -2292,7 +2295,7 @@ pre.out.error-box {
 
 /* ---------------------------------------------------------------- login, toasts */
 .login {
-  min-height: 100dvh;
+  min-height: 100%;
   display: grid;
   place-items: center;
   padding: 20px;

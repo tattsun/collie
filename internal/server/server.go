@@ -554,7 +554,7 @@ func (s *Server) setSessionCookie(w http.ResponseWriter, r *http.Request, secret
 		http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: true})
 	}
 	// The legacy token cookie is no longer needed.
-	http.SetCookie(w, &http.Cookie{Name: legacyCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true})
+	http.SetCookie(w, &http.Cookie{Name: legacyCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: secure})
 }
 
 // upgradeCookie moves a sign-in made before the __Host- cookie (or over
@@ -570,14 +570,18 @@ func (s *Server) upgradeCookie(w http.ResponseWriter, r *http.Request) {
 
 // clearSessionCookies expires every sign-in cookie (over HTTPS, the
 // __Host- one becomes the signed-out placeholder).
+//
+// The deleting cookies are Secure over HTTPS only: over plain HTTP a
+// browser ignores a Secure one (the cookie would stay).
 func (s *Server) clearSessionCookies(w http.ResponseWriter, r *http.Request) {
-	if s.secureCookies(r) {
+	secure := s.secureCookies(r)
+	if secure {
 		setSignedOut(w)
 	} else {
 		http.SetCookie(w, &http.Cookie{Name: hostSessionCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: true})
 	}
-	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true})
-	http.SetCookie(w, &http.Cookie{Name: legacyCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true})
+	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: secure})
+	http.SetCookie(w, &http.Cookie{Name: legacyCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: secure})
 }
 
 // signedOutValue is the __Host- cookie of a browser nobody is signed in

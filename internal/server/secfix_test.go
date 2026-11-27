@@ -98,6 +98,16 @@ func TestSessionCookieMovesToHostPrefix(t *testing.T) {
 	if w := s.do("GET", "/api/state", "", cookie(hostSessionCookie, victim)); w.Code != http.StatusUnauthorized {
 		t.Fatalf("after logout: %d", w.Code)
 	}
+	// The deleting cookies are Secure over HTTPS, and not over plain HTTP,
+	// where browsers would ignore them.
+	if !cs[sessionCookie].Secure || cs[legacyCookie] == nil || !cs[legacyCookie].Secure {
+		t.Errorf("deleting cookies over HTTPS: %v", w.Header()["Set-Cookie"])
+	}
+	w = s.do("POST", "/api/auth/logout", "", cookie(legacyCookie, "token"))
+	cs = setCookies(w)
+	if w.Code != 200 || cs[sessionCookie] == nil || cs[sessionCookie].Secure || cs[legacyCookie] == nil || cs[legacyCookie].Secure || cs[legacyCookie].MaxAge >= 0 {
+		t.Errorf("deleting cookies over plain HTTP: %d %v", w.Code, w.Header()["Set-Cookie"])
+	}
 }
 
 // Plugins run in everyone's (or every member's) containers, and who is in

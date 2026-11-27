@@ -2,7 +2,9 @@
 
 **English** | [日本語](setup.ja.md) · [← README](../README.md)
 
-This runs Collie as a long-running service on Ubuntu 26.04 or later, under a dedicated user and over HTTPS. Passkeys, notifications and installing the PWA all need HTTPS.
+This runs Collie as a long-running service on a Linux server, under a dedicated user and over HTTPS. Passkeys, notifications and installing the PWA all need HTTPS. To run it on a Mac instead, see [On a Mac](#on-a-mac).
+
+The server needs systemd and Podman 5 or later. `setup-host.sh` installs the packages with apt, dnf, zypper or pacman, so it covers Debian 13+, Ubuntu 26.04+, Fedora, RHEL 9/10 and its rebuilds (AlmaLinux, Rocky), openSUSE and Arch. Elsewhere it lists what to install yourself.
 
 First decide how people will reach it:
 
@@ -22,7 +24,7 @@ sudo ./deploy/setup-host.sh            # add --public for your own domain
 
 This installs Podman and creates a `collie` user that runs Collie and every agent, so agents can't touch your own `~/.ssh` or personal files. It also adds a firewall rule: that user's processes can reach the internet, but not your LAN, your tailnet or this server. To let agents reach something like a NAS, pass `--allow 192.168.1.20/32`. See `--help` for all options.
 
-With `--public`, Collie may listen on ports 80 and 443 even though it doesn't run as root. This lets every user on the machine listen on ports from 80 up, so use it on a server that is there for Collie. It also opens 80 and 443 in ufw if ufw is on. Open them in your cloud provider's firewall yourself.
+With `--public`, Collie may listen on ports 80 and 443 even though it doesn't run as root. This lets every user on the machine listen on ports from 80 up, so use it on a server that is there for Collie. It also opens 80 and 443 in ufw or firewalld if one is on. Open them in your cloud provider's firewall yourself.
 
 ## 2. Install Collie (as `collie`)
 
@@ -92,7 +94,7 @@ Collie checks GitHub for new releases. When one is out, admins see `vX → vY` a
 
 - The service restarts. Running agents stop and pick up again on the next message, and open browsers reload by themselves.
 - If the new version doesn't come up, Collie goes back to the previous version and its data, and the Updates screen says what happened. A version that failed is never retried automatically.
-- Updating itself only works for the systemd user service that `mise run install` sets up. A server running a build from before self-updating existed has to be updated by hand once, as below.
+- Updating itself only works on Linux, for the systemd user service that `mise run install` sets up. A server running a build from before self-updating existed has to be updated by hand once, as below.
 
 To update from the source instead:
 
@@ -133,3 +135,24 @@ codex login --device-auth
 Keep `allow_builds=true`. Without it, mise skips Claude Code's install script and `claude` fails with `native binary not installed`. If you already installed it without the option, add `allow_builds = true` to that line in `~/.config/mise/config.toml` and run `mise install -f npm:@anthropic-ai/claude-code`.
 
 The service keeps the `PATH` it had at install time, with mise shims first. If you change `PATH`, run `mise run install` again.
+
+## On a Mac
+
+On a Mac, Collie runs as a LaunchAgent of your own user, and the agents run directly on the Mac with your own `claude` / `codex` logins. There are no isolated containers there yet, and only admins can run agents outside a container, so a Mac is for you alone: people you invite can sign in but can't start anything.
+
+```bash
+xcode-select --install               # git, unless you have it already
+curl https://mise.run | sh           # then enable mise in ~/.zshrc
+git clone <this repo> && cd collie
+mise trust && mise install
+mise run install --serve             # or --domain / --proxy / --funnel, as above
+```
+
+Install and sign in to the CLIs as in [Host-run projects](#host-run-projects-optional), then become the first admin as in step 3.
+
+- Collie starts when you log in to the Mac and runs while you stay logged in. For a Mac that runs unattended, turn on automatic login, and keep it from sleeping (System Settings → Energy: prevent automatic sleeping).
+- Keep projects outside Desktop, Documents and Downloads. macOS blocks background processes from those folders unless you give them Full Disk Access.
+- With `--domain`, forward ports 80 and 443 from your router to the Mac. If the macOS firewall is on, allow incoming connections for `collie` when it asks.
+- Logs: `tail -f ~/Library/Logs/collie.log`. Restart: `launchctl kickstart -k gui/$(id -u)/io.github.tattsun.collie`.
+- Collie can't update itself on a Mac. Update from the source as above.
+- Read what this means for security in [Security](security.md#what-is-not-protected).

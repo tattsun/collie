@@ -135,3 +135,22 @@ func TestNestedSeccomp(t *testing.T) {
 		}
 	}
 }
+
+func TestSELinuxLabelsOff(t *testing.T) {
+	m := newTestManager(t)
+	sp := Spec{Project: model.Project{ID: "p1", Path: "/x/p"}, UserID: "u1"}
+	plain := m.runArgs(sp, nil)
+	if slices.Contains(plain, "label=disable") {
+		t.Fatalf("labels turned off without SELinux: %q", plain)
+	}
+	m.selinux = true
+	labeled := m.runArgs(sp, nil)
+	i := slices.Index(labeled, "label=disable")
+	if i < 1 || labeled[i-1] != "--security-opt" {
+		t.Fatalf("SELinux host: container keeps labels that hide the project's files: %q", labeled)
+	}
+	// everything else stays as it was
+	if !slices.Equal(slices.Delete(slices.Clone(labeled), i-1, i+1), plain) {
+		t.Errorf("SELinux changed other arguments:\n%q\n%q", plain, labeled)
+	}
+}

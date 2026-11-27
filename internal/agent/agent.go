@@ -146,7 +146,7 @@ func startProc(cfg Config, bin string, args []string, onLine func([]byte)) (*pro
 		cmd.Dir = ""
 	}
 	cmd.Env = append(os.Environ(), "NO_COLOR=1")
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pdeathsig: syscall.SIGTERM}
+	cmd.SysProcAttr = procAttr()
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err

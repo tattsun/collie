@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -68,6 +69,7 @@ type Manager struct {
 	built    chan struct{} // closed when the current build finishes
 	ready    bool
 	locks    map[string]*sync.Mutex
+	selinux  bool            // SELinux is on: containers run without its labels
 	imgID    string          // ID of the image tag, cached briefly
 	imgIDAt  time.Time       // when imgID was looked up
 	stale    map[string]bool // containers left running with an older configuration
@@ -82,7 +84,7 @@ func New(cfg Config) *Manager {
 	}
 	m := &Manager{cfg: cfg, locks: map[string]*sync.Mutex{}, stale: map[string]bool{}, buildLog: &tail{max: 6 << 10}}
 	_, err := exec.LookPath(cfg.Podman)
-	m.available = err == nil
+	m.available = err == nil && Supported()
 	m.tag = "localhost/collie-agent:" + imageHash()
 	m.global = []string{"--log-level=error"}
 	if !userBusAvailable() {
@@ -91,9 +93,23 @@ func New(cfg Config) *Manager {
 		m.global = append(m.global, "--cgroup-manager=cgroupfs")
 	}
 	if m.available {
+		m.selinux = selinuxEnabled()
 		m.ready = m.imageExists()
 	}
 	return m
+}
+
+// Supported reports whether this OS can run isolated projects. Podman on
+// macOS runs containers in a VM, which the containers' mounts and tools
+// socket don't work through yet.
+func Supported() bool { return runtime.GOOS == "linux" }
+
+// selinuxEnabled reports whether SELinux is on (Fedora, RHEL and the
+// like), in which case Podman labels containers so that they cannot read
+// host files they did not create, such as the project's.
+func selinuxEnabled() bool {
+	_, err := os.Stat("/sys/fs/selinux/enforce")
+	return err == nil
 }
 
 func (m *Manager) Available() bool { return m.available }

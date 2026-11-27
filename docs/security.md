@@ -47,11 +47,13 @@ This assumes the configuration from the [setup guide](setup.md): a dedicated `co
 - Members can't register arbitrary folders. Their clones are `https://` only and run inside their own container.
 - Project folders can't be nested inside each other, so no container can see another project.
 - Agents talk to Collie only through a tool socket given to their own container. A project's agent can address only its user's sessions in that same container.
+- With SELinux on (Fedora, RHEL and the like), the containers run without SELinux labels, because they share the project's files with the host. Their other walls stay: their own user namespace, no capabilities, seccomp, and only their own mounts.
 
 ## What is *not* protected
 
 - An agent in a container can read every file in its project and can reach the internet. Don't keep secrets in a project that you wouldn't want sent out.
 - A host-run agent has all the access of the `collie` user.
+- On a Mac there are no containers and no firewall. Agents run as you, with everything your account can reach: your files, your LAN, and Collie's own data.
 - In a project with **Allow containers inside**, the container keeps running as the `collie` user's own ids, with the same files and network. But its processes can switch between the container's own ids and reach more of the kernel (FUSE, tun devices, nested namespaces that mount their own `/proc` or set their own hostname), so a kernel bug is easier to reach from there. Turn it on only for projects whose agents you trust.
 
 ## Updates

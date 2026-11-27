@@ -230,6 +230,8 @@ const ja: Record<string, string> = {
   'Collie is not running as a systemd user service (install it with `mise run install`)':
     'Collie が systemd のユーザーサービスとして動いていません（`mise run install` で導入してください）',
   'systemd-run is not available': 'systemd-run が使えません',
+  'Collie updates itself on Linux only; update it from source (`git pull`, then `mise run install`)':
+    'Collie が自分で更新できるのは Linux だけです。ソースから更新してください（`git pull` のあと `mise run install`）',
   "release signature does not match this build's signing key": 'リリースの署名がこのビルドの署名鍵と一致しません',
   'malformed release signature': 'リリースの署名の形式が正しくありません',
   'an update is already in progress': '更新はすでに進行中です',

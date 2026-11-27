@@ -127,6 +127,10 @@ const ja: Record<string, string> = {
   'Attach image': '画像を添付',
   'Start session': 'セッションを開始',
   Project: 'プロジェクト',
+  'Allow containers inside (Podman)': 'コンテナの中でコンテナを動かせるようにする（Podman）',
+  'For developing container tooling such as Collie itself. The containers keep running as the server user’s ids, but get setuid helpers and more of the kernel (FUSE, tun devices, their own /proc). Only for projects you trust.':
+    'Collie 自体など、コンテナを扱うものの開発用です。コンテナは引き続きサーバユーザーの ID で動きますが、setuid のヘルパーが使えるようになり、カーネルの機能（FUSE、tun デバイス、独自の /proc）にも触れられるようになります。信頼できるプロジェクトだけに使ってください。',
+  'Podman works inside the containers.': 'コンテナの中で Podman を使えます。',
   '{name} (cloning…)': '{name}（clone 中…）',
   'Share with {name}': '{name} に共有',
   'Share with the group': 'グループに共有',

@@ -26,6 +26,9 @@ type Project struct {
 	Memory  string `json:"memory,omitempty"` // container limits; "" = server default
 	CPUs    string `json:"cpus,omitempty"`
 	Pids    int    `json:"pids,omitempty"`
+	// Nested lets the project's containers run Podman inside (see
+	// sandbox/nested.go); an admin decision, as it widens what agents reach.
+	Nested bool `json:"nested,omitempty"`
 	// Home marks a user's Home: a workspace outside any project where the
 	// Home agent chats with the user and coordinates their project agents.
 	Home bool `json:"home,omitempty"`

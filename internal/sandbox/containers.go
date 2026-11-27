@@ -223,7 +223,6 @@ func (m *Manager) runArgs(sp Spec, extra []string) []string {
 		// Run as the server user (files stay owned by it) with its own home.
 		"--userns=keep-id",
 		"--passwd-entry", fmt.Sprintf("%s:*:$UID:$GID::%s:/bin/bash", currentUser(), Home),
-		"--security-opt", "no-new-privileges",
 		"--cap-drop", "all",
 		// No shortcuts to the host: neither its loopback nor the
 		// host.containers.internal alias is mapped into the container. (The
@@ -243,6 +242,7 @@ func (m *Manager) runArgs(sp Spec, extra []string) []string {
 		"-v", eff + ":" + ProfileDir + ":ro",
 		"-w", p.Path,
 	}
+	args = append(args, m.nestedArgs(p, uid)...)
 	for _, d := range extra {
 		args = append(args, "-v", d+":"+d)
 	}
@@ -350,6 +350,11 @@ func (m *Manager) prepare(sp Spec) error {
 			return err
 		}
 	}
+	if p.Nested {
+		if err := m.prepareNested(p, uid); err != nil {
+			return err
+		}
+	}
 	if err := m.BuildEffective(uid); err != nil {
 		return fmt.Errorf("build profile: %w", err)
 	}
@@ -384,6 +389,9 @@ func (m *Manager) prepare(sp Spec) error {
 	homeDirs := []string{".claude", ".claude/skills", ".claude/agents", ".claude/commands", ".codex"}
 	if p.OwnerGroup != "" {
 		homeDirs = append(homeDirs, ".claude/projects/"+claudeKey(p.Path)+"/memory")
+	}
+	if p.Nested {
+		homeDirs = append(homeDirs, strings.TrimPrefix(nestedStorageMount, Home+"/"))
 	}
 	if err := mk(home, homeDirs, []string{".claude/CLAUDE.md", ".gitconfig"}); err != nil {
 		return err
@@ -577,6 +585,7 @@ func (m *Manager) Remove(projectID string) {
 	_ = os.RemoveAll(m.MemoryDir(projectID))
 	_ = os.Remove(projectEnvPath(m.cfg.DataDir, projectID))
 	_ = os.Remove(m.hostsPath(projectID))
+	m.removeNested(filepath.Join(m.nestedDir(), projectID))
 }
 
 // RemoveUser deletes a user's containers and data (not project files).
@@ -595,6 +604,12 @@ func (m *Manager) RemoveUser(userID string) {
 	for _, h := range homes {
 		if h.IsDir() {
 			_ = os.RemoveAll(filepath.Join(m.cfg.DataDir, "homes", h.Name(), userID))
+		}
+	}
+	nested, _ := os.ReadDir(m.nestedDir())
+	for _, n := range nested {
+		if n.IsDir() {
+			m.removeNested(m.NestedStorage(n.Name(), userID))
 		}
 	}
 }

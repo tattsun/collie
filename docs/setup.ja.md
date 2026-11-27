@@ -102,7 +102,7 @@ mise install
 mise run install --domain collie.example.com    # 初回と同じオプションで
 ```
 
-イメージの中の Claude Code / Codex だけを更新したいときは、Admin → Containers → **Agent image** → **Rebuild** か、`collie --build-image` を実行します。各プロジェクトのコンテナは、中で何も使われていないときに次に再起動したタイミングで、新しいイメージに切り替わります。
+イメージの中の Claude Code / Codex だけを更新したいときは、Admin → Containers → **Agent image** → **Rebuild** か、`collie --build-image` を実行します。各プロジェクトのコンテナは、中で何も使われていないときに次に再起動したタイミングで、新しいイメージに切り替わります。新しいイメージでの最初の起動には数分かかることがあり（Podman がコンテナのユーザー ID 用にイメージのファイルをコピーするため）、その間セッションにお知らせが表示されます。
 
 ## パスキーをなくしたら
 

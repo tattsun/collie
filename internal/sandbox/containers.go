@@ -122,7 +122,18 @@ type Spec struct {
 	// agent's MCP stdio to that socket (at CollieBinPath).
 	CollieRun string
 	CollieBin string
+	// OnSlowStart, if set, is called when creating the container takes a
+	// while (see containerCreateTimeout).
+	OnSlowStart func()
 }
+
+// Creating a container can take minutes: the first one on a new image gets
+// a copy of the image's files owned by the container's ids, unless the
+// kernel can map them on the fly (not when Podman itself runs in a
+// container, nor on some filesystems). The other podman calls are quick.
+const containerCreateTimeout = 20 * time.Minute
+
+var slowStartAfter = 15 * time.Second // a variable for tests
 
 // Where a container sees Collie's socket directory and binary.
 const (
@@ -167,7 +178,13 @@ func (m *Manager) Ensure(sp Spec, recreate bool) error {
 		}
 	}
 	full := append([]string{"run", "-d", "--label", "collie.config=" + want}, args...)
-	if _, err := m.podman(ctx, full...); err != nil {
+	runCtx, cancelRun := context.WithTimeout(context.Background(), containerCreateTimeout)
+	defer cancelRun()
+	if sp.OnSlowStart != nil {
+		slow := time.AfterFunc(slowStartAfter, sp.OnSlowStart)
+		defer slow.Stop()
+	}
+	if _, err := m.podman(runCtx, full...); err != nil {
 		return err
 	}
 	if st.exists {

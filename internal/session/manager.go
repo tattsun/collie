@@ -110,9 +110,21 @@ func (m *Manager) stopStaleContainers() {
 // ensureContainer makes sure the user's container for the project (and
 // the image) is up. The container is only re-created for configuration
 // changes when nothing in it is in use.
-func (m *Manager) ensureContainer(p model.Project, uid string, onBuild func()) error {
+// Notices for a session whose agent waits for its container.
+const (
+	noticeBuildingImage = "Building the agent container image (first time only — this takes a few minutes)…"
+	noticeSlowStart     = "Starting the container. The first start after an image update can take a few minutes…"
+)
+
+// ensureContainer starts the user's container for the project; notify, if
+// set, is told when that takes long (an image build, a slow first start).
+func (m *Manager) ensureContainer(p model.Project, uid string, notify func(string)) error {
 	if m.sb == nil || !m.sb.Available() {
 		return errors.New("this project runs isolated, but podman is not installed on the server")
+	}
+	var onBuild func()
+	if notify != nil {
+		onBuild = func() { notify(noticeBuildingImage) }
 	}
 	if err := m.sb.WaitImage(45*time.Minute, onBuild); err != nil {
 		return err
@@ -124,6 +136,9 @@ func (m *Manager) ensureContainer(p model.Project, uid string, onBuild func()) e
 		}
 	}
 	sp := sandbox.Spec{Project: p, UserID: uid, SessionDirs: dirs, MigrateHostState: uid == m.hostOwner && m.hostOwner != ""}
+	if notify != nil {
+		sp.OnSlowStart = func() { notify(noticeSlowStart) }
+	}
 	if p.Home {
 		if err := m.homeSpec(&sp, uid); err != nil {
 			return fmt.Errorf("prepare Home: %w", err)

@@ -220,9 +220,8 @@ func (r *Runtime) startDriver(flip bool) (agent.Driver, error) {
 	}
 	if isolated {
 		r.m.setStatus(r.id, model.StatusStarting)
-		if err := r.m.ensureContainer(proj, sess.Owner, func() {
-			r.sinkPut(&model.Item{ID: model.NewID(), Kind: model.KindNotice, Done: true,
-				Text: "Building the agent container image (first time only — this takes a few minutes)…"})
+		if err := r.m.ensureContainer(proj, sess.Owner, func(msg string) {
+			r.sinkPut(&model.Item{ID: model.NewID(), Kind: model.KindNotice, Done: true, Text: msg})
 		}); err != nil {
 			return nil, setupError{err}
 		}

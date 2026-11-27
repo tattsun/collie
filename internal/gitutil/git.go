@@ -77,11 +77,51 @@ func CurrentBranch(dir string) string {
 	return strings.TrimSpace(out)
 }
 
-// AddWorktree creates a new branch at HEAD checked out in path.
-func AddWorktree(repo, path, branch string) error {
+// FreshBase returns the commit a new worktree should start from. It fetches
+// the current branch's upstream (best effort: offline, no remote or no
+// credentials just fall back) and returns the upstream tip when local HEAD is
+// strictly behind it, so agents don't start from a stale local branch. Local
+// commits not on the upstream are kept (HEAD wins), and neither the local
+// branch nor its checkout is ever modified.
+func FreshBase(repo string) string {
+	head := HeadCommit(repo)
+	c, cancel := ctx(20 * time.Second)
+	defer cancel()
+	up, err := run(c, repo, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}")
+	if err != nil {
+		return head
+	}
+	up = strings.TrimSpace(up)
+	remote, _, ok := strings.Cut(up, "/")
+	if !ok || remote == "" {
+		return head
+	}
+	// A failed fetch still leaves whatever upstream we already know about.
+	_, _ = run(c, repo, "fetch", "-q", remote)
+	tip, err := run(c, repo, "rev-parse", "--verify", "-q", up+"^{commit}")
+	if err != nil {
+		return head
+	}
+	tip = strings.TrimSpace(tip)
+	if tip == head {
+		return head
+	}
+	// Upstream strictly ahead of HEAD: head is an ancestor of tip.
+	if _, err := run(c, repo, "merge-base", "--is-ancestor", head, tip); err == nil {
+		return tip
+	}
+	return head
+}
+
+// AddWorktree creates a new branch at base (a commit; "" means HEAD) checked
+// out in path.
+func AddWorktree(repo, path, branch, base string) error {
+	if base == "" {
+		base = "HEAD"
+	}
 	c, cancel := ctx(2 * time.Minute)
 	defer cancel()
-	_, err := run(c, repo, "worktree", "add", "-q", "-b", branch, path, "HEAD")
+	_, err := run(c, repo, "worktree", "add", "-q", "--no-track", "-b", branch, path, base)
 	return err
 }
 

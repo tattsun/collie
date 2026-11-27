@@ -27,7 +27,7 @@ func TestWorktreeDiffAgainstBase(t *testing.T) {
 	base := HeadCommit(repo)
 
 	wt := filepath.Join(t.TempDir(), "wt")
-	if err := AddWorktree(repo, wt, "collie/test"); err != nil {
+	if err := AddWorktree(repo, wt, "collie/test", ""); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.HasSuffix(CommonDir(wt), ".git") {
@@ -56,5 +56,40 @@ func TestWorktreeDiffAgainstBase(t *testing.T) {
 	}
 	if err := RemoveWorktree(repo, wt); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func commitFile(t *testing.T, dir, name string) {
+	t.Helper()
+	os.WriteFile(filepath.Join(dir, name), []byte(name), 0o644)
+	git(t, dir, "add", ".")
+	git(t, dir, "commit", "-qm", name)
+}
+
+func TestFreshBase(t *testing.T) {
+	origin := t.TempDir()
+	git(t, origin, "init", "-q", "-b", "main")
+	commitFile(t, origin, "a")
+	local := filepath.Join(t.TempDir(), "local")
+	git(t, filepath.Dir(local), "clone", "-q", origin, local)
+	old := HeadCommit(local)
+
+	// no upstream movement: HEAD
+	if got := FreshBase(local); got != old {
+		t.Fatalf("unchanged: got %s want %s", got, old)
+	}
+	// upstream moves ahead: use its tip, leave local branch alone
+	commitFile(t, origin, "b")
+	tip := HeadCommit(origin)
+	if got := FreshBase(local); got != tip {
+		t.Fatalf("behind: got %s want %s", got, tip)
+	}
+	if HeadCommit(local) != old {
+		t.Fatal("local branch was modified")
+	}
+	// local has its own commit and upstream moved: diverged, keep HEAD
+	commitFile(t, local, "c")
+	if got, want := FreshBase(local), HeadCommit(local); got != want {
+		t.Fatalf("diverged: got %s want %s", got, want)
 	}
 }

@@ -86,10 +86,20 @@ jobs:
             echo "$image is already published"
             exit 0
           fi
-          docker build --pull -f "$BASE_FILE" -t "$image-$ARCH" \
-            --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
-            "$(dirname "$BASE_FILE")"
-          docker push "$image-$ARCH"
+          # BuildKit pushes the layers itself: `docker push` got "unknown
+          # blob" from GHCR for the layer that came from docker.io.
+          docker buildx create --use --driver docker-container >/dev/null
+          for try in 1 2 3; do
+            if docker buildx build --pull --push --provenance=false --sbom=false \
+              --platform "linux/$ARCH" -f "$BASE_FILE" -t "$image-$ARCH" \
+              --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+              "$(dirname "$BASE_FILE")"; then
+              exit 0
+            fi
+            echo "build or push failed (attempt $try)"
+            sleep $((try * 15))
+          done
+          exit 1
 
   # Joins the architectures under one tag and hands its digest to the build.
   base-index:

@@ -1,3 +1,4 @@
 # Ed25519 public keys (base64, one per line) that release signatures are
 # checked against. Create the key pair with `mise run release-key`; to
 # rotate, add the new key here and publish one release signed with the old.
+BffezIG/Lbclge/puiXmsnfMYoMCCWGkfN5xwFvwAoY=

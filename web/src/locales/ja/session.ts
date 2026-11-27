@@ -92,8 +92,10 @@ const ja: Record<string, string> = {
     'まだ何も待ち受けていません。エージェントに開発サーバー（npm run dev など）を起動してもらうと、ここに表示されます。',
   'Port, e.g. 5173': 'ポート番号（例: 5173）',
   'Port number': 'ポート番号',
-  'Opens in a new tab, on an address of its own: the page can’t see your Collie sign-in. Only you can open it. A browser shows one preview at a time; opening another replaces it.':
-    '新しいタブで、Collie とは別のアドレスに開きます。ページから Collie のサインイン情報は見えません。開けるのはあなただけです。1 つのブラウザで開けるプレビューは 1 つだけで、別のものを開くと置き換わります。',
+  'Opens in a new tab, on an address of its own: the page can’t see your Collie sign-in. Only you can open it.':
+    '新しいタブで、Collie とは別のアドレスに開きます。ページから Collie のサインイン情報は見えません。開けるのはあなただけです。',
+  'Previews share that address in your browser: opening another one replaces this one.':
+    'このブラウザではプレビュー同士がそのアドレスを共有するので、別のものを開くとこちらは置き換わります。',
   'previews are not set up on this server': 'このサーバーではプレビューが設定されていません',
   'too many preview links at once; try again in a minute': 'プレビューのリンクを一度に作りすぎました。1 分ほど待ってからもう一度試してください',
   'choose a port between 1 and 65535': '1〜65535 のポート番号を指定してください',

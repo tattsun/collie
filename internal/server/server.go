@@ -153,7 +153,10 @@ func (s *Server) identify(r *http.Request) (u auth.User, sess auth.Session, lega
 		u, ok = s.users.User(s.opt.Owner)
 		return u, auth.Session{}, true, ok
 	}
-	if c, err := r.Cookie(sessionCookie); err == nil {
+	// Every cookie of the name counts: a page on another port of this host
+	// name (a preview) can set one for a narrower path, which the browser
+	// sends first.
+	for _, c := range r.CookiesNamed(sessionCookie) {
 		if u, sess, ok := s.users.SessionUser(c.Value, clientIP(r)); ok {
 			return u, sess, false, true
 		}
@@ -162,9 +165,10 @@ func (s *Server) identify(r *http.Request) (u auth.User, sess auth.Session, lega
 		return auth.User{}, auth.Session{}, false, false
 	}
 	legacyOK := false
-	if c, err := r.Cookie(legacyCookie); err == nil && s.tokenOK(c.Value) {
-		legacyOK = true
-	} else if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") && s.tokenOK(strings.TrimPrefix(h, "Bearer ")) {
+	for _, c := range r.CookiesNamed(legacyCookie) {
+		legacyOK = legacyOK || s.tokenOK(c.Value)
+	}
+	if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") && s.tokenOK(strings.TrimPrefix(h, "Bearer ")) {
 		legacyOK = true
 	}
 	if !legacyOK {

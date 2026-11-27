@@ -92,28 +92,29 @@ The first time, `--funnel` prints a link to allow Funnel on your tailnet. To tak
 
 In a session, the **Ports** tab lists the servers its agent has started, such as `npm run dev`, in the project's container (or on the server, for a host-run project). Tapping one opens it in a new tab through Collie, hot reload included.
 
-Previews are served on an origin of their own, so a page an agent wrote can't read or use your Collie sign-in. By default that origin is another port of Collie's address:
+Previews are served on an origin of their own, so a page an agent wrote can't read or use your Collie sign-in. By default that is another port of Collie's address, shared by all previews:
 
 | | Previews open at | What to set up |
 |---|---|---|
 | **Your own domain** | `https://collie.example.com:8443` | Open port 8443 too. `setup-host.sh --public` opens it in ufw or firewalld; open it in your cloud provider's firewall yourself |
-| **Your reverse proxy** | The address you give | Serve `http://127.0.0.1:7879`, WebSockets included, on a host name or port of its own, and add `--preview-url https://preview.example.com` to `mise run install --proxy …` |
+| **Your reverse proxy** | Another port of its address | Serve `http://127.0.0.1:7879` there, WebSockets included, and add `--preview-url :8443` (that port) to `mise run install --proxy …` |
 | **Tailscale** | `https://<machine>.<tailnet>.ts.net:8443` | Nothing: `--serve` and `--funnel` set it up (Funnel allows port 8443) |
 | Trying it out | `http://<server>:7879` | Nothing |
 
-A port is the default because it works the same on your own domain, over Tailscale and on a LAN, with the certificate Collie already has and nothing to add to DNS. Tailscale's certificates cover only the machine's own name, so there a port is the only option.
+A port is the default because it works the same on your own domain, over Tailscale and on a LAN, with the certificate Collie already has and nothing to add to DNS. Tailscale's certificates cover only the machine's own name, so there a port is the only option. But all previews then share one origin in your browser, and a port doesn't separate cookies:
 
-A host name of its own keeps previews further from Collie, and is the better choice on your own domain if you can add a DNS record. Browsers keep cookies per host name, not per port. On a port, the browser also sends Collie's sign-in cookie to the preview (Collie drops it before anything reaches the agent's server), and a page there can overwrite Collie's cookies, which signs you out. With `--domain`, point another name at the server and add `--preview-url https://preview.collie.example.com`: Collie gets a certificate for it too and serves it on port 443. A name under another domain, such as `collie-preview.example.net`, also keeps previews from setting cookies for Collie's domain.
+- A browser has one preview open at a time. Opening another replaces it, and what the last project's pages stored in the browser is cleared. A page from one project that you still have open, though, can read the preview of the next project you open.
+- The browser sends the preview every cookie it has for Collie's host name, including those of other web apps on other ports of that name. Collie removes only its own.
+- A page there can overwrite or pile up cookies for Collie's host name. That can sign you out of Collie, or keep Collie from loading in that browser until you clear its site data.
 
-Behind Caddy, for example:
+**Names per project** avoid all of this, and are the better choice on your own domain: every project's container gets a host name, and so an origin, of its own. Point a wildcard DNS record (`*.preview.example.com`) at the server and add `--preview-url 'https://*.preview.example.com'`:
 
-```
-preview.example.com {
-	reverse_proxy 127.0.0.1:7879
-}
-```
+- With `--domain`, Collie serves them on port 443 and gets a certificate for each project's name the first time it is opened, which takes a few seconds. Let's Encrypt issues up to 50 new names a week per domain.
+- Behind your reverse proxy, it needs a wildcard certificate (Caddy gets one with a DNS provider plugin) and forwards those names to `http://127.0.0.1:7879`.
+- Take the names from a domain other than Collie's (here, previews under `example.com` can still set cookies for Collie at `collie.example.com`). `collie-preview.net` or the like keeps their cookies away from Collie entirely.
 
-- A browser has one preview open at a time. Opening another replaces it.
+Notes:
+
 - Servers listening on `localhost` or on every address are found. A project's container stops after 30 minutes without agents, terminals or previews in use, and its servers stop with it.
 - The servers see requests for `localhost:<port>`, so the host checks of dev servers such as Vite and webpack pass as they are.
 - Service workers don't run in previews.

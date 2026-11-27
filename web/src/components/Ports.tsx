@@ -6,7 +6,7 @@ import { t, ts } from '../i18n'
 import { IExternal, IGlobe, Spinner } from './icons'
 
 type Port = { port: number; addr: string; process?: string }
-type Ports = { enabled: boolean; running: boolean; ports: Port[]; error?: string }
+type Ports = { enabled: boolean; shared: boolean; running: boolean; ports: Port[]; error?: string }
 
 /** The servers listening in the session's container (or on the server, for
  * a host-run session), each opened in a new tab on Collie's preview origin. */
@@ -134,7 +134,8 @@ export function PortsView({ s }: { s: Session }) {
         </button>
       </form>
       <p class="hint ports-hint">
-        {t('Opens in a new tab, on an address of its own: the page can’t see your Collie sign-in. Only you can open it. A browser shows one preview at a time; opening another replaces it.')}
+        {t('Opens in a new tab, on an address of its own: the page can’t see your Collie sign-in. Only you can open it.')}
+        {data.shared && ' ' + t('Previews share that address in your browser: opening another one replaces this one.')}
       </p>
     </div>
   )

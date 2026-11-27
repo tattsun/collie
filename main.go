@@ -99,7 +99,7 @@ func main() {
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	publicURL := flag.String("public-url", os.Getenv("COLLIE_PUBLIC_URL"), "URL users open (passkeys are bound to it; default: the host of the first registration)")
 	previewAddr := flag.String("preview-addr", os.Getenv("COLLIE_PREVIEW_ADDR"), "listen address for previews of the agents' servers (default: the port after --addr's, or :8443 with --domain; \"off\" turns previews off)")
-	previewURL := flag.String("preview-url", os.Getenv("COLLIE_PREVIEW_URL"), "where users open previews, on another origin than Collie's: a URL such as https://preview.example.com, or :PORT for Collie's own host name on that port (needed behind a reverse proxy or tailscale serve)")
+	previewURL := flag.String("preview-url", os.Getenv("COLLIE_PREVIEW_URL"), "where users open previews, on another origin than Collie's: :PORT for another port of Collie's own host name (needed behind a reverse proxy or tailscale serve), or a wildcard such as https://*.preview.example.com for a host name of its own per project container")
 	flag.Usage = usage
 	flag.Parse()
 	if *showVersion {
@@ -121,7 +121,7 @@ func main() {
 			log.Fatalf("--no-auth is only for development on this machine: use --addr 127.0.0.1:PORT (and no --domain)")
 		}
 	}
-	pv, err := previewSetup(*addr, *domain, *previewAddr, *previewURL, *noAuth)
+	pv, err := previewSetup(*addr, *domain, *publicURL, *previewAddr, *previewURL, *noAuth)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -239,9 +239,9 @@ func main() {
 	}
 
 	var handler http.Handler = srv.Handler()
-	if pv.host != "" {
-		// The preview origin's own name, on Collie's HTTPS port.
-		handler = byHost{host: pv.host, match: srv.PreviewHandler(), other: handler}
+	if pv.wild != "" {
+		// The containers' own preview names, on Collie's HTTPS port.
+		handler = byHost{suffix: pv.wild, match: srv.PreviewHandler(), other: handler}
 	}
 	hs := &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout: 2 * time.Minute, MaxHeaderBytes: 64 << 10}
@@ -253,9 +253,15 @@ func main() {
 	var certs *autocert.Manager
 	if *domain != "" {
 		certs = &autocert.Manager{
-			Prompt:     autocert.AcceptTOS,
-			HostPolicy: autocert.HostWhitelist(append([]string{*domain}, pv.certHosts...)...),
-			Cache:      autocert.DirCache(filepath.Join(*dataDir, "acme")),
+			Prompt: autocert.AcceptTOS,
+			HostPolicy: func(_ context.Context, host string) error {
+				// Collie's name, and the preview names of containers in use.
+				if strings.EqualFold(host, *domain) || srv.PreviewHost(host) {
+					return nil
+				}
+				return fmt.Errorf("acme/autocert: host %q not configured", host)
+			},
+			Cache: autocert.DirCache(filepath.Join(*dataDir, "acme")),
 		}
 		for _, s := range []*http.Server{hs, phs} {
 			if s == nil {
@@ -297,7 +303,7 @@ func main() {
 		log.Printf("previews of the agents' servers: %s (served on %s)", pv.url, pln.Addr())
 	case pln != nil:
 		log.Printf("previews of the agents' servers: port %d of the address Collie is opened at", previewPort)
-	case pv.host != "":
+	case pv.wild != "":
 		log.Printf("previews of the agents' servers: %s", pv.url)
 	}
 
@@ -371,24 +377,28 @@ func loopbackAddr(addr string) bool {
 
 // previewConf is where previews of the agents' servers are served.
 type previewConf struct {
-	addr      string   // their own listener ("": none)
-	url       string   // for server.Options.PreviewURL
-	host      string   // their own name on Collie's main (HTTPS) listener
-	certHosts []string // more names for Let's Encrypt (--domain)
+	addr string // their own listener ("": none)
+	url  string // for server.Options.PreviewURL
+	// wild is the host name suffix of per-container preview names served
+	// on Collie's main (HTTPS) listener (--domain), e.g. ".preview.example.com".
+	wild string
 }
 
-// previewSetup works out the preview origin from the flags. Previews get
+// previewSetup works out the preview origins from the flags. Previews get
 // their own port next to Collie's by default (with --domain: 8443), which
 // works the same on a LAN, over Tailscale and on a domain, with the same
-// certificate. A host name of their own (--preview-url) separates them
-// from Collie further: then the browser doesn't even send Collie's cookie
-// to them.
-func previewSetup(addr, domain, pAddr, pURL string, noAuth bool) (previewConf, error) {
+// certificate; all previews share that origin. A wildcard --preview-url
+// (https://*.preview.example.com) gives every container a host name, and
+// so an origin, of its own. One other host name for all previews is
+// refused: the browser wouldn't send Collie's cookie there, which is how a
+// shared origin checks that a link is opened by the browser it was made
+// for (see package preview).
+func previewSetup(addr, domain, publicURL, pAddr, pURL string, noAuth bool) (previewConf, error) {
 	if pAddr == "off" || pURL == "off" {
 		return previewConf{url: "off"}, nil
 	}
 	c := previewConf{addr: pAddr, url: pURL}
-	bad := fmt.Errorf("--preview-url %q: give a URL such as https://preview.example.com, or :PORT", pURL)
+	bad := fmt.Errorf("--preview-url %q: give :PORT (another port of Collie's own name), a URL on Collie's own name, or a wildcard such as https://*.preview.example.com", pURL)
 	switch {
 	case strings.HasPrefix(pURL, ":"):
 		if n, err := strconv.Atoi(pURL[1:]); err != nil || n <= 0 || n > 65535 {
@@ -400,15 +410,26 @@ func previewSetup(addr, domain, pAddr, pURL string, noAuth bool) (previewConf, e
 			return c, bad
 		}
 		c.url = u.Scheme + "://" + strings.ToLower(u.Host)
-		if domain != "" && u.Scheme == "https" && !strings.EqualFold(u.Hostname(), domain) {
-			c.certHosts = []string{strings.ToLower(u.Hostname())}
-			if p := u.Port(); p == "" || p == "443" {
-				// On Collie's own HTTPS port, by name: no listener of its own
-				// unless asked for one.
-				c.host = strings.ToLower(u.Hostname())
+		name := strings.ToLower(u.Hostname())
+		if suffix, ok := strings.CutPrefix(name, "*"); ok {
+			if !strings.HasPrefix(suffix, ".") || strings.Contains(suffix[1:], "*") || strings.Count(suffix, ".") < 2 {
+				return c, bad
+			}
+			if domain != "" && u.Scheme == "https" && (u.Port() == "" || u.Port() == "443") {
+				// On Collie's own HTTPS port, by name: no listener of their
+				// own unless asked for one.
+				c.wild = suffix
 				if pAddr == "" {
 					return c, nil
 				}
+			}
+		} else {
+			own := domain
+			if pu, err := url.Parse(publicURL); own == "" && err == nil {
+				own = pu.Hostname()
+			}
+			if !strings.EqualFold(name, own) {
+				return c, bad
 			}
 		}
 	}
@@ -441,9 +462,10 @@ func nextPort(addr string) string {
 	return net.JoinHostPort(host, strconv.Itoa(n+1))
 }
 
-// byHost sends requests for one host name to their own handler.
+// byHost sends requests for host names ending in suffix to their own
+// handler.
 type byHost struct {
-	host         string
+	suffix       string
 	match, other http.Handler
 }
 
@@ -452,7 +474,7 @@ func (b byHost) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if hn, _, err := net.SplitHostPort(h); err == nil {
 		h = hn
 	}
-	if strings.EqualFold(h, b.host) {
+	if strings.HasSuffix(strings.ToLower(h), b.suffix) {
 		b.match.ServeHTTP(w, r)
 		return
 	}

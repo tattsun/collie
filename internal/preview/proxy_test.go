@@ -1,0 +1,241 @@
+package preview
+
+import (
+	"bufio"
+	"context"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+)
+
+// testProxy is a Proxy on one shared origin in front of servers on this
+// machine; gone makes every grant stop holding.
+func testProxy(t *testing.T) (*Proxy, *atomic.Bool) {
+	t.Helper()
+	var gone atomic.Bool
+	up := HostUpstream(Filter{UID: -1})
+	p := &Proxy{
+		Resolve: func(g Grant) (Target, error) {
+			if gone.Load() {
+				return Target{}, ErrGone
+			}
+			return Target{Key: g.Target, Upstream: up}, nil
+		},
+		Origin: func(*http.Request) (string, string, bool) { return "https://p.test", "", true },
+	}
+	return p, &gone
+}
+
+func listen(t *testing.T, h http.Handler) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &http.Server{Handler: h}
+	go srv.Serve(ln)
+	t.Cleanup(func() { srv.Close() })
+	return ln.Addr().(*net.TCPAddr).Port
+}
+
+// openIn opens a grant in a browser holding cookie (if any), returning the
+// response and the new cookie.
+func openIn(t *testing.T, p *Proxy, g Grant, cookie string) (*httptest.ResponseRecorder, string) {
+	t.Helper()
+	r := httptest.NewRequest("GET", OpenPath+"?t="+p.Mint(g), nil)
+	r.Header.Set("Sec-Fetch-Mode", "navigate")
+	if cookie != "" {
+		r.AddCookie(&http.Cookie{Name: CookieName, Value: cookie})
+	}
+	w := httptest.NewRecorder()
+	p.ServeHTTP(w, r)
+	for _, c := range w.Result().Cookies() {
+		if c.Name == CookieName {
+			return w, c.Value
+		}
+	}
+	t.Fatalf("open: %d %s", w.Code, w.Body.String())
+	return nil, ""
+}
+
+// On the shared origin, switching to another target clears what the last
+// one left in the browser; reopening the same one doesn't.
+func TestOpenClearsWhatAnotherTargetLeft(t *testing.T) {
+	p, _ := testProxy(t)
+	a := Grant{UserID: "u", SessionID: "s1", Port: 1, Target: "c:p1/u"}
+	w, c := openIn(t, p, a, "")
+	if w.Header().Get("Clear-Site-Data") == "" || !strings.Contains(w.Body.String(), `url=/`) {
+		t.Errorf("first open: %d %v", w.Code, w.Header())
+	}
+	a2 := a
+	a2.SessionID, a2.Port = "s2", 2 // another session in the same container
+	w, c = openIn(t, p, a2, c)
+	if w.Code != http.StatusSeeOther || w.Header().Get("Clear-Site-Data") != "" {
+		t.Errorf("same container: %d %v", w.Code, w.Header())
+	}
+	b := Grant{UserID: "u", SessionID: "s3", Port: 1, Target: "c:p2/u"}
+	w, _ = openIn(t, p, b, c)
+	if w.Header().Get("Clear-Site-Data") != `"cache", "storage"` {
+		t.Errorf("another container: %d %v", w.Code, w.Header())
+	}
+}
+
+// The server's informational responses never reach the browser: they
+// would bypass the response filter.
+func TestNoInformationalResponses(t *testing.T) {
+	p, _ := testProxy(t)
+	port := listen(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Set-Cookie", "collie_sess=planted; Domain=p.test")
+		w.Header().Set("Strict-Transport-Security", "max-age=0")
+		w.Header().Set("Link", "</x.js>; rel=preload")
+		w.WriteHeader(http.StatusEarlyHints)
+		w.Header().Del("Set-Cookie")
+		w.Header().Del("Strict-Transport-Security")
+		w.Header().Del("Link")
+		fmt.Fprint(w, "ok")
+	}))
+	_, c := openIn(t, p, Grant{UserID: "u", Port: port, Target: "host"}, "")
+	srv := httptest.NewServer(p)
+	defer srv.Close()
+	conn, err := net.Dial("tcp", strings.TrimPrefix(srv.URL, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	fmt.Fprintf(conn, "GET / HTTP/1.1\r\nHost: p.test\r\nCookie: %s=%s\r\nConnection: close\r\n\r\n", CookieName, c)
+	raw, _ := io.ReadAll(conn)
+	if strings.Contains(string(raw), "103") || strings.Contains(string(raw), "collie_sess") || strings.Contains(string(raw), "Strict-Transport") {
+		t.Errorf("1xx passed on:\n%s", raw)
+	}
+	if !strings.HasSuffix(string(raw), "ok") {
+		t.Errorf("response:\n%s", raw)
+	}
+}
+
+// Streams (server-sent events, WebSockets) end when the grant does.
+func TestStreamsEndWithTheGrant(t *testing.T) {
+	p, gone := testProxy(t)
+	port := listen(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		for i := 0; ; i++ {
+			if _, err := fmt.Fprintf(w, "data: %d\n\n", i); err != nil {
+				return
+			}
+			w.(http.Flusher).Flush()
+			select {
+			case <-r.Context().Done():
+				return
+			case <-time.After(20 * time.Millisecond):
+			}
+		}
+	}))
+	_, c := openIn(t, p, Grant{UserID: "u", Port: port, Target: "host"}, "")
+	srv := httptest.NewServer(p)
+	defer srv.Close()
+	req, _ := http.NewRequest("GET", srv.URL+"/events", nil)
+	req.AddCookie(&http.Cookie{Name: CookieName, Value: c})
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	br := bufio.NewReader(resp.Body)
+	if line, err := br.ReadString('\n'); err != nil || !strings.HasPrefix(line, "data:") {
+		t.Fatalf("stream: %q %v", line, err)
+	}
+	gone.Store(true)
+	p.SweepNow()
+	done := make(chan error, 1)
+	go func() {
+		_, err := io.Copy(io.Discard, br)
+		done <- err
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the stream outlived its grant")
+	}
+}
+
+// One user can't push everyone else's previews out.
+func TestGrantsPerUser(t *testing.T) {
+	p, _ := testProxy(t)
+	_, other := openIn(t, p, Grant{UserID: "other", Port: 1, Target: "host"}, "")
+	for i := range 3 * maxGrantsPerUser {
+		openIn(t, p, Grant{UserID: "flood", Port: i + 1, Target: "host"}, "")
+	}
+	p.mu.Lock()
+	n := 0
+	for _, g := range p.grants {
+		if g.UserID == "flood" {
+			n++
+		}
+	}
+	_, kept := p.grants[hashOf(other)]
+	p.mu.Unlock()
+	if n > maxGrantsPerUser || !kept {
+		t.Errorf("%d grants for one user; the other user's kept: %v", n, kept)
+	}
+}
+
+// A server that doesn't read what it is sent must not hold up the other
+// connections through the same bridge.
+func TestBridgeStalledUploadDoesNotBlockOthers(t *testing.T) {
+	stall, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stall.Close()
+	go func() {
+		for {
+			c, err := stall.Accept()
+			if err != nil {
+				return
+			}
+			defer c.Close() // accepted, never read
+		}
+	}()
+	port := echoServer(t)
+	b, _ := pipeBridge(t, Filter{UID: -1})
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	sc, err := b.Dial(ctx, stall.Addr().(*net.TCPAddr).Port)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sc.Close()
+	go func() { _, _ = sc.Write(make([]byte, 8<<20)) }()
+	time.Sleep(300 * time.Millisecond)
+	c, err := b.Dial(ctx, port)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	payload := strings.Repeat("x", 2<<20) + "\n"
+	go func() { _, _ = io.WriteString(c, payload) }()
+	type result struct {
+		n   int
+		err error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		got, err := bufio.NewReaderSize(c, 4<<20).ReadString('\n')
+		ch <- result{len(got), err}
+	}()
+	select {
+	case r := <-ch:
+		if r.err != nil || r.n != len(payload)+len("echo ") {
+			t.Errorf("echo through the bridge next to a stalled upload: %d bytes, %v", r.n, r.err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Error("a stalled upload held up another connection through the bridge")
+		sc.Close()
+		c.Close()
+	}
+}

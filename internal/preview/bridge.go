@@ -107,11 +107,18 @@ func pipe(w http.ResponseWriter, r *http.Request, up net.Conn) {
 	}
 }
 
+// connWindow is how much may wait unread on one bridge connection: every
+// connection to a container's servers shares it, so one server that
+// doesn't read what it is sent must not hold up the others (each stream
+// still has HTTP/2's own, smaller window).
+const connWindow = 64 << 20
+
 // serveOne serves HTTP/2 without TLS on a single connection.
 func serveOne(c net.Conn, h http.Handler) error {
 	var p http.Protocols
 	p.SetUnencryptedHTTP2(true)
-	srv := &http.Server{Handler: h, Protocols: &p, ErrorLog: log.New(os.Stderr, "collie port-bridge: ", 0)}
+	srv := &http.Server{Handler: h, Protocols: &p, ErrorLog: log.New(os.Stderr, "collie port-bridge: ", 0),
+		HTTP2: &http.HTTP2Config{MaxReceiveBufferPerConnection: connWindow}}
 	ln := &oneConn{c: c, done: make(chan struct{})}
 	err := srv.Serve(ln)
 	if errors.Is(err, net.ErrClosed) {
@@ -254,8 +261,9 @@ func (b *Bridge) init() *Bridge {
 		IdleConnTimeout: 3 * time.Minute,
 		HTTP2: &http.HTTP2Config{
 			// Notice a bridge that went away (its container stopped).
-			SendPingTimeout: 30 * time.Second,
-			PingTimeout:     15 * time.Second,
+			SendPingTimeout:               30 * time.Second,
+			PingTimeout:                   15 * time.Second,
+			MaxReceiveBufferPerConnection: connWindow,
 		},
 	}
 	return b

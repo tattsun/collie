@@ -2,6 +2,7 @@ package preview
 
 import (
 	"bufio"
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -34,9 +35,15 @@ import (
 //     to the port, with Collie's cookies and anything identifying the
 //     user taken out.
 //
-// The preview origin never accepts Collie's own sign-in cookie, and a
-// preview cookie is good for nothing but the one port of the one session.
-// A browser has one preview open at a time: opening another one replaces it.
+// Where previews have host names of their own, every container (the
+// target) gets its own origin. Otherwise all previews share one origin,
+// another port of Collie's host name, and a browser has one preview open
+// at a time there: opening another one replaces it. Then a link only opens
+// in the browser that asked for it (Bind), and nothing a page leaves in the
+// browser's cache or storage outlives a switch to another target.
+//
+// A preview cookie is good for nothing but the one port of the one
+// session, and Collie's own sign-in never opens anything here.
 
 // Grant is what a preview link, and then the preview cookie, opens.
 type Grant struct {
@@ -47,10 +54,17 @@ type Grant struct {
 	Legacy    bool
 	SessionID string
 	Port      int
+	// Target names where the session's servers run: its container, or the
+	// host. Previews of different targets never share an origin's state.
+	Target string
+	// Label is the host label of the target's own origin ("" where all
+	// previews share one origin).
+	Label string
 }
 
 // Target is where a grant leads now.
 type Target struct {
+	Key      string // Grant.Target
 	Upstream *Upstream
 	// Allow, when not nil, keeps pages from loading or sending anything
 	// anywhere but their own origin and these hosts: the project's
@@ -84,6 +98,7 @@ const (
 
 	maxTokensPerUser = 32
 	maxTokens        = 4096
+	maxGrantsPerUser = 32
 	maxGrants        = 4096
 )
 
@@ -93,13 +108,23 @@ const (
 // sign-in cookie along; it stops here.)
 var reserved = map[string]bool{"collie_sess": true, "collie_auth": true, CookieName: true}
 
+// frontDoor are the cookies of sign-in proxies that may sit in front of
+// Collie and its previews (oauth2-proxy, Authelia, Cloudflare Access).
+var frontDoor = map[string]bool{"_oauth2_proxy": true, "authelia_session": true, "CF_Authorization": true, "_forward_auth": true}
+
 // Proxy serves the preview origin.
 type Proxy struct {
 	// Resolve checks that a grant still holds and says where it leads.
 	Resolve func(Grant) (Target, error)
-	// Origin is the preview origin as the browser sees it for a request
-	// to it (scheme://host[:port]).
-	Origin func(*http.Request) string
+	// Origin is the preview origin a request was made to, as the browser
+	// sees it (scheme://host[:port]), and the target label in its host
+	// name where targets have origins of their own. ok is false for a host
+	// that is no preview origin.
+	Origin func(*http.Request) (origin, label string, ok bool)
+	// Bind, where previews share one origin, checks that a link is opened
+	// in the browser it was made for: the one signed in to Collie with the
+	// grant's sign-in. (It only compares; it never signs anything in.)
+	Bind func(*http.Request, Grant) bool
 	// Back, if set, is Collie's own address for a request to the preview
 	// origin (error pages link to it).
 	Back func(*http.Request) string
@@ -123,7 +148,14 @@ type grant struct {
 	created, used, checked time.Time
 	touched                time.Time
 	target                 Target
-	conns                  map[net.Conn]bool // hijacked (WebSocket) connections
+	dropped                bool
+	flights                map[*flight]bool // requests being served, WebSockets included
+}
+
+// flight is one request being served for a grant.
+type flight struct {
+	cancel context.CancelFunc
+	conn   net.Conn // a WebSocket's connection
 }
 
 func (p *Proxy) clock() time.Time {
@@ -179,7 +211,7 @@ func (p *Proxy) Mint(g Grant) string {
 			}
 		}
 	}
-	if mine >= maxTokensPerUser || len(p.tokens) >= maxTokens {
+	if mine >= maxTokensPerUser {
 		delete(p.tokens, oldest)
 	}
 	if len(p.tokens) >= maxTokens {
@@ -208,8 +240,9 @@ func (p *Proxy) redeem(t string) (Grant, bool) {
 // SweepNow is sweepOnce (tests).
 func (p *Proxy) SweepNow() { p.init(); p.sweepOnce() }
 
-// sweepOnce forgets expired tokens and grants, and closes the WebSockets
-// of grants that no longer hold (signed out, session gone).
+// sweepOnce forgets expired tokens and grants, and ends what is being
+// served (WebSockets, streams) for grants that no longer hold (signed out,
+// session gone).
 func (p *Proxy) sweepOnce() {
 	now := p.clock()
 	p.mu.Lock()
@@ -223,20 +256,16 @@ func (p *Proxy) sweepOnce() {
 		switch {
 		case p.expired(g, now):
 			p.dropLocked(h)
-		case len(g.conns) > 0:
+		case len(g.flights) > 0:
 			live = append(live, g)
 		}
 	}
 	p.mu.Unlock()
 	for _, g := range live {
-		t, err := p.Resolve(g.Grant)
+		t, err := p.resolve(g.Grant)
 		p.mu.Lock()
 		if err != nil {
-			for h, x := range p.grants {
-				if x == g {
-					p.dropLocked(h)
-				}
-			}
+			p.dropGrantLocked(g)
 		} else {
 			g.target, g.checked = t, p.clock()
 		}
@@ -244,38 +273,76 @@ func (p *Proxy) sweepOnce() {
 	}
 }
 
+// resolve is Resolve, also checking that the grant still leads where it
+// was made for.
+func (p *Proxy) resolve(g Grant) (Target, error) {
+	t, err := p.Resolve(g)
+	if err == nil && t.Key != g.Target {
+		err = ErrGone
+	}
+	return t, err
+}
+
 func (p *Proxy) expired(g *grant, now time.Time) bool {
 	return now.Sub(g.used) > grantIdle || now.Sub(g.created) > grantMax
 }
 
-// dropLocked forgets a grant and cuts its WebSockets.
+// dropLocked forgets a grant and ends everything being served for it.
 func (p *Proxy) dropLocked(h string) {
 	g := p.grants[h]
 	if g == nil {
 		return
 	}
 	delete(p.grants, h)
-	for c := range g.conns {
-		_ = c.Close()
+	g.dropped = true
+	for f := range g.flights {
+		f.end()
 	}
-	g.conns = nil
+	g.flights = nil
 }
 
-// lookup finds the grant behind the request's preview cookie and checks
-// that it still holds.
-func (p *Proxy) lookup(r *http.Request) (*grant, error) {
+func (p *Proxy) dropGrantLocked(g *grant) {
+	for h, x := range p.grants {
+		if x == g {
+			p.dropLocked(h)
+		}
+	}
+	g.dropped = true
+}
+
+func (f *flight) end() {
+	f.cancel()
+	if f.conn != nil {
+		_ = f.conn.Close()
+	}
+}
+
+// browserGrants are the grants behind the request's preview cookies. A
+// page can set a cookie of the same name for a narrower path; any genuine
+// one counts. p.mu must be held.
+func (p *Proxy) browserGrantsLocked(r *http.Request) map[string]*grant {
+	out := map[string]*grant{}
+	for _, c := range r.CookiesNamed(CookieName) {
+		h := hashOf(c.Value)
+		if g := p.grants[h]; g != nil {
+			out[h] = g
+		}
+	}
+	return out
+}
+
+// lookup finds the grant behind the request's preview cookie for this
+// origin and checks that it still holds.
+func (p *Proxy) lookup(r *http.Request, label string) (*grant, error) {
 	now := p.clock()
 	var g *grant
 	p.mu.Lock()
-	// A page can set a cookie of the same name for a narrower path; any
-	// genuine one counts.
-	for _, c := range r.CookiesNamed(CookieName) {
-		h := hashOf(c.Value)
-		if x := p.grants[h]; x != nil {
-			if p.expired(x, now) {
-				p.dropLocked(h)
-				continue
-			}
+	for h, x := range p.browserGrantsLocked(r) {
+		if p.expired(x, now) {
+			p.dropLocked(h)
+			continue
+		}
+		if x.Label == label {
 			g = x
 			break
 		}
@@ -290,15 +357,11 @@ func (p *Proxy) lookup(r *http.Request) (*grant, error) {
 	if fresh {
 		return g, nil
 	}
-	t, err := p.Resolve(g.Grant)
+	t, err := p.resolve(g.Grant)
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if err != nil {
-		for h, x := range p.grants {
-			if x == g {
-				p.dropLocked(h)
-			}
-		}
+		p.dropGrantLocked(g)
 		return nil, err
 	}
 	g.target, g.checked = t, p.clock()
@@ -309,15 +372,20 @@ var errNoGrant = errors.New("no preview open")
 
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p.init()
+	origin, label, ok := p.Origin(r)
+	if !ok {
+		p.page(w, r, http.StatusNotFound, msgNotFound, nil)
+		return
+	}
 	if r.URL.Path == OpenPath {
-		p.open(w, r)
+		p.open(w, r, origin, label)
 		return
 	}
 	if strings.HasPrefix(r.URL.Path, ownPrefix) {
 		p.page(w, r, http.StatusNotFound, msgNotFound, nil)
 		return
 	}
-	g, err := p.lookup(r)
+	g, err := p.lookup(r, label)
 	switch {
 	case errors.Is(err, errNoGrant):
 		p.page(w, r, http.StatusUnauthorized, msgNotOpen, nil)
@@ -326,14 +394,13 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		p.page(w, r, http.StatusForbidden, msgGone, nil)
 		return
 	}
-	origin := p.Origin(r)
 	if !sameOrigin(r, origin) {
 		http.Error(w, "cross-origin request to a preview refused", http.StatusForbidden)
 		return
 	}
 	if r.Header.Get("Service-Worker") == "script" {
-		// One origin serves every preview a browser opens; a service worker
-		// would stay behind and answer for the next session's server.
+		// A service worker would stay behind and answer for whatever is
+		// opened on this origin next.
 		http.Error(w, "service workers are turned off in Collie previews", http.StatusForbidden)
 		return
 	}
@@ -347,7 +414,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if touch {
 		t.Touch()
 	}
-	p.forward(w, r, g, t, port, origin)
+	p.forward(w, r, g, t, port, origin, label == "")
 }
 
 // sameOrigin refuses requests that change something, and WebSockets,
@@ -382,7 +449,7 @@ func normOrigin(o string) string {
 }
 
 // open exchanges a token for the preview cookie.
-func (p *Proxy) open(w http.ResponseWriter, r *http.Request) {
+func (p *Proxy) open(w http.ResponseWriter, r *http.Request, origin, label string) {
 	h := w.Header()
 	h.Set("Referrer-Policy", "no-referrer")
 	h.Set("Cache-Control", "no-store")
@@ -395,15 +462,26 @@ func (p *Proxy) open(w http.ResponseWriter, r *http.Request) {
 	g, ok := p.redeem(r.URL.Query().Get("t"))
 	if !ok {
 		// Spent or expired (say, the back button): a browser that has a
-		// preview open just goes back to it.
-		if _, err := p.lookup(r); err == nil {
+		// preview open here just goes back to it.
+		if _, err := p.lookup(r, label); err == nil {
 			http.Redirect(w, r, "/", http.StatusSeeOther)
 			return
 		}
 		p.page(w, r, http.StatusForbidden, msgLinkUsed, nil)
 		return
 	}
-	t, err := p.Resolve(g)
+	if g.Label != label {
+		// A link for another target's origin.
+		p.page(w, r, http.StatusForbidden, msgLinkUsed, nil)
+		return
+	}
+	if label == "" && p.Bind != nil && !p.Bind(r, g) {
+		// Someone else's link (or one copied to another browser): on the
+		// shared origin it would replace this browser's preview with theirs.
+		p.page(w, r, http.StatusForbidden, msgOtherBrowser, nil)
+		return
+	}
+	t, err := p.resolve(g)
 	if err != nil {
 		p.page(w, r, http.StatusForbidden, msgGone, nil)
 		return
@@ -411,30 +489,82 @@ func (p *Proxy) open(w http.ResponseWriter, r *http.Request) {
 	s := secret()
 	now := p.clock()
 	p.mu.Lock()
-	// The cookie replaces the one this browser had: so does the grant.
-	for _, c := range r.CookiesNamed(CookieName) {
-		p.dropLocked(hashOf(c.Value))
-	}
-	if len(p.grants) >= maxGrants {
-		var oldest string
-		for h, x := range p.grants {
-			if oldest == "" || x.used.Before(p.grants[oldest].used) {
-				oldest = h
-			}
+	// The cookie replaces the one this browser had here: so does the grant.
+	same := false
+	for k, x := range p.browserGrantsLocked(r) {
+		if x.Label == label {
+			same = same || x.Target == g.Target
+			p.dropLocked(k)
 		}
-		p.dropLocked(oldest)
 	}
+	p.makeRoomLocked(g.UserID)
 	p.grants[hashOf(s)] = &grant{Grant: g, created: now, used: now, checked: now, target: t}
 	p.mu.Unlock()
 	http.SetCookie(w, &http.Cookie{
 		Name: CookieName, Value: s, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode,
-		MaxAge: int(grantMax.Seconds()), Secure: strings.HasPrefix(p.Origin(r), "https://"),
+		MaxAge: int(grantMax.Seconds()), Secure: strings.HasPrefix(origin, "https://"),
 	})
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	if label != "" || same {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+	// The shared origin now leads to another target: clear what the last
+	// one's pages left in this browser (local storage, IndexedDB, cache)
+	// before its page loads. Browsers act on this header for a page more
+	// surely than for a redirect.
+	h.Set("Clear-Site-Data", `"cache", "storage"`)
+	p.page(w, r, http.StatusOK, msgOpening, nil)
+}
+
+// makeRoomLocked keeps the grants of one user, and of all users, in
+// bounds, dropping the least recently used.
+func (p *Proxy) makeRoomLocked(uid string) {
+	oldest := func(mine bool) string {
+		var o string
+		for h, x := range p.grants {
+			if (!mine || x.UserID == uid) && (o == "" || x.used.Before(p.grants[o].used)) {
+				o = h
+			}
+		}
+		return o
+	}
+	n := 0
+	for _, x := range p.grants {
+		if x.UserID == uid {
+			n++
+		}
+	}
+	if n >= maxGrantsPerUser {
+		p.dropLocked(oldest(true))
+	}
+	if len(p.grants) >= maxGrants {
+		p.dropLocked(oldest(false))
+	}
 }
 
 // forward passes the request to the port.
-func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, g *grant, t Target, port int, origin string) {
+func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, g *grant, t Target, port int, origin string, shared bool) {
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+	f := &flight{cancel: cancel}
+	p.mu.Lock()
+	if g.dropped {
+		p.mu.Unlock()
+		p.page(w, r, http.StatusForbidden, msgGone, nil)
+		return
+	}
+	if g.flights == nil {
+		g.flights = map[*flight]bool{}
+	}
+	g.flights[f] = true
+	p.mu.Unlock()
+	defer func() {
+		p.mu.Lock()
+		delete(g.flights, f)
+		p.mu.Unlock()
+	}()
+	r = r.WithContext(ctx)
+
 	up := "localhost:" + strconv.Itoa(port)
 	rp := &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
@@ -446,11 +576,15 @@ func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, g *grant, t Targ
 		Transport: t.Upstream.tr,
 		ModifyResponse: func(resp *http.Response) error {
 			cleanResponse(resp.Header, origin, port, t.Allow)
+			if shared {
+				// Nothing of one target's may be kept to show for the next.
+				resp.Header.Set("Cache-Control", "no-store")
+			}
 			return nil
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			if r.Context().Err() != nil {
-				return // the browser went away
+				return // the browser went away, or the grant ended
 			}
 			p.page(w, r, http.StatusBadGateway, msgUnreachable, map[string]string{"port": strconv.Itoa(port), "err": err.Error()})
 		},
@@ -460,31 +594,32 @@ func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, g *grant, t Targ
 	tw.hijacked = func(c net.Conn) {
 		p.mu.Lock()
 		defer p.mu.Unlock()
-		if g.conns == nil {
-			g.conns = map[net.Conn]bool{}
+		f.conn = c
+		if g.dropped {
+			_ = c.Close()
 		}
-		g.conns[c] = true
 	}
 	rp.ServeHTTP(tw, r)
-	if tw.conn != nil {
-		p.mu.Lock()
-		delete(g.conns, tw.conn)
-		p.mu.Unlock()
-	}
 }
 
 // trackWriter notes the connection a WebSocket takes over, so it can be
-// cut when the grant ends.
+// cut when the grant ends, and keeps the server's informational (1xx)
+// responses, which ReverseProxy would pass on unfiltered, from the browser.
 type trackWriter struct {
 	http.ResponseWriter
 	hijacked func(net.Conn)
-	conn     net.Conn
+}
+
+func (t *trackWriter) WriteHeader(code int) {
+	if code >= 100 && code < 200 && code != http.StatusSwitchingProtocols {
+		return
+	}
+	t.ResponseWriter.WriteHeader(code)
 }
 
 func (t *trackWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	c, brw, err := http.NewResponseController(t.ResponseWriter).Hijack()
 	if err == nil {
-		t.conn = c
 		t.hijacked(c)
 	}
 	return c, brw, err
@@ -501,11 +636,13 @@ func cleanRequest(h http.Header, origin, up string) {
 	filterCookies(h)
 	for k := range h {
 		lk := strings.ToLower(k)
-		if strings.HasPrefix(lk, "x-forwarded-") || strings.HasPrefix(lk, "tailscale-") || strings.HasPrefix(lk, "cf-") {
-			delete(h, k)
+		for _, pre := range identityPrefixes {
+			if strings.HasPrefix(lk, pre) {
+				delete(h, k)
+			}
 		}
 	}
-	for _, k := range []string{"Forwarded", "X-Real-Ip", "True-Client-Ip", "Via"} {
+	for _, k := range identityHeaders {
 		h.Del(k)
 	}
 	local := "http://" + up
@@ -522,6 +659,15 @@ func cleanRequest(h http.Header, origin, up string) {
 		h.Set("X-Forwarded-Proto", u.Scheme)
 	}
 }
+
+// Headers that say who the user is or where they are, set by Tailscale,
+// Cloudflare or a sign-in proxy in front of Collie.
+var (
+	identityPrefixes = []string{"x-forwarded-", "tailscale-", "cf-", "x-auth-request-", "x-goog-authenticated-",
+		"x-amzn-oidc-", "x-ms-client-principal"}
+	identityHeaders = []string{"Forwarded", "X-Real-Ip", "True-Client-Ip", "Via", "Remote-User", "Remote-Email",
+		"X-Remote-User", "X-Remote-Email", "X-Webauth-User", "X-Webauth-Email"}
+)
 
 // cutOrigin returns the part of a URL after the origin, if it is on it.
 func cutOrigin(s, origin string) (string, bool) {
@@ -540,14 +686,15 @@ func cutOrigin(s, origin string) (string, bool) {
 	return rest, true
 }
 
-// filterCookies drops Collie's own cookies, keeping the others as sent.
+// filterCookies drops Collie's own cookies and sign-in proxies', keeping
+// the others as sent.
 func filterCookies(h http.Header) {
 	var keep []string
 	for _, line := range h.Values("Cookie") {
 		for _, part := range strings.Split(line, ";") {
 			part = strings.TrimSpace(part)
 			name, _, _ := strings.Cut(part, "=")
-			if part == "" || reserved[strings.TrimSpace(name)] {
+			if name = strings.TrimSpace(name); part == "" || reserved[name] || frontDoor[name] {
 				continue
 			}
 			keep = append(keep, part)
@@ -591,7 +738,7 @@ func cleanResponse(h http.Header, origin string, port int, allow []string) {
 func cleanSetCookie(c string) string {
 	parts := strings.Split(c, ";")
 	name, _, _ := strings.Cut(parts[0], "=")
-	if reserved[strings.TrimSpace(name)] {
+	if name = strings.TrimSpace(name); reserved[name] || frontDoor[name] {
 		return ""
 	}
 	out := parts[:1]
@@ -686,6 +833,11 @@ var (
 		"Nothing answers on port {port} in the session yet ({err}). This page tries again every few seconds.",
 		"セッションのポート {port} からまだ応答がありません（{err}）。数秒ごとに自動で再読み込みします。",
 	}
+	msgOtherBrowser = msg{
+		"This preview link was made for another browser. Open the preview from Collie in this browser.",
+		"このリンクは別のブラウザ用に作られたものです。このブラウザの Collie からプレビューを開いてください。",
+	}
+	msgOpening  = msg{"Opening the preview…", "プレビューを開いています…"}
 	msgNotFound = msg{"Not found.", "見つかりません。"}
 )
 
@@ -713,8 +865,11 @@ func (p *Proxy) page(w http.ResponseWriter, r *http.Request, code int, m msg, va
 	h.Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
 	w.WriteHeader(code)
 	refresh := ""
-	if m == msgUnreachable {
+	switch m {
+	case msgUnreachable:
 		refresh = `<meta http-equiv="refresh" content="3">`
+	case msgOpening:
+		refresh = `<meta http-equiv="refresh" content="0;url=/">`
 	}
 	back := ""
 	if p.Back != nil {

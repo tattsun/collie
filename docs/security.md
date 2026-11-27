@@ -54,8 +54,8 @@ This assumes the configuration from the [setup guide](setup.md): a dedicated `co
 
 ## Previews of the agents' servers
 
-- Previews open on an origin of their own, another port or host name than Collie's. That origin never accepts Collie's sign-in, and Collie's cookies are taken out of every request before it reaches the agent's server. Collie's API answers only its own origin, not other ports of the same name.
-- Only a session's owner can open its servers, even in a shared session. Each tap makes a link that works once, within a minute, for that session and port only. The preview closes when that sign-in ends or the session stops being theirs.
+- Previews open on an origin of their own: another port of Collie's address, or a host name per project. Collie's sign-in never opens anything there, and Collie's cookies are taken out of every request before it reaches the agent's server. Collie's API answers only its own origin, not other ports of the same name.
+- Only a session's owner can open its servers, even in a shared session. Each tap makes a link that works once, within a minute, for that session and port only, and on a shared port only in the browser that asked for it. The preview closes when that sign-in ends or the session stops being theirs.
 - A preview reaches the servers through Collie, not over the network, so it opens no way into or out of a container. For a host-run project it reaches only the `collie` user's own servers, never Collie itself.
 
 ## What is *not* protected
@@ -63,7 +63,7 @@ This assumes the configuration from the [setup guide](setup.md): a dedicated `co
 - An agent in a container can read every file in its project and can reach the internet. Don't keep secrets in a project that you wouldn't want sent out.
 - An allowlist narrows where data can go, but allowed hosts can still carry it further. Claude's and Codex's own services are always allowed and accept uploads from any account. Hosts that serve many sites, such as CDNs or GitHub, can pass traffic on to them.
 - A host-run agent has all the access of the `collie` user.
-- A preview on another port of Collie's address shares the browser's cookies for that name. Its page can't read Collie's cookie, but it can overwrite it and sign you out. A host name under another domain avoids this (see [Setup](setup.md#previews)).
+- Previews on another port of Collie's address share one origin. A page of one project that you keep open can read the preview of the next project you open there. The browser also sends it the cookies of other apps on that host name, and it can overwrite or pile up cookies for Collie (signing you out, or keeping Collie from loading until you clear its site data). Names per project on another domain avoid this (see [Setup](setup.md#previews)).
 - A preview of a project on an allowlist may load and send only to its own origin and the listed hosts. But it runs in your browser: by navigating away, a page can still carry data out.
 - On a Mac there are no containers and no firewall. Agents run as you, with everything your account can reach: your files, your LAN, and Collie's own data.
 - In a project with **Allow containers inside**, the container keeps running as the `collie` user's own ids, with the same files and network. But its processes can switch between the container's own ids and reach more of the kernel (FUSE, tun devices, nested namespaces that mount their own `/proc` or set their own hostname), so a kernel bug is easier to reach from there. Turn it on only for projects whose agents you trust.

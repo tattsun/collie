@@ -205,3 +205,134 @@ func TestAttachedFilesInAContainer(t *testing.T) {
 		t.Errorf("claude args: %q", got)
 	}
 }
+
+// A file belongs to the session it was sent in and is deleted with it,
+// along with the agent's copy. Someone who saw it in a shared session
+// can't send it in a session of their own (and delete it from there).
+func TestFilesGoWithTheirSession(t *testing.T) {
+	m := newHomeTestManager(t)
+	m.SetAccess(allAdmins{fakeAccess{"team": {"alice": "owner", "bob": "member"}}})
+	m.cfg.ClaudeBin = fakeAgent(t, "claude", filepath.Join(t.TempDir(), "started"))
+	work := t.TempDir()
+	m.st.PutProject(model.Project{ID: "pt", Name: "team", Path: work, OwnerGroup: "team"})
+	m.st.PutSession(model.Session{ID: "a1", ProjectID: "pt", Owner: "alice", Cwd: work, Agent: "claude", Shared: true})
+	m.st.PutSession(model.Session{ID: "b1", ProjectID: "pt", Owner: "bob", Cwd: work, Agent: "claude"})
+	alice, bob := Actor{ID: "alice", Admin: true}, Actor{ID: "bob", Admin: true}
+	save := func(name string) model.File {
+		t.Helper()
+		f, err := m.SaveFile(name, strings.NewReader("content of "+name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return f
+	}
+	exists := func(f model.File) bool {
+		_, _, ok := m.AttachedFile(f.ID)
+		return ok
+	}
+	// The fake agent fails to start in the background; wait for that.
+	send := func(a Actor, sid string, f model.File) error {
+		t.Helper()
+		m.updateSession(sid, func(s *model.Session) { s.Status = model.StatusStopped })
+		if err := m.Send(a, sid, "", nil, []string{f.ID}); err != nil {
+			return err
+		}
+		for range 500 {
+			if s, _ := m.st.Session(sid); s.Status == model.StatusError {
+				return nil
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		t.Fatalf("%s: the agent never failed", sid)
+		return nil
+	}
+
+	brief, notes := save("brief.docx"), save("notes.txt")
+	if err := send(alice, "a1", brief); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Send(bob, "b1", "", nil, []string{brief.ID}); !errors.Is(err, errFileTaken) {
+		t.Fatalf("bob sent alice's file in his own session: %v", err)
+	}
+	if err := send(bob, "b1", notes); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.stageInput("a1", queued{agent.Input{}, []model.File{brief}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ok := m.AttachedFile(brief.ID); !ok {
+		t.Fatal("the claim hides the file")
+	}
+
+	if err := m.deleteSession("a1", false); err != nil {
+		t.Fatal(err)
+	}
+	if exists(brief) {
+		t.Error("the file outlived its session")
+	}
+	if _, err := os.Stat(m.hostStageDir("a1")); !os.IsNotExist(err) {
+		t.Errorf("the agent's copy outlived the session: %v", err)
+	}
+	if !exists(notes) {
+		t.Error("another session's file was deleted")
+	}
+
+	// Files never sent go after a day; files of sessions that are gone
+	// (deleted while the file was being sent) at the next sweep.
+	draft, old := save("draft.txt"), save("old.txt")
+	day := time.Now().Add(-25 * time.Hour)
+	if err := os.Chtimes(filepath.Join(m.st.FilesDir(), old.ID), day, day); err != nil {
+		t.Fatal(err)
+	}
+	m.sweepFiles()
+	if !exists(draft) || exists(old) || !exists(notes) {
+		t.Errorf("after the sweep: draft %v, old %v, notes %v", exists(draft), exists(old), exists(notes))
+	}
+	m.st.DeleteSession("b1")
+	m.sweepFiles()
+	if exists(notes) {
+		t.Error("a file of a session that is gone survived the sweep")
+	}
+}
+
+// In a container, the agent's copy in the user's home goes too.
+func TestContainerCopyGoesWithItsSession(t *testing.T) {
+	m := newHomeTestManager(t)
+	m.sb = sandbox.New(sandbox.Config{Podman: filepath.Join(t.TempDir(), "no-podman"), DataDir: t.TempDir()})
+	m.st.PutProject(model.Project{ID: "pc", Path: t.TempDir(), OwnerUser: "alice", Runtime: "container"})
+	m.st.PutSession(model.Session{ID: "c1", ProjectID: "pc", Owner: "alice", Agent: "claude"})
+	home := m.sb.HomeDir("pc", "alice")
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	f, err := m.SaveFile("brief.pdf", strings.NewReader("%PDF-1.7"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// As send does, without starting an agent.
+	if err := m.claimFiles("c1", []model.File{f}); err != nil {
+		t.Fatal(err)
+	}
+	r, _ := m.runtime("c1")
+	r.mu.Lock()
+	r.ensureLoaded()
+	r.put(&model.Item{ID: "u-1", Kind: model.KindUser, Files: []model.File{f}, Done: true})
+	r.mu.Unlock()
+	if _, err := m.stageInput("c1", queued{agent.Input{}, []model.File{f}}); err != nil {
+		t.Fatal(err)
+	}
+	copyDir := filepath.Join(home, ".collie-uploads", f.ID)
+	if _, err := os.Stat(filepath.Join(copyDir, "brief.pdf")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := m.deleteSession("c1", false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(copyDir); !os.IsNotExist(err) {
+		t.Errorf("the agent's copy outlived the session: %v", err)
+	}
+	if _, _, ok := m.AttachedFile(f.ID); ok {
+		t.Error("the file outlived its session")
+	}
+}

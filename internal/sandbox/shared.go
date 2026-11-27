@@ -473,6 +473,19 @@ func (m *Manager) StageUpload(projectID, userID, hostPath, name string) (string,
 	return Home + "/" + name, nil
 }
 
+// RemoveStaged deletes a file or folder (relative to the home) from the
+// user's container home for the project.
+func (m *Manager) RemoveStaged(projectID, userID, name string) error {
+	root, err := os.OpenRoot(m.HomeDir(projectID, userID))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	defer root.Close()
+	return root.RemoveAll(name)
+}
+
 // StageDir creates a folder (relative to the home) in the user's container
 // home for the project and returns its path inside the container.
 func (m *Manager) StageDir(projectID, userID, name string) (string, error) {

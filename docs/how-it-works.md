@@ -38,7 +38,8 @@ Agents in every session can show you files right in the chat. Try asking "make t
 Besides images, you can attach any file to a message, such as a Word brief, a spreadsheet or a PDF: with the paperclip, by pasting, or by dropping it on the message box. Each file can be up to 25 MB.
 
 - The agent gets a copy to read, outside the project, and the message tells it where. If the file belongs in the project, ask the agent to put it there.
-- Everyone who can see the session can download its attachments, and they stay on the server when the session is deleted.
+- Everyone who can see the session can download its attachments. Deleting the session deletes them from the server, along with the agent's copy. Copies the agent made itself, for example into the project, stay.
+- Files you attach but don't send are deleted after a day.
 
 ## Notifications
 

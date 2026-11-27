@@ -4,10 +4,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -22,6 +25,11 @@ import (
 // in its container's home for isolated projects, in a folder of the session
 // for host-run ones. Claude Code is given that folder as a working
 // directory, so reading there needs no approval.
+//
+// A file belongs to the session it is first sent in (files/<id>/.session)
+// and is deleted with it, along with the agent's copy. It can't be sent in
+// another session, so nobody who merely saw it can have it deleted through
+// a session of their own. Files never sent are deleted after a day.
 
 const (
 	MaxFile        = 25 << 20 // bytes per attached file
@@ -29,6 +37,11 @@ const (
 	maxFileNameLen = 200      // bytes, under every file system's limit
 	// stageDir holds the copies in a container's home.
 	stageDir = ".collie-uploads"
+	// claimName, in a file's folder, names the session it was sent in.
+	// Stored names never start with a dot (see cleanFileName).
+	claimName = ".session"
+	// unsentFileTTL is how long a file nobody sent is kept.
+	unsentFileTTL = 24 * time.Hour
 )
 
 var (
@@ -36,6 +49,7 @@ var (
 	ErrFileTooBig  = fmt.Errorf("files can be up to %d MB", MaxFile>>20)
 	errManyFiles   = fmt.Errorf("at most %d files per message", maxMsgFiles)
 	errFileMissing = errors.New("an attached file is no longer on the server; attach it again")
+	errFileTaken   = errors.New("an attached file was already sent in another session; attach it again")
 )
 
 // cleanFileName makes a name the user's browser sent safe to keep and to
@@ -104,14 +118,109 @@ func (m *Manager) AttachedFile(id string) (string, model.File, bool) {
 	}
 	dir := filepath.Join(m.st.FilesDir(), id)
 	ents, err := os.ReadDir(dir)
-	if err != nil || len(ents) != 1 || !ents[0].Type().IsRegular() {
-		return "", model.File{}, false
-	}
-	fi, err := ents[0].Info()
 	if err != nil {
 		return "", model.File{}, false
 	}
-	return filepath.Join(dir, ents[0].Name()), model.File{ID: id, Name: ents[0].Name(), Size: fi.Size()}, true
+	var found []os.DirEntry
+	for _, e := range ents {
+		if !strings.HasPrefix(e.Name(), ".") {
+			found = append(found, e)
+		}
+	}
+	if len(found) != 1 || !found[0].Type().IsRegular() {
+		return "", model.File{}, false
+	}
+	fi, err := found[0].Info()
+	if err != nil {
+		return "", model.File{}, false
+	}
+	return filepath.Join(dir, found[0].Name()), model.File{ID: id, Name: found[0].Name(), Size: fi.Size()}, true
+}
+
+// fileSession is the session a file was sent in, or "".
+func (m *Manager) fileSession(id string) string {
+	b, err := os.ReadFile(filepath.Join(m.st.FilesDir(), id, claimName))
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// claimFiles makes the files the session's, unless another session has
+// them already. The claim is linked in place, so it appears whole or not
+// at all.
+func (m *Manager) claimFiles(sid string, files []model.File) error {
+	for _, f := range files {
+		dir := filepath.Join(m.st.FilesDir(), f.ID)
+		tmp := filepath.Join(dir, claimName+"."+model.NewID())
+		if err := os.WriteFile(tmp, []byte(sid), 0o600); err != nil {
+			return err
+		}
+		err := os.Link(tmp, filepath.Join(dir, claimName))
+		_ = os.Remove(tmp)
+		switch {
+		case err == nil:
+		case !errors.Is(err, fs.ErrExist):
+			return err
+		case m.fileSession(f.ID) != sid:
+			return errFileTaken
+		}
+	}
+	return nil
+}
+
+// deleteFiles deletes the files a session's messages had attached, with
+// the copies its agent was given.
+func (m *Manager) deleteFiles(s model.Session, files []model.File) {
+	p, _ := m.st.Project(s.ProjectID)
+	for _, f := range files {
+		if !fileIDRe.MatchString(f.ID) || m.fileSession(f.ID) != s.ID {
+			continue
+		}
+		if p.Isolated() && m.sb != nil {
+			if err := m.sb.RemoveStaged(p.ID, s.Owner, stageDir+"/"+f.ID); err != nil {
+				log.Printf("session %s: delete the agent's copy of %s: %v", s.ID, f.Name, err)
+			}
+		}
+		if err := os.RemoveAll(filepath.Join(m.st.FilesDir(), f.ID)); err != nil {
+			log.Printf("session %s: delete %s: %v", s.ID, f.Name, err)
+		}
+	}
+	_ = os.RemoveAll(m.hostStageDir(s.ID))
+}
+
+// attachedFiles lists the files attached to the session's messages.
+func (r *Runtime) attachedFiles() []model.File {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.ensureLoaded()
+	var out []model.File
+	for _, it := range r.items {
+		if it.Kind == model.KindUser {
+			out = append(out, it.Files...)
+		}
+	}
+	return out
+}
+
+// sweepFiles deletes files no session holds: ones never sent (the
+// composer that uploaded them is long gone) and ones whose session was
+// deleted while they were being sent.
+func (m *Manager) sweepFiles() {
+	ents, _ := os.ReadDir(m.st.FilesDir())
+	for _, e := range ents {
+		if !e.IsDir() || !fileIDRe.MatchString(e.Name()) {
+			continue
+		}
+		if sid := m.fileSession(e.Name()); sid != "" {
+			if _, ok := m.st.Session(sid); ok {
+				continue
+			}
+		} else if fi, err := e.Info(); err != nil || time.Since(fi.ModTime()) < unsentFileTTL {
+			continue
+		}
+		_ = os.RemoveAll(filepath.Join(m.st.FilesDir(), e.Name()))
+	}
 }
 
 // attachedFiles looks up the files attached to a message.

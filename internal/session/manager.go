@@ -644,6 +644,9 @@ func (m *Manager) send(a Actor, sid, text string, imageIDs, fileIDs []string, vi
 	if text == "" && len(imgs) == 0 && len(files) == 0 {
 		return errors.New("empty message")
 	}
+	if err := m.claimFiles(sid, files); err != nil {
+		return err
+	}
 	it := &model.Item{ID: "u-" + model.NewID(), Kind: model.KindUser, Text: text, Images: imageIDs, Files: files, Done: true, By: a.ID, Via: via}
 	r.mu.Lock()
 	r.ensureLoaded()
@@ -830,8 +833,10 @@ func (m *Manager) deleteSession(sid string, removeWorktree bool) error {
 	if !ok {
 		return errSessionGone
 	}
+	var files []model.File
 	if r, err := m.runtime(sid); err == nil {
 		r.stop()
+		files = r.attachedFiles()
 	}
 	if s.Worktree && removeWorktree {
 		if p, ok := m.st.Project(s.ProjectID); ok {
@@ -841,7 +846,7 @@ func (m *Manager) deleteSession(sid string, removeWorktree bool) error {
 	m.mu.Lock()
 	delete(m.rts, sid)
 	m.mu.Unlock()
-	_ = os.RemoveAll(m.hostStageDir(sid))
+	m.deleteFiles(s, files)
 	m.st.DeleteSession(sid)
 	m.pushSessionDeleted(sid)
 	return nil
@@ -941,7 +946,12 @@ func (m *Manager) BusySessions(staleWaiting time.Duration) int {
 // reaper stops idle agent processes and unloads unused timelines.
 func (m *Manager) reaper() {
 	t := time.NewTicker(time.Minute)
+	var swept time.Time
 	for range t.C {
+		if time.Since(swept) > time.Hour {
+			m.sweepFiles()
+			swept = time.Now()
+		}
 		m.mu.Lock()
 		rts := make([]*Runtime, 0, len(m.rts))
 		for _, r := range m.rts {

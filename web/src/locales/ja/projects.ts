@@ -200,6 +200,9 @@ const ja: Record<string, string> = {
   Model: 'モデル',
   Default: 'デフォルト',
   Effort: '推論レベル',
+  'Make these my defaults': 'これを既定にする',
+  'Saved as your default': '既定として保存しました',
+  'Change defaults': '既定を変更',
   'Isolated worktree': '隔離 worktree',
   'Work on a new branch in its own checkout, so parallel sessions never collide.':
     '専用のチェックアウトで新しいブランチを作って作業するため、並行するセッション同士が衝突しません。',

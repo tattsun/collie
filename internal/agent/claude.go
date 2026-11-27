@@ -89,6 +89,11 @@ func (c *Claude) Start() error {
 	if c.cfg.Effort != "" {
 		args = append(args, "--effort", c.cfg.Effort)
 	}
+	if c.cfg.Instructions != "" {
+		// Claude Code records the system prompt with the conversation's
+		// first request and keeps using that record when resumed.
+		args = append(args, "--append-system-prompt", c.cfg.Instructions)
+	}
 	if c.cfg.Resume {
 		args = append(args, "--resume", c.cfg.Ref)
 	} else {

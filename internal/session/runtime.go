@@ -192,6 +192,8 @@ func (r *Runtime) startDriver(flip bool) (agent.Driver, error) {
 	cfg := agent.Config{
 		Cwd: sess.Cwd, Model: sess.Model, Effort: sess.Effort, Mode: sess.Mode,
 		Ref: sess.AgentRef, Resume: sess.Started,
+		// The agent runs for whoever started the session.
+		Instructions: r.m.SessionPrefs(sess.Owner).Instructions,
 	}
 
 	if flip {

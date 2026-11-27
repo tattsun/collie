@@ -16,7 +16,8 @@ import (
 	"github.com/tattsun/collie/internal/term"
 )
 
-func agentModes() any { return agent.Modes }
+func agentModes() any   { return agent.Modes }
+func agentEfforts() any { return agent.Efforts }
 
 func (s *Server) apiRoutes() {
 	mx := s.mux
@@ -41,6 +42,7 @@ func (s *Server) apiRoutes() {
 	mx.HandleFunc("POST /api/sessions/{id}/asks/{ask}", s.reply)
 	mx.HandleFunc("GET /api/sessions/{id}/items", s.items)
 	mx.HandleFunc("GET /api/sessions/{id}/changes", s.sessionChanges)
+	mx.HandleFunc("PATCH /api/me/session-prefs", s.patchSessionPrefs)
 
 	mx.HandleFunc("POST /api/uploads", s.upload)
 	mx.HandleFunc("GET /api/uploads/{name}", s.getUpload)
@@ -52,6 +54,22 @@ func (s *Server) apiRoutes() {
 }
 
 func ok(w http.ResponseWriter) { writeJSON(w, map[string]any{"ok": true}) }
+
+// ---- the signed-in user's preferences for new sessions ----
+
+func (s *Server) patchSessionPrefs(w http.ResponseWriter, r *http.Request) {
+	var req session.SessionPrefsPatch
+	if err := decode(r, &req); err != nil {
+		httpError(w, 400, err.Error())
+		return
+	}
+	p, err := s.m.PatchSessionPrefs(current(r).ID, req)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, p)
+}
 
 // ---- projects ----
 

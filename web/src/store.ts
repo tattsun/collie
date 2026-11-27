@@ -1,6 +1,6 @@
 import { signal, computed, batch } from '@preact/signals'
 import { t, ts } from './i18n'
-import type { AgentUsage, Caps, GroupInfo, Item, ModeInfo, Project, SandboxStatus, Session, TermInfo, UpdateStatus, UserInfo } from './types'
+import type { AgentUsage, Caps, GroupInfo, Item, ModeInfo, Project, SandboxStatus, Session, SessionPrefs, TermInfo, UpdateStatus, UserInfo } from './types'
 
 // ---------------------------------------------------------------- state
 
@@ -17,6 +17,10 @@ export const usage = signal<Record<string, AgentUsage>>({})
 export const clock = signal(Date.now())
 setInterval(() => (clock.value = Date.now()), 30_000)
 export const modes = signal<Record<string, ModeInfo[]>>({})
+/** The reasoning efforts each agent takes, lowest first. */
+export const efforts = signal<Record<string, string[]>>({})
+/** What the sessions I start get unless I choose otherwise. */
+export const sessionPrefs = signal<SessionPrefs>({ agents: {} })
 export const agentsAvail = signal<Record<string, boolean>>({})
 export const terms = signal<TermInfo[]>([])
 export const sandbox = signal<SandboxStatus>({ available: false })
@@ -292,6 +296,8 @@ export function applyState(d: any) {
     agentCaps.value = d.agentCaps || {}
     usage.value = d.usage || {}
     modes.value = d.modes || {}
+    efforts.value = d.efforts || {}
+    sessionPrefs.value = d.prefs || { agents: {} }
     agentsAvail.value = d.agents || {}
     terms.value = d.terms || []
     sandbox.value = d.sandbox || { available: false }
@@ -359,6 +365,9 @@ function onMessage(m: any) {
       break
     case 'usage':
       usage.value = { ...usage.value, [m.agent]: m.usage }
+      break
+    case 'sessionPrefs':
+      sessionPrefs.value = m.prefs || { agents: {} }
       break
     case 'terms':
       terms.value = m.terms || []

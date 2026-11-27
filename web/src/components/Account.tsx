@@ -9,6 +9,7 @@ import { passkeyError, passkeysSupported } from '../webauthn'
 import { ClaudeAccountsCard } from './ClaudeAccounts'
 import { EnvEditor, ProfileEditor } from './Editors'
 import { PluginsEditor } from './Plugins'
+import { SessionPrefsCard } from './SessionPrefs'
 import { IBack, ICheck, IPlus, IShield, ITrash, IX, Spinner } from './icons'
 
 interface MeInfo {
@@ -238,6 +239,7 @@ export function AccountPage() {
               {rich(t('Open any of your isolated projects → Terminal, run {cmd} and follow the link. The login is kept for all of your projects.'), { cmd: <code>codex login --device-auth</code> })}
             </p>
           </section>
+          <SessionPrefsCard />
           <section class="card col gap">
             <h3>{t('My environment')}</h3>
             <p class="dim small">

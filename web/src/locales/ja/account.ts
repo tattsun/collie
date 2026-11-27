@@ -298,6 +298,15 @@ const ja: Record<string, string> = {
   'Claude account': 'Claude アカウント',
   'Which of your Claude accounts agents use in this project. Other members of a group project use their own.': 'このプロジェクトでエージェントが使う、あなたの Claude アカウントです。グループのプロジェクトでも、ほかのメンバーは各自のアカウントを使います。',
   'No Claude account yet.': 'Claude アカウントがまだありません。',
+  // SessionPrefs.tsx
+  'New sessions': '新しいセッション',
+  'What the sessions you start get unless you choose otherwise, from New session or through your Home agent. Default leaves the choice to the agent.':
+    'あなたが始めるセッションで、特に選ばなければ使われる設定です。新規セッション画面からでも、Home エージェント経由でも同じです。「デフォルト」はエージェント自身の既定に任せます。',
+  'Instructions for all sessions': '全セッション共通の指示',
+  'e.g. Write pull request titles in English and descriptions in Japanese.': '例: PR のタイトルは英語、説明は日本語で書く。',
+  'Given to every agent you start, in all of your projects and Home, as an addition to its system prompt. Your messages and the repository’s files (CLAUDE.md, AGENTS.md) are left as they are. Applies to sessions started from now on.':
+    'あなたが始めるすべてのエージェントに（全プロジェクトと Home で）、システムプロンプトへの追加として渡します。あなたのメッセージやリポジトリのファイル（CLAUDE.md、AGENTS.md）は書き換えません。これから始めるセッションから反映されます。',
+  'Saved — applies to sessions started from now on': '保存しました。これから始めるセッションから反映されます',
   'Add one': '追加する',
 }
 export default ja

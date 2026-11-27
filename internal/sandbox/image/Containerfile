@@ -1,6 +1,8 @@
 # Collie agent image: the toolbox every isolated project runs in.
-# Built by `collie image build` (or from the UI); rebuild to update the agents.
+# Built by `collie --build-image` (or from the UI); rebuild to update the agents.
 FROM docker.io/library/ubuntu:26.04
+# Marks every layer as Collie's, so leftovers of rebuilds can be pruned.
+LABEL io.collie.agent=1
 
 ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \
@@ -20,6 +22,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # mise, so each project can pin its own toolchains in its mise.toml.
 RUN curl -fsSL https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh
+
+# Podman, for projects an admin lets run containers inside (Project →
+# Settings; see internal/sandbox/nested.go). Elsewhere it has no
+# privileges to work with.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      podman uidmap fuse-overlayfs passt catatonit \
+    && rm -rf /var/lib/apt/lists/*
 
 # The agents and the Playwright MCP server (with Chromium). AGENTS_REV is
 # bumped by "rebuild" to pull the latest versions without a full rebuild.

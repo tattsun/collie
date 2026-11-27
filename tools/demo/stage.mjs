@@ -41,6 +41,22 @@ export function serveDir(dir) {
   return new Promise((resolve) => srv.listen(0, '127.0.0.1', () => resolve({ url: `http://127.0.0.1:${srv.address().port}/`, close: () => srv.close() })))
 }
 
+// Builds Collie from this checkout, labelled with the latest release: a
+// commit hash in the sidebar would only date the screenshots.
+export function buildCollie() {
+  const dist = path.join(repoRoot, 'web/dist/index.html')
+  if (!fs.existsSync(dist)) throw new Error('build the web UI first: mise run web')
+  let v = 'dev'
+  try {
+    v = execFileSync('git', ['describe', '--tags', '--abbrev=0', '--match', 'v[0-9]*'], { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
+      .trim()
+      .replace(/^v/, '')
+  } catch {}
+  const bin = path.join(here, '.bin/collie')
+  execFileSync('go', ['build', '-trimpath', '-ldflags', `-X github.com/tattsun/collie/internal/version.Version=${v}`, '-o', bin, '.'], { cwd: repoRoot, stdio: 'inherit' })
+  return bin
+}
+
 // The app screenshots the search scenario shows with show_media.
 async function appShots(browser) {
   const dir = path.join(work, 'recipe-box-after')
@@ -55,7 +71,7 @@ async function appShots(browser) {
   srv.close()
 }
 
-export async function stage(browser, { port = 7979, speed = 1 } = {}) {
+export async function stage(browser, { bin, port = 7979, speed = 1 }) {
   fs.rmSync(work, { recursive: true, force: true })
   const root = path.join(work, 'projects')
   fs.mkdirSync(mediaDir, { recursive: true })
@@ -64,13 +80,11 @@ export async function stage(browser, { port = 7979, speed = 1 } = {}) {
   gitRepo(path.join(root, 'blog'), blog)
   await appShots(browser)
 
-  const bin = path.join(repoRoot, 'bin/collie')
-  if (!fs.existsSync(bin)) throw new Error('build first: mise run build')
   const base = `http://127.0.0.1:${port}`
   const proc = spawn(
     bin,
     ['--no-auth', '--addr', `127.0.0.1:${port}`, '--data', path.join(work, 'data'), '--root', root,
-      '--claude', path.join(here, 'fake-claude.mjs'), '--codex', '/nonexistent/codex', '--podman', '/nonexistent/podman', '--idle-timeout', '0'],
+      '--claude', path.join(here, 'fake-claude.mjs'), '--codex', '/nonexistent/codex', '--podman', '/nonexistent/podman', '--idle-timeout', '0', '--update-repo', 'off'],
     { env: { ...process.env, USER: 'demo', DEMO_MEDIA: mediaDir, DEMO_SPEED: String(speed) }, stdio: ['ignore', 'ignore', process.env.DEMO_LOG ? 'inherit' : 'ignore'] },
   )
   process.on('exit', () => proc.kill())

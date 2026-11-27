@@ -3,4 +3,7 @@
 /web/dist/*
 !/web/dist/.keep
 .playwright-mcp/
+/dist/
+collie-release.key
 /tools/demo/node_modules/
+/tools/demo/.bin/

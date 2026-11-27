@@ -781,6 +781,25 @@ func (m *Manager) Shutdown() {
 	_ = m.st.Flush()
 }
 
+// BusySessions counts the sessions a restart would interrupt: agents that
+// are starting or working, and those waiting for an answer — unless the
+// question has gone unanswered for longer than staleWaiting.
+func (m *Manager) BusySessions(staleWaiting time.Duration) int {
+	cutoff := model.NowMs() - staleWaiting.Milliseconds()
+	n := 0
+	for _, s := range m.st.Sessions() {
+		switch s.Status {
+		case model.StatusStarting, model.StatusRunning:
+			n++
+		case model.StatusWaiting:
+			if s.UpdatedAt >= cutoff {
+				n++
+			}
+		}
+	}
+	return n
+}
+
 // reaper stops idle agent processes and unloads unused timelines.
 func (m *Manager) reaper() {
 	t := time.NewTicker(time.Minute)

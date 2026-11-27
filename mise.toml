@@ -16,16 +16,44 @@ run = [
   "touch dist/.keep",
 ]
 
+# Every build is stamped with its version (tools/version.sh).
 [tasks.build]
 description = "Build bin/collie (web UI embedded)"
 depends = ["web"]
-run = "go build -trimpath -ldflags '-s -w' -o bin/collie ."
+run = 'go build -trimpath -ldflags "-s -w -X github.com/tattsun/collie/internal/version.Version=$(./tools/version.sh)" -o bin/collie .'
 
 [tasks.cross]
 description = "Cross-compile for another architecture, e.g. `mise run cross arm64`"
 depends = ["web"]
 usage = 'arg "<arch>" help="GOARCH, e.g. amd64 or arm64"'
-run = "GOOS=linux GOARCH=${usage_arch} go build -trimpath -ldflags '-s -w' -o bin/collie-linux-${usage_arch} ."
+run = 'GOOS=linux GOARCH=${usage_arch} go build -trimpath -ldflags "-s -w -X github.com/tattsun/collie/internal/version.Version=$(./tools/version.sh)" -o bin/collie-linux-${usage_arch} .'
+
+[tasks.dist]
+description = "Build the release files into dist/: binaries for linux amd64/arm64 and SHA256SUMS"
+depends = ["web"]
+run = """
+set -e
+v="$(./tools/version.sh)"
+rm -rf dist && mkdir dist
+for arch in amd64 arm64; do
+  GOOS=linux GOARCH=$arch go build -trimpath -ldflags "-s -w -X github.com/tattsun/collie/internal/version.Version=$v" -o dist/collie-linux-$arch .
+done
+cd dist && sha256sum collie-linux-* > SHA256SUMS
+echo "built $v into dist/"
+"""
+
+[tasks.release-key]
+description = "Create the release signing key: public half into internal/update/release.pub, private half into the repository secret COLLIE_SIGNING_KEY (gh needs permission to write secrets)"
+usage = 'arg "[file]" help="where to also keep the private key" default="collie-release.key"'
+run = """
+set -e
+key="${usage_file}"
+go run ./tools/release keygen -out "$key"
+gh secret set COLLIE_SIGNING_KEY < "$key"
+echo
+echo "Stored as the repository secret COLLIE_SIGNING_KEY. Commit internal/update/release.pub."
+echo "Keep $key somewhere safe and offline (or delete it); never commit it."
+"""
 
 [tasks.test]
 description = "Run Go tests, the frontend type check and the translation check"
@@ -46,8 +74,8 @@ description = "Run the API on :7878 without auth (pair with `cd web && npm run d
 run = "go run . --no-auth --addr 127.0.0.1:7878"
 
 [tasks.shots]
-description = "Re-shoot the README screenshots and demo GIF into docs/images (needs Playwright + Chromium)"
-depends = ["build"]
+description = "Re-shoot the screenshots and demo GIF in docs/images, using a scripted stand-in for claude (needs Playwright + Chromium)"
+depends = ["web"]
 dir = "{{config_root}}/tools/demo"
 run = [
   "npm ci --no-audit --no-fund",

@@ -13,7 +13,7 @@
 #      Collie's own port.
 #      (--allow adds exceptions, e.g. --allow 192.168.1.20/32 for a NAS.)
 #
-# Then switch to that user and install Collie itself (see README).
+# Then switch to that user and install Collie itself (see docs/setup.md).
 set -euo pipefail
 
 user=collie

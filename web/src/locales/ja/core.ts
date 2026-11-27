@@ -143,6 +143,7 @@ const ja: Record<string, string> = {
   'the agent is not running anymore; send a message to resume': 'エージェントはもう動いていません。メッセージを送ると再開します',
   // containers
   'isolation is not available': '隔離実行は使えません',
+  'containers inside are only for isolated projects': 'コンテナの中のコンテナは、隔離実行のプロジェクトでだけ使えます',
   'podman is not installed on the server': 'サーバに podman がインストールされていません',
   'isolated projects need podman on the server': '隔離プロジェクトにはサーバの podman が必要です',
   'this project runs isolated, but podman is not installed on the server': 'このプロジェクトは隔離コンテナで動きますが、サーバに podman がインストールされていません',
@@ -173,6 +174,18 @@ export default ja
 
 // Server messages with variable parts: [pattern, Japanese ($1… = captures)].
 export const patterns: [RegExp, string][] = [
+  // updates
+  [/^check for updates: ([\s\S]*)$/, '更新を確認できません: $1'],
+  [/^download: ([\s\S]*)$/, 'ダウンロードに失敗しました: $1'],
+  [/^release (\S+) has no build for this machine \((.+)\)$/, 'リリース $1 にはこのマシン用のビルド（$2）がありません'],
+  [/^release (\S+) is not signed \((.+)\)$/, 'リリース $1 には署名がありません（$2）'],
+  [/^downloaded (\S+) does not match the signed checksum$/, 'ダウンロードした $1 が署名済みのチェックサムと一致しません'],
+  [/^the downloaded binary is version "(.*)", not "(.*)"$/, 'ダウンロードしたバイナリはバージョン「$1」で、「$2」ではありません'],
+  [/^the new version does not run on this server: ([\s\S]*)$/, '新しいバージョンがこのサーバで動きません: $1'],
+  [/^building the new version's agent image failed: ([\s\S]*)$/, '新しいバージョンのエージェント用イメージの作成に失敗しました: $1'],
+  [/^the Collie binary \((.*)\) is not in a directory Collie can write to$/, 'Collie のバイナリ（$1）が、Collie から書き込めないディレクトリにあります'],
+  [/^version (\S+) did not start within (\S+); rolled back to (\S+)$/, 'バージョン $1 が $2 以内に起動しなかったため、$3 に戻しました'],
+  [/^version (\S+) stopped right after starting; rolled back to (\S+)$/, 'バージョン $1 が起動直後に停止したため、$2 に戻しました'],
   [/^(.+) overlaps an existing project$/, '$1 は既存のプロジェクトと重なっています'],
   [/^(.+) already exists$/, '$1 は既に存在します'],
   [/^(.+) is not a directory$/, '$1 はディレクトリではありません'],
@@ -189,6 +202,7 @@ export const patterns: [RegExp, string][] = [
   [/^git clone: ([\s\S]*)$/, 'git clone に失敗しました: $1'],
   [/^(?:agent )?image build failed: ([\s\S]*)$/, 'エージェント用イメージの作成に失敗しました: $1'],
   [/^start project container: ([\s\S]*)$/, 'プロジェクトのコンテナを起動できません: $1'],
+  [/^nested containers need subordinate ids for (.+) in \/etc\/subuid and \/etc\/subgid$/, 'コンテナの中でコンテナを動かすには、/etc/subuid と /etc/subgid に $1 のサブ ID が必要です'],
   // agent notices / errors
   [/^API retry: ([\s\S]*)$/, 'API を再試行中: $1'],
   [/^Retrying: ([\s\S]*)$/, '再試行中: $1'],

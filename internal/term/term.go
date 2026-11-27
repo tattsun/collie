@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -49,6 +50,7 @@ type Term struct {
 	buf  []byte
 	subs map[chan []byte]struct{}
 	done chan struct{}
+	io   atomic.Int64 // last input or output (unix ms)
 }
 
 type Manager struct {
@@ -93,6 +95,28 @@ func (m *Manager) InUse(projectID, userID string) bool {
 		}
 	}
 	return false
+}
+
+// Active counts the terminals someone is looking at or that had input or
+// output within the given time.
+func (m *Manager) Active(within time.Duration) int {
+	cutoff := model.NowMs() - within.Milliseconds()
+	m.mu.Lock()
+	ts := make([]*Term, 0, len(m.terms))
+	for _, t := range m.terms {
+		ts = append(ts, t)
+	}
+	m.mu.Unlock()
+	n := 0
+	for _, t := range ts {
+		t.mu.Lock()
+		watched := len(t.subs) > 0
+		t.mu.Unlock()
+		if watched || t.io.Load() >= cutoff {
+			n++
+		}
+	}
+	return n
 }
 
 func (m *Manager) Create(sp Spec) (*Term, error) {
@@ -146,6 +170,7 @@ func (t *Term) readLoop() {
 	for {
 		n, err := t.pty.Read(b)
 		if n > 0 {
+			t.io.Store(model.NowMs())
 			chunk := append([]byte(nil), b[:n]...)
 			t.mu.Lock()
 			t.buf = append(t.buf, chunk...)
@@ -203,6 +228,7 @@ func (t *Term) Attach() ([]byte, chan []byte, func()) {
 }
 
 func (t *Term) Write(b []byte) error {
+	t.io.Store(model.NowMs())
 	_, err := t.pty.Write(b)
 	return err
 }

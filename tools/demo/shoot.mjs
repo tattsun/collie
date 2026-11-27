@@ -1,8 +1,8 @@
 // Shoots the README screenshots and demo GIF into docs/images/.
 //
-//   mise run shots   (= mise run build && cd tools/demo && npm ci && node shoot.mjs)
+//   mise run shots   (= mise run web && cd tools/demo && npm ci && node shoot.mjs)
 //
-// It runs a throwaway Collie (bin/collie) whose "claude" is
+// It builds and runs a throwaway Collie whose "claude" is
 // fake-claude.mjs, so it needs no agent account and gives the same
 // pictures every time. Pass --only=desktop,mobile,gif to shoot a subset.
 import { execSync } from 'node:child_process'
@@ -10,7 +10,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { writeGif } from './gif.mjs'
-import { repoRoot, stage } from './stage.mjs'
+import { buildCollie, repoRoot, stage } from './stage.mjs'
 
 const outDir = path.join(repoRoot, 'docs/images')
 const only = (process.argv.find((a) => a.startsWith('--only=')) || '').slice(7).split(',').filter(Boolean)
@@ -34,6 +34,7 @@ async function loadPlaywright() {
 }
 
 const { chromium } = await loadPlaywright()
+const bin = buildCollie()
 const browser = await chromium.launch()
 fs.mkdirSync(outDir, { recursive: true })
 
@@ -70,7 +71,7 @@ async function open(page, base, hash) {
 // ---- stills: desktop and phone, dark and light ----
 
 async function stills() {
-  const demo = await stage(browser)
+  const demo = await stage(browser, { bin })
   try {
     const search = await demo.startSearch()
     await waitStatus(demo, search.id, (s) => s === 'waiting')
@@ -124,7 +125,7 @@ async function phones(names, scheme) {
 
 async function film(scheme) {
   // The agent plays faster than in real life, to keep the clip short.
-  const demo = await stage(browser, { speed: 2 })
+  const demo = await stage(browser, { bin, speed: 2 })
   const page = await newPage({ ...phone, deviceScaleFactor: 1.5 }, scheme)
   // A dot where the "finger" taps, so viewers can follow along.
   await page.addInitScript(() => {

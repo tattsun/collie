@@ -28,8 +28,13 @@ import (
 	"github.com/tattsun/collie/internal/session"
 	"github.com/tattsun/collie/internal/store"
 	"github.com/tattsun/collie/internal/term"
+	"github.com/tattsun/collie/internal/update"
+	"github.com/tattsun/collie/internal/version"
 	"github.com/tattsun/collie/web"
 )
+
+// defaultUpdateRepo is where releases (and so updates) come from.
+const defaultUpdateRepo = "tattsun/collie"
 
 func env(k, def string) string {
 	if v := os.Getenv(k); v != "" {
@@ -44,11 +49,15 @@ func main() {
 	if (len(os.Args) == 3 || len(os.Args) == 4) && os.Args[1] == "mcp-bridge" {
 		os.Exit(mcpBridge(os.Args[2], os.Args[3:]...))
 	}
+	home, _ := os.UserHomeDir()
+	if len(os.Args) > 1 && os.Args[1] == "update" {
+		os.Exit(update.Main(os.Args[2:], version.Version, updateRepo(env("COLLIE_UPDATE_REPO", defaultUpdateRepo)),
+			env("COLLIE_DATA", filepath.Join(home, ".collie"))))
+	}
 	// Subcommands for the server owner (run on the server, as Collie's user).
 	if len(os.Args) > 1 && !strings.HasPrefix(os.Args[1], "-") {
 		os.Exit(subcommand(os.Args[1], os.Args[2:]))
 	}
-	home, _ := os.UserHomeDir()
 	addr := flag.String("addr", env("COLLIE_ADDR", ":7878"), "listen address (e.g. 127.0.0.1:7878 behind `tailscale serve`)")
 	dataDir := flag.String("data", env("COLLIE_DATA", filepath.Join(home, ".collie")), "data directory")
 	root := flag.String("root", env("COLLIE_ROOT", filepath.Join(home, "projects")), "directory where new projects are created")
@@ -65,9 +74,16 @@ func main() {
 	showToken := flag.Bool("print-token", false, "print the access token and exit")
 	loginURL := flag.Bool("login-url", false, "print sign-in links (containing the access token) and exit")
 	buildImage := flag.Bool("build-image", false, "build (or update) the agent container image and exit")
+	prepareImage := flag.Bool("prepare-image", false, "build the agent container image if it is missing and exit (used by updates)")
+	repo := flag.String("update-repo", env("COLLIE_UPDATE_REPO", defaultUpdateRepo), "GitHub repository (owner/name) whose releases Collie updates to; \"off\" to disable")
+	showVersion := flag.Bool("version", false, "print the version and exit")
 	publicURL := flag.String("public-url", os.Getenv("COLLIE_PUBLIC_URL"), "URL users open (passkeys are bound to it; default: the host of the first registration)")
 	flag.Usage = usage
 	flag.Parse()
+	if *showVersion {
+		fmt.Println(version.Version)
+		return
+	}
 
 	st, err := store.Open(*dataDir)
 	if err != nil {
@@ -103,12 +119,17 @@ func main() {
 	} else if !sb.LimitsSupported() {
 		log.Printf("warning: no systemd user session — memory/CPU/process limits for isolated projects are NOT enforced (run `loginctl enable-linger %s` and start collie as a user service)", os.Getenv("USER"))
 	}
-	if *buildImage {
+	if *buildImage || *prepareImage {
 		if !sb.Available() {
 			log.Fatal("podman is not installed")
 		}
-		log.Printf("building %s …", sb.Status().Image)
-		if err := sb.BuildSync(os.Stderr); err != nil {
+		build := sb.BuildSync
+		if *prepareImage {
+			build = sb.BuildIfMissing
+		} else {
+			log.Printf("building %s …", sb.Status().Image)
+		}
+		if err := build(os.Stderr); err != nil {
 			log.Fatal(err)
 		}
 		return
@@ -130,10 +151,20 @@ func main() {
 	}, st, hub, sb)
 	mgr.SetAccess(users)
 	terms := term.NewManager()
+	podman := ""
+	if sb.Available() {
+		podman = *podmanBin
+	}
+	upd := update.New(update.Config{
+		Repo: updateRepo(*repo), DataDir: *dataDir, Current: version.Version, Keys: update.Keys(), Podman: podman,
+		// What a restart would interrupt: agents at work (or asking something
+		// in the last day) and terminals in use in the last half hour.
+		Busy: func() int { return mgr.BusySessions(24*time.Hour) + terms.Active(30*time.Minute) },
+	})
 	srv := server.New(mgr, terms, users, server.Options{Token: *token, NoAuth: *noAuth, Web: web.FS(),
-		ProxyUID: *proxyUID, PublicURL: *publicURL, Owner: owner})
+		ProxyUID: *proxyUID, PublicURL: *publicURL, Owner: owner, Updater: upd})
 	if web.FS() == nil {
-		log.Printf("warning: web UI is not built (run `make`); only the API is available")
+		log.Printf("warning: web UI is not built (run `mise run build`); only the API is available")
 	}
 
 	ln, err := net.Listen("tcp", *addr)
@@ -145,7 +176,7 @@ func main() {
 	// The token is only shown on an interactive terminal, never written to a
 	// persistent log (e.g. the systemd journal).
 	interactive := isTerminal(os.Stderr)
-	log.Printf("collie %s listening on %s", server.Version, ln.Addr())
+	log.Printf("collie %s listening on %s", version.Version, ln.Addr())
 	if users.PasskeysExist() {
 		for _, u := range signInURLs(ln.Addr().(*net.TCPAddr), "", true, false) {
 			log.Printf("  open: %s", u)
@@ -166,6 +197,12 @@ func main() {
 			log.Fatalf("serve: %v", err)
 		}
 	}()
+	// Up and serving: an update waiting for this version to start can finish.
+	if err := update.MarkRunning(*dataDir, version.Version); err != nil {
+		log.Printf("update marker: %v", err)
+	}
+	upd.Start()
+	go sb.PruneImages()
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
@@ -177,6 +214,13 @@ func main() {
 	terms.CloseAll()
 	mgr.Shutdown()
 	users.Flush()
+}
+
+func updateRepo(s string) string {
+	if s == "off" || s == "none" {
+		return ""
+	}
+	return s
 }
 
 func loadToken(path string) (string, error) {
@@ -251,6 +295,7 @@ func usage() {
   collie link [--user NAME]      print a one-time link to add a passkey (recovery)
   collie users                   list users
   collie make-admin NAME         make a user an admin
+  collie update                  show the running and the latest release
 
 Flags:
 `)

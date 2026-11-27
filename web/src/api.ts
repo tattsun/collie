@@ -23,14 +23,9 @@ export async function api<T = any>(method: string, path: string, body?: unknown)
   return data as T
 }
 
-/** Store the user's Claude token as CLAUDE_CODE_OAUTH_TOKEN in their env. */
+/** Store a `claude setup-token` token in the user's Claude subscription account. */
 export async function saveClaudeToken(token: string) {
-  const tok = token.replace(/\s+/g, '') // tokens copied from a narrow terminal may carry line breaks
-  const cur = (await api<{ env: string }>('GET', '/api/me/env')).env || ''
-  const lines = cur.split('\n').filter((l) => !l.trim().startsWith('CLAUDE_CODE_OAUTH_TOKEN='))
-  while (lines.length && !lines[lines.length - 1].trim()) lines.pop()
-  lines.push(`CLAUDE_CODE_OAUTH_TOKEN=${tok}`)
-  await api('PUT', '/api/me/env', { env: lines.join('\n') + '\n' })
+  await api('POST', '/api/me/claude/token', { token })
 }
 
 const MAX_EDGE = 2000

@@ -12,11 +12,36 @@ export interface Project {
   memory?: string
   cpus?: string
   pids?: number
+  /** the containers may run Podman inside (admins decide) */
+  nested?: boolean
   git: boolean
   status?: '' | 'cloning' | 'error'
   error?: string
   /** the user's Home: chats outside any project, coordinating the projects */
   home?: boolean
+}
+
+/** Release updates (admins only). */
+export interface UpdateStatus {
+  current: string
+  enabled: boolean
+  repo?: string
+  latest?: string
+  notes?: string
+  url?: string
+  published?: number
+  available: boolean
+  canApply: boolean
+  why?: string
+  devBuild?: boolean
+  auto: boolean
+  tokenSet: boolean
+  checkedAt?: number
+  checkError?: string
+  phase?: '' | 'downloading' | 'preparing' | 'waiting' | 'restarting'
+  error?: string
+  busy: number
+  last?: { from: string; to: string; ok: boolean; error?: string; at: number }
 }
 
 export interface SandboxStatus {

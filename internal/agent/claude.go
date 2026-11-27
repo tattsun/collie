@@ -852,9 +852,9 @@ func orDefault(s, d string) string {
 func authNotice(result string) string {
 	switch {
 	case strings.Contains(result, "Not logged in"):
-		return "Claude Code is not logged in for you. Run `claude setup-token` in a project terminal and paste the token under Account → Agent accounts."
+		return "Claude Code has no usable account for you. Add one under Account → Agent accounts (Sign in with Claude, Bedrock or an API key); if you already did, check which account this project uses in Project → Settings."
 	case strings.Contains(result, "OAuth access token is invalid"):
-		return "Your Claude token was rejected — it may have been copied incompletely or revoked. Run `claude setup-token` in a project terminal again and save the new token (in the terminal: Select → Save as my Claude token)."
+		return "Your Claude token was rejected — it may have been copied incompletely or revoked. Use Sign in again on the account under Account → Agent accounts."
 	}
 	return ""
 }

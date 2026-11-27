@@ -296,6 +296,7 @@ type PatchProjectReq struct {
 	Memory  *string `json:"memory"`
 	CPUs    *string `json:"cpus"`
 	Pids    *int    `json:"pids"`
+	Nested  *bool   `json:"nested"` // allow Podman inside the containers
 }
 
 var limitRe = regexp.MustCompile(`^(|[0-9]+(\.[0-9]+)?[kmgKMG]?)$`)
@@ -308,15 +309,27 @@ func (m *Manager) PatchProject(a Actor, id string, req PatchProjectReq) (model.P
 	if err != nil {
 		return p, err
 	}
-	if p.Home && (req.Name != nil || req.Runtime != nil) {
+	if p.Home && (req.Name != nil || req.Runtime != nil || req.Nested != nil) {
 		return p, errHomeFixed
 	}
 	if !m.ProjectManageable(a.ID, p) {
 		return p, ErrForbidden
 	}
-	envReq := req.Runtime != nil || req.Memory != nil || req.CPUs != nil || req.Pids != nil
+	envReq := req.Runtime != nil || req.Memory != nil || req.CPUs != nil || req.Pids != nil || req.Nested != nil
 	if envReq && !a.Admin {
 		return p, errors.New("only admins can change where agents run and their limits")
+	}
+	runtime, nested := p.Runtime, p.Nested
+	if req.Runtime != nil {
+		runtime = *req.Runtime
+	}
+	if req.Nested != nil {
+		nested = *req.Nested
+	} else if runtime != "container" {
+		nested = false // moving to the host drops it
+	}
+	if nested && runtime != "container" {
+		return p, errors.New("containers inside are only for isolated projects")
 	}
 	if req.Runtime != nil && *req.Runtime != "host" && *req.Runtime != "container" {
 		return p, fmt.Errorf("unknown runtime %q", *req.Runtime)
@@ -338,7 +351,8 @@ func (m *Manager) PatchProject(a Actor, id string, req PatchProjectReq) (model.P
 	envChanged := (req.Runtime != nil && *req.Runtime != p.Runtime) ||
 		(req.Memory != nil && strings.TrimSpace(*req.Memory) != p.Memory) ||
 		(req.CPUs != nil && strings.TrimSpace(*req.CPUs) != p.CPUs) ||
-		(req.Pids != nil && *req.Pids != p.Pids)
+		(req.Pids != nil && *req.Pids != p.Pids) ||
+		nested != p.Nested
 	if envChanged {
 		if err := m.stopProject(id, false); err != nil {
 			log.Printf("stop project %s: %v", id, err)
@@ -360,6 +374,7 @@ func (m *Manager) PatchProject(a Actor, id string, req PatchProjectReq) (model.P
 		if req.Pids != nil {
 			x.Pids = *req.Pids
 		}
+		x.Nested = nested
 	})
 	m.pushProject(np)
 	return np, nil

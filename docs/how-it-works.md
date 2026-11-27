@@ -136,6 +136,8 @@ Project → Settings shows which plugins your agents get there and which level d
 
 Home can't edit projects itself. The sessions it starts do the editing, and their approvals still come to **Needs you**. It sees only what you can see. When Home runs in a container (on Linux with Podman), it doesn't start, instruct or schedule agents in host-run projects. Do that yourself in Collie.
 
+Home can also list, read and archive your other Home conversations, so "tidy up my sessions" covers them too. It never archives the conversation you're talking to it in. It doesn't send messages to Home conversations, stop them or watch them, so two of them can't keep setting each other off. Other people's Home conversations stay out of its reach, even when you or they are an admin.
+
 When Home follows sessions:
 
 - Each notification starts a Home turn, which uses your plan like a message would. To stop the notifications about a session, use **Stop watching** on a notification, **Stop Home from watching** in the session's menu, or ask Home.

@@ -154,12 +154,13 @@ const homeInstructions = `<!-- Managed by Collie: rewritten whenever a Home sess
 You are the user's **Home agent** in Collie, the web app where they run coding agents (Claude Code and Codex) in their projects, often from a phone. The user comes here to talk about anything — questions, ideas, planning, advice, everyday consultations — and to have you coordinate work across their projects.
 
 ## Your tools (the ` + "`collie`" + ` MCP server)
-- ` + "`list_projects`, `list_sessions`, `read_session`" + `: the user's projects, what each session is doing, and what was said in it.
+- ` + "`list_projects`, `list_sessions`, `read_session`" + `: the user's projects, what each session is doing, and what was said in it. ` + "`list_sessions` and `read_session`" + ` also reach the user's Home conversations, this one included (marked ` + "`home`" + `; the one you are in is marked ` + "`thisConversation`" + `).
 - ` + "`start_session`" + `: start an agent in a project with your instructions. It runs with the user's default model and reasoning effort for that agent unless you pass ` + "`model` / `effort`" + `; the effort cannot be changed once it runs.
 - ` + "`send_message`" + `: give an existing session more instructions.
 - ` + "`read_diff`" + `: what a session changed — the same diff as its Changes tab.
 - ` + "`watch_session`, `unwatch_session`" + `: follow a session's progress (the ones you start are followed already), or stop.
-- ` + "`stop_session`, `archive_session`" + `: stop a session's agent; archive a finished session (or bring it back). Only the user's own sessions; worktrees and branches stay.
+- ` + "`stop_session`, `archive_session`" + `: stop a session's agent; archive a finished session (or bring it back). Only the user's own sessions; worktrees and branches stay. ` + "`archive_session`" + ` also archives the user's other Home conversations, never the one you are in.
+- Other Home conversations can only be listed, read and archived: you cannot message, stop or watch them (nor can they this one), so Home conversations never set each other going.
 - ` + "`create_schedule`, `list_schedules`, `delete_schedule`" + `: start a session in a project (or here in Home) at set times, with the same instructions every time.
 - ` + "`show_media`" + `: show the user images, videos or an HTML page right in this chat.
 
@@ -168,7 +169,7 @@ You are the user's **Home agent** in Collie, the web app where they run coding a
 - Then check on it (` + "`read_session`, and `read_diff`" + ` for code) and carry the work on: tell the user in a line or two what happened and what is next, have the session fix what is missing, or start the next step the user asked for. Review the diff before you call work done.
 - A session waiting for an approval or a question needs the user: say briefly what it asks; they answer in that session.
 - Each notification costs a turn. Unwatch sessions you no longer need to follow, and pass ` + "`watch: false`" + ` to ` + "`start_session`" + ` when nobody needs to follow the work.
-- Stop a session that goes the wrong way or that the user wants stopped. Archive sessions whose work is finished when the user agrees (ask first, unless they asked you to tidy up).
+- Stop a session that goes the wrong way or that the user wants stopped. Archive sessions whose work is finished, and Home conversations that are over, when the user agrees (ask first, unless they asked you to tidy up).
 
 ## How to work
 - You are the coordinator. Changes to a project are made by a session in that project: start one (or instruct an existing one) with clear, self-contained instructions — that agent does not see this conversation.
@@ -267,7 +268,7 @@ func toolText(text string, isErr bool) map[string]any {
 }
 
 const (
-	homeServerInstructions  = "Collie: see the user's projects and sessions, start or instruct sessions in their projects, schedule recurring sessions, and show the user files with show_media."
+	homeServerInstructions  = "Collie: see the user's projects, sessions and Home conversations, start or instruct sessions in their projects, schedule recurring sessions, and show the user files with show_media."
 	mediaServerInstructions = "Collie is the app the user follows this session in, often on a phone. show_media puts files in front of them: screenshots, design options, " +
 		"screen recordings (e.g. Playwright's recordVideo), HTML reports. Use it when seeing the result helps them review your work. " +
 		"They can also open a web server you start (a dev server such as `npm run dev`) in their own browser, from the session's Ports tab: " +
@@ -340,7 +341,7 @@ func (m *Manager) handleRPC(tc *toolConn, line []byte) (resp any) {
 		case home && homeFollowTool(p.Name):
 			text, err = m.callFollowTool(tc, p.Name, orEmpty(p.Arguments))
 		case home:
-			text, err = m.callTool(tc.scope.uid, p.Name, p.Arguments)
+			text, err = m.callTool(tc, p.Name, p.Arguments)
 		default:
 			err = fmt.Errorf("unknown tool %q", p.Name)
 		}
@@ -379,17 +380,18 @@ var homeToolDefs = []map[string]any{
 		"inputSchema": obj(map[string]any{}),
 	},
 	{
-		"name":        "list_sessions",
-		"description": "List sessions (agent conversations), most recent first, with their model, reasoning effort and status: running, waiting (needs the user), idle, stopped or error. `background` lists work an agent left running after its turn (builds, tests, sub-agents); it reports back when that ends.",
+		"name": "list_sessions",
+		"description": "List sessions (agent conversations), most recent first, with their model, reasoning effort and status: running, waiting (needs the user), idle, stopped or error. `background` lists work an agent left running after its turn (builds, tests, sub-agents); it reports back when that ends. " +
+			"The user's Home conversations are listed too, with project \"Home\" and `home: true`; the one you are in has `thisConversation: true`.",
 		"inputSchema": obj(map[string]any{
-			"project":          prop("string", "Project id or name; omit for all projects"),
+			"project":          prop("string", `Project id or name, or "home" for the user's Home conversations only; omit for all projects and Home`),
 			"include_archived": prop("boolean", "Include archived sessions"),
 			"limit":            prop("integer", "Maximum number of sessions (default 30)"),
 		}),
 	},
 	{
 		"name":        "read_session",
-		"description": "Read the latest part of a session's conversation: messages, tool calls, pending approvals and results.",
+		"description": "Read the latest part of a session's conversation, or of one of the user's Home conversations: messages, tool calls, pending approvals and results.",
 		"inputSchema": obj(map[string]any{
 			"session": prop("string", "Session id"),
 			"last":    prop("integer", "How many recent entries to read (default 40, at most 200)"),
@@ -455,9 +457,12 @@ func withModels(defs []map[string]any, caps map[string]model.Caps) []map[string]
 
 // ---- tools ----
 
-func (m *Manager) callTool(uid, name string, raw json.RawMessage) (string, error) {
+// callTool serves the Home tools that do not depend on the conversation
+// calling, except for marking it (tc.session) where they list or read
+// Home conversations.
+func (m *Manager) callTool(tc *toolConn, name string, raw json.RawMessage) (string, error) {
 	raw = orEmpty(raw)
-	a := m.toolActor(uid)
+	a := m.toolActor(tc.scope.uid)
 	switch name {
 	case "list_projects":
 		return m.toolListProjects(a)
@@ -470,7 +475,7 @@ func (m *Manager) callTool(uid, name string, raw json.RawMessage) (string, error
 		if err := json.Unmarshal(raw, &p); err != nil {
 			return "", err
 		}
-		return m.toolListSessions(a, p.Project, p.Archived, p.Limit)
+		return m.toolListSessions(a, tc.session, p.Project, p.Archived, p.Limit)
 	case "read_session":
 		var p struct {
 			Session string `json:"session"`
@@ -479,7 +484,7 @@ func (m *Manager) callTool(uid, name string, raw json.RawMessage) (string, error
 		if err := json.Unmarshal(raw, &p); err != nil {
 			return "", err
 		}
-		return m.toolReadSession(a, p.Session, p.Last)
+		return m.toolReadSession(a, tc.session, p.Session, p.Last)
 	case "start_session":
 		var p struct {
 			Project  string `json:"project"`
@@ -557,15 +562,32 @@ func (m *Manager) workProject(uid, ref string) (model.Project, error) {
 	return model.Project{}, fmt.Errorf("several projects are named %q; use its id", ref)
 }
 
-// workSession resolves a session the Home agent may act on.
-func (m *Manager) workSession(uid, sid string) (model.Session, model.Project, error) {
+// viewSession resolves a session the Home agent may read or archive: a
+// session in one of the user's projects, or one of the user's own Home
+// conversations. Nobody else's Home conversations, not even for an admin.
+func (m *Manager) viewSession(uid, sid string) (model.Session, model.Project, error) {
 	s, err := m.visibleSession(uid, strings.TrimSpace(sid))
-	if err != nil {
+	p, ok := m.st.Project(s.ProjectID)
+	if err != nil || !ok || (p.Home && !ownHome(uid, p, s)) {
 		return model.Session{}, model.Project{}, fmt.Errorf("no session %q (see list_sessions)", sid)
 	}
-	p, _ := m.st.Project(s.ProjectID)
+	return s, p, nil
+}
+
+// ownHome: s is one of uid's own Home conversations.
+func ownHome(uid string, p model.Project, s model.Session) bool {
+	return p.Home && p.OwnerUser == uid && s.Owner == uid
+}
+
+// workSession resolves a session the Home agent may act on: never a Home
+// conversation, so that Home conversations cannot set each other going.
+func (m *Manager) workSession(uid, sid string) (model.Session, model.Project, error) {
+	s, p, err := m.viewSession(uid, sid)
+	if err != nil {
+		return s, p, err
+	}
 	if p.Home {
-		return model.Session{}, model.Project{}, errors.New("that is a Home conversation, not a project session")
+		return model.Session{}, model.Project{}, errors.New("that is a Home conversation, not a project session: Home conversations can only be listed, read and archived")
 	}
 	return s, p, nil
 }
@@ -625,10 +647,12 @@ func (m *Manager) toolListProjects(a Actor) (string, error) {
 	return pretty(list), nil
 }
 
-func (m *Manager) toolListSessions(a Actor, project string, archived bool, limit int) (string, error) {
+// toolListSessions lists the user's sessions and Home conversations; here
+// is the Home conversation calling, if Collie knows it.
+func (m *Manager) toolListSessions(a Actor, here, project string, archived bool, limit int) (string, error) {
 	var only string
 	if strings.TrimSpace(project) != "" {
-		p, err := m.workProject(a.ID, project)
+		p, err := m.scheduleProject(a.ID, project)
 		if err != nil {
 			return "", err
 		}
@@ -640,6 +664,8 @@ func (m *Manager) toolListSessions(a Actor, project string, archived bool, limit
 	type out struct {
 		ID       string `json:"id"`
 		Project  string `json:"project"`
+		Home     bool   `json:"home,omitempty"`
+		This     bool   `json:"thisConversation,omitempty"`
 		Title    string `json:"title"`
 		Agent    string `json:"agent"`
 		Model    string `json:"model"`
@@ -658,7 +684,7 @@ func (m *Manager) toolListSessions(a Actor, project string, archived bool, limit
 	var ss []model.Session
 	for _, s := range m.VisibleSessions(a.ID) {
 		p, ok := m.st.Project(s.ProjectID)
-		if !ok || p.Home || (only != "" && s.ProjectID != only) || (s.Archived && !archived) {
+		if !ok || (p.Home && !ownHome(a.ID, p, s)) || (only != "" && s.ProjectID != only) || (s.Archived && !archived) {
 			continue
 		}
 		ss = append(ss, s)
@@ -673,6 +699,9 @@ func (m *Manager) toolListSessions(a Actor, project string, archived bool, limit
 		o := out{ID: s.ID, Project: p.Name, Title: s.Title, Agent: s.Agent, Model: orDefault(s.Model), Effort: orDefault(s.Effort), Status: s.Status, Mode: s.Mode,
 			Updated: ago(s.UpdatedAt), Preview: s.Preview, Branch: s.Branch, Worktree: s.Worktree, Archived: s.Archived,
 			Others: s.Owner != a.ID}
+		if p.Home {
+			o.Project, o.Home, o.This = "Home", true, s.ID == here
+		}
 		for _, t := range s.Tasks {
 			o.Background = append(o.Background, cmp.Or(t.Title, t.Kind)+" (started "+ago(t.Started)+")")
 		}
@@ -689,8 +718,8 @@ func clip(s string, n int) string {
 	return string(r[:n]) + "…"
 }
 
-func (m *Manager) toolReadSession(a Actor, sid string, last int) (string, error) {
-	s, p, err := m.workSession(a.ID, sid)
+func (m *Manager) toolReadSession(a Actor, here, sid string, last int) (string, error) {
+	s, p, err := m.viewSession(a.ID, sid)
 	if err != nil {
 		return "", err
 	}
@@ -703,8 +732,16 @@ func (m *Manager) toolReadSession(a Actor, sid string, last int) (string, error)
 		return "", err
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "Session %q (%s) in project %s — %s (model %s, effort %s), mode %s, status %s, updated %s.\n",
-		s.Title, s.ID, p.Name, s.Agent, orDefault(s.Model), orDefault(s.Effort), s.Mode, s.Status, ago(s.UpdatedAt))
+	switch {
+	case p.Home && s.ID == here:
+		fmt.Fprintf(&b, "This Home conversation (the one you are in) %q (%s)", s.Title, s.ID)
+	case p.Home:
+		fmt.Fprintf(&b, "Home conversation %q (%s)", s.Title, s.ID)
+	default:
+		fmt.Fprintf(&b, "Session %q (%s) in project %s", s.Title, s.ID, p.Name)
+	}
+	fmt.Fprintf(&b, " — %s (model %s, effort %s), mode %s, status %s, updated %s.\n",
+		s.Agent, orDefault(s.Model), orDefault(s.Effort), s.Mode, s.Status, ago(s.UpdatedAt))
 	if start > 0 {
 		fmt.Fprintf(&b, "Showing the last %d entries; %d earlier ones are omitted.\n", len(items), start)
 	}
@@ -739,6 +776,8 @@ func formatItem(it *model.Item) string {
 			who = "user (sent by you, the Home agent)"
 		case "schedule":
 			who = "user (sent by one of their schedules)"
+		case "collie":
+			who = "Collie (a notification about watched sessions, not from the user)"
 		}
 		text := clip(it.Text, 4000)
 		if len(it.Images) > 0 {

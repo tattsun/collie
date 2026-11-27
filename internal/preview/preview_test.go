@@ -76,9 +76,12 @@ func TestDialAddrStaysLocal(t *testing.T) {
 		}
 	}
 	// Nothing else can come out: ports nobody listens on aren't tried
-	// anywhere.
-	if _, err := dialAddr(socks, 22); err == nil {
-		t.Error("dialed a port nothing listens on")
+	// anywhere, nor numbers that are no port (5173 + 65536 must not wrap
+	// around to 5173).
+	for _, port := range []int{22, 5173 + 65536, 0, -1} {
+		if got, err := dialAddr(socks, port); err == nil {
+			t.Errorf("port %d: dialed %s", port, got)
+		}
 	}
 }
 

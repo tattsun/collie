@@ -13,6 +13,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"net"
 	"net/netip"
 	"path"
 	"slices"
@@ -207,6 +208,9 @@ var ErrNotListening = errors.New("nothing is listening on that port")
 // namespace's own). Nothing else can come out of it, so a preview never
 // reaches beyond the machine (or container) the server runs in.
 func dialAddr(socks []socket, port int) (string, error) {
+	if !ValidPort(port) {
+		return "", fmt.Errorf("%w (%d)", ErrNotListening, port)
+	}
 	best := -1
 	var addr netip.Addr
 	for _, s := range socks {
@@ -226,7 +230,7 @@ func dialAddr(socks []socket, port int) (string, error) {
 		}
 		return "[::1]:" + strconv.Itoa(port), nil
 	}
-	return netip.AddrPortFrom(addr, uint16(port)).String(), nil
+	return net.JoinHostPort(addr.String(), strconv.Itoa(port)), nil
 }
 
 // parseLsof reads the listening sockets from `lsof -F pctn` output (on

@@ -2,15 +2,27 @@
 
 [English](setup.md) | **日本語** · [← README](../README.ja.md)
 
-Ubuntu 26.04 以降のサーバで、Collie を専用ユーザーの常駐サービスとして動かし、tailnet 内に HTTPS で公開する手順です。
+Ubuntu 26.04 以降のサーバで、Collie を専用ユーザーの常駐サービスとして HTTPS で動かす手順です。パスキー・通知・PWA はどれも HTTPS が必要です。
+
+まず、どうやってアクセスしてもらうかを決めます:
+
+| | 開くアドレス | 必要なもの |
+|---|---|---|
+| **独自ドメイン** | `https://collie.example.com`（どこからでも） | ドメインと、80・443 番ポートをインターネットに開けたサーバ。証明書は Collie が Let's Encrypt から自分で取ります |
+| **手持ちのリバースプロキシ** | Caddy・nginx・Cloudflare Tunnel などで公開しているアドレス | 同じマシン上で、すでに HTTPS を出しているプロキシ |
+| **Tailscale** | tailnet 内なら `https://<マシン名>.<tailnet>.ts.net`。Funnel を使えばどこからでも | サーバと、使うすべての端末に Tailscale（Funnel なしの場合） |
+
+最初のパスキーを作る前に決めてください。パスキーは作ったときのアドレスでしか使えません（[別のアドレスに移す](#別のアドレスに移す)）。
 
 ## 1. ホストの準備（初回のみ、sudo で）
 
 ```bash
-sudo ./deploy/setup-host.sh
+sudo ./deploy/setup-host.sh            # 独自ドメインなら --public を付ける
 ```
 
 Podman を入れ、Collie と全エージェントを動かす専用ユーザー `collie` を作ります。エージェントからあなた自身の `~/.ssh` や個人ファイルには触れなくなります。あわせてファイアウォールのルールも入ります。このユーザーのプロセスはインターネットには出られますが、LAN・tailnet・このサーバ自身には接続できません。NAS などに接続させたいときは `--allow 192.168.1.20/32` のように指定します。オプションの一覧は `--help` で確認できます。
+
+`--public` を付けると、root ではない Collie が 80・443 番ポートで待ち受けられるようになります。このマシンのどのユーザーも 80 番以上のポートで待ち受けられるようになるので、Collie 用のサーバで使ってください。ufw が有効なら 80・443 番も開けます。クラウドのファイアウォール（セキュリティグループなど）は自分で開けてください。
 
 ## 2. Collie の導入（`collie` ユーザーで）
 
@@ -19,17 +31,58 @@ sudo machinectl shell collie@        # systemd --user が使えるログイン�
 curl https://mise.run | sh           # そのあと ~/.bashrc で mise を有効化
 git clone <this repo> && cd collie
 mise trust && mise install
-mise run install --serve
+mise run install --domain collie.example.com     # または下の表のどれか
 ```
 
-Collie とエージェント用のコンテナイメージをビルドし（イメージの初回ビルドは数分かかります）、systemd ユーザーサービスとして登録します。`--serve` を付けると `tailscale serve` で `https://<マシン名>.<tailnet>.ts.net/` に公開されます。パスキー・通知・PWA はどれも HTTPS が必要なので、付けておくのがおすすめです。
+| | |
+|---|---|
+| `--domain collie.example.com` | 独自ドメイン |
+| `--proxy https://collie.example.com` | 手持ちのリバースプロキシの後ろ（そのアドレスで公開） |
+| `--serve` | Tailscale、tailnet 内だけ |
+| `--funnel` | Tailscale、tailnet とインターネット |
+
+Collie とエージェント用のコンテナイメージをビルドし（イメージの初回ビルドは数分かかります）、systemd ユーザーサービスとして登録します。
 
 ログ: `journalctl --user -u collie -f`
 
+### 独自ドメイン
+
+最初に Collie を開く前に、ドメインの DNS をこのサーバに向け、80・443 番ポートを開けておいてください。証明書は最初のアクセスで取得します。Let's Encrypt は何度か失敗するとしばらく発行してくれなくなります。80 番は HTTPS へのリダイレクトと Let's Encrypt への応答にだけ使います。
+
+### 手持ちのリバースプロキシ
+
+同じマシンで動かし、WebSocket も含めて `http://127.0.0.1:7878` に転送します。接続元のアドレスは `X-Forwarded-For` で渡してください。Collie はログインの試行回数をアドレスごとに制限するので、渡さないと全員が 1 つの枠を分け合うことになります。Caddy ならこれだけです:
+
+```
+collie.example.com {
+	reverse_proxy 127.0.0.1:7878
+}
+```
+
+nginx の場合:
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:7878;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto https;
+}
+```
+
+Cloudflare Tunnel なら、公開するホスト名の転送先を `http://localhost:7878` にします。
+
+### Tailscale Funnel
+
+初回は `--funnel` が、tailnet で Funnel を許可するためのリンクを表示します。インターネットから外すときは `mise run install --serve` を実行し、`tailscale funnel status` に出てこないことを確認してください。
+
 ## 3. 最初の管理者になる
 
-1. インストーラが表示した URL を開きます。パスキーができるまでは、tailnet 内からならトークンなしで入れます。
-2. **Create passkey** を押します。あなたが最初の管理者になり、以後のログインはパスキーだけになります。
+1. インストーラが表示したリンクを開きます。リンクには初期設定用のトークンが入っています。もう一度見たいときは `collie` ユーザーで `collie --print-token` を実行します。パスキーができるまでは、このトークンが唯一の入口です。tailnet や LAN の中にいるだけではログインできません。
+2. **Create passkey** を押します。あなたが最初の管理者になり、以後のログインはパスキーだけになります。トークンは使えなくなります。
 3. Account → **Agent accounts** で自分の Claude Code / Codex をつなぎます。手順は画面に表示されます。Claude のアカウントは複数登録でき（サブスク・Amazon Bedrock・API キー・カスタム設定）、Project → Settings → **Claude account** でプロジェクトごとに選べます。
 4. ほかの人は Admin → Users → **Invite** から招待します。エージェントは各自のアカウントで動くので、利用料もそれぞれの負担です。
 
@@ -47,7 +100,7 @@ Collie は GitHub の新しいリリースを確認します。リリースが�
 ```bash
 cd collie && git pull
 mise install
-mise run install --serve    # 初回と同じオプションで
+mise run install --domain collie.example.com    # 初回と同じオプションで
 ```
 
 イメージの中の Claude Code / Codex だけを更新したいときは、Admin → Containers → **Agent image** → **Rebuild** か、`collie --build-image` を実行します。各プロジェクトのコンテナは、中で何も使われていないときに次に再起動したタイミングで、新しいイメージに切り替わります。
@@ -56,6 +109,17 @@ mise run install --serve    # 初回と同じオプションで
 
 - ほかのユーザー: Admin → Users → **Passkey recovery link**
 - 自分（管理者）: サーバで `collie` ユーザーとして `collie link` を実行します。`--user NAME` を付ければ、ほかの人のリンクも発行できます。
+
+## 別のアドレスに移す
+
+パスキーは作ったときのアドレスでしか使えません。Tailscale から独自ドメインに移すときなどは:
+
+1. 新しいオプションでインストールし直します（手順 2）。
+2. `collie` ユーザーで `collie reset-passkeys --yes` を実行します。全員のパスキーが消え、全員ログアウトされます。
+3. 新しいアドレスを開き、初期設定用のトークン（`collie --print-token`）でログインして、すぐにパスキーを作ってください。作るまでは、トークンが唯一の鍵です。
+4. ほかの人には、パスキーを追加するリンクを渡します: Admin → Users → **Passkey recovery link**。
+
+`--serve` から `--funnel` に変える場合はアドレスが変わらないので、パスキーはそのまま使えます。
 
 ## ホスト実行のプロジェクト（任意）
 

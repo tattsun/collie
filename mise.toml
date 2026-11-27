@@ -65,7 +65,7 @@ run = [
 ]
 
 [tasks.install]
-description = "Build and install as a systemd user service (pass --serve to publish via tailscale serve)"
+description = "Build and install as a systemd user service (--domain NAME: HTTPS on the internet; --proxy URL, --serve, --funnel: see --help)"
 depends = ["build"]
 run = "./deploy/install.sh"
 

@@ -2,12 +2,31 @@
 
 **English** | [日本語](security.ja.md) · [← README](../README.md)
 
-Collie exists to run commands on your server from a browser. Keep it off the public internet and use it over Tailscale or a LAN.
+Collie exists to run commands on your server from a browser, so whoever signs in can do that. It is built to be reachable from the internet over HTTPS (see [Setup](setup.md)). This page says what that rests on.
 
 ## Signing in
 
-- Only passkeys work once the first one exists. Before that, you can sign in with the token or through Tailscale, which is meant for first-time setup only.
-- Use `--no-auth` only on a network you fully trust.
+- Once the first passkey exists, only passkeys sign anyone in. Passkeys can't be phished: a look-alike site can't use them.
+- Before that, only the setup token does. Being on your tailnet or LAN, or anything a proxy adds to a request, never signs anyone in.
+- Sign-in attempts, invite and recovery links and the setup token are rate limited per client address, and failed attempts get slower. Each failure is logged as `auth: failed …` with the address, for tools like fail2ban.
+- `--no-auth` is for development on the server itself. Collie refuses to start with it on anything but a loopback address, and then answers only requests to `localhost` made on that machine, not ones through a proxy or from a web page that points its own name at `127.0.0.1`.
+
+## Changes that need your passkey again
+
+These need a passkey check from the last 15 minutes. Signing in counts. If yours is older, Collie asks for your passkey before making the change.
+
+- adding or removing a passkey, or making a link to add another device
+- inviting people, making recovery links, and changing or deleting users
+- the global skills, MCP and environment, which reach everyone's agents
+- registering an existing server folder and running a project's agents on the host
+
+So someone using a stolen or left-open session can't lock you out, let themselves back in later, or reach beyond your own projects through these. They can still do everything else you can do until that session is signed out.
+
+## Signed-in devices
+
+Account → **Signed-in devices** lists each device with the address it was last used from. Sign out anything you don't recognize, and check your passkeys. A sign-in lasts 30 days from its last use.
+
+Invite links work for 7 days and device or recovery links for 30 minutes, for anyone who has them, until they are used. Revoke the ones you no longer need in Admin → Users.
 
 ## Who can see what
 

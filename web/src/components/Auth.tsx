@@ -1,6 +1,6 @@
-import { rich } from './ui'
+import { Modal, rich } from './ui'
 import { useEffect, useState } from 'preact/hooks'
-import { acceptInvite, addPasskey, authStatus, deviceName, inviteCode, signInWithPasskey } from '../authflow'
+import { acceptInvite, addPasskey, authStatus, deviceName, inviteCode, reauthRequest, signInWithPasskey, verifyWithPasskey } from '../authflow'
 import { login, boot } from '../boot'
 import { lang, setLang, t, ts } from '../i18n'
 import { go, legacyLogin, me } from '../store'
@@ -177,6 +177,45 @@ export function InvitePage() {
         </form>
       )}
     </Shell>
+  )
+}
+
+/** Asks for the passkey again before a sensitive change (the server answered
+ * "reauth"); the change is retried once confirmed. */
+export function VerifyDialog() {
+  const req = reauthRequest.value
+  return req ? <VerifyPrompt key={req.id} resolve={req.resolve} reject={req.reject} /> : null
+}
+
+function VerifyPrompt({ resolve, reject }: { resolve: () => void; reject: (e: Error) => void }) {
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const cancel = () => reject(new Error(t('Not confirmed — nothing was changed.')))
+  const confirm = async () => {
+    setBusy(true)
+    setErr('')
+    try {
+      await verifyWithPasskey()
+      resolve()
+    } catch (e) {
+      setErr(passkeyError(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <Modal title={t('Confirm it’s you')} onClose={cancel}>
+      <p class="small">{t('Use your passkey to make this change. Collie asks again before changes that could let someone in or reach beyond your own projects.')}</p>
+      {err && <div class="err small">{ts(err)}</div>}
+      <div class="modal-actions">
+        <button class="btn" onClick={cancel}>
+          {t('Cancel')}
+        </button>
+        <button class="btn primary" onClick={confirm} disabled={busy || !passkeysSupported()} autoFocus>
+          {busy ? <Spinner size={12} /> : <IShield size={14} />} {t('Use passkey')}
+        </button>
+      </div>
+    </Modal>
   )
 }
 

@@ -26,7 +26,8 @@ func TestNetworkRunArgs(t *testing.T) {
 	listed.NetAllow = []string{"github.com"}
 
 	plain := m.runArgs(Spec{Project: open, UserID: "u1"}, nil)
-	if !hasSeq(plain, "--network", "pasta:--map-host-loopback,none,--map-guest-addr,none") || !slices.Equal(plain[len(plain)-2:], []string{"sleep", "infinity"}) {
+	// Where it always was, so upgrading doesn't re-create these containers.
+	if !hasSeq(plain, "--cap-drop", "all", "--network", "pasta:--map-host-loopback,none,--map-guest-addr,none", "--no-hosts") || !slices.Equal(plain[len(plain)-2:], []string{"sleep", "infinity"}) {
 		t.Fatalf("a project on the internet changed: %q", plain)
 	}
 	for _, a := range plain {

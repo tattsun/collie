@@ -457,8 +457,8 @@ func (m *Manager) createSession(a Actor, req CreateSessionReq, via string) (mode
 			return model.Session{}, err
 		}
 		branch := "collie/" + sid[:8]
-		base := gitutil.HeadCommit(p.Path)
-		if err := gitutil.AddWorktree(p.Path, wt, branch); err != nil {
+		base := gitutil.FreshBase(p.Path)
+		if err := gitutil.AddWorktree(p.Path, wt, branch, base); err != nil {
 			return model.Session{}, err
 		}
 		s.Cwd, s.Worktree, s.Branch, s.Base = wt, true, branch, base

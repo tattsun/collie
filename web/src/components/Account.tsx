@@ -238,6 +238,13 @@ export function AccountPage() {
             <h3>
               Codex {info.codexLoggedIn ? <span class="chip ok-chip"><ICheck size={11} /> {t('logged in')}</span> : <span class="chip">{t('not logged in')}</span>}
             </h3>
+            {info.codexLoggedIn && (
+              <div class="row gap">
+                <button class="btn small" disabled={!!busy} onClick={() => confirm(t('Sign Codex out of all of your projects?')) && act('codex', () => api('DELETE', '/api/me/codex'))()}>
+                  {t('Sign out')}
+                </button>
+              </div>
+            )}
             <p class="dim small">
               {rich(t('Open any of your isolated projects → Terminal, run {cmd} and follow the link. The login is kept for all of your projects.'), { cmd: <code>codex login --device-auth</code> })}
             </p>

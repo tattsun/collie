@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/http/httputil"
 	"net/netip"
 	"os"
@@ -34,12 +35,32 @@ type Proxy struct {
 	transport *http.Transport
 	local     localAddrs
 	anyAddr   bool // tests: let the loopback etc. through
+
+	// The connections kept open for clients (tunnels, forwarded requests
+	// and their WebSockets), checked against the list again as it changes.
+	cmu   sync.Mutex
+	conns map[*conn]bool
+	watch sync.Once
 }
 
 type listener struct {
 	path string
 	hs   *http.Server
 }
+
+// conn is a connection the proxy keeps open for a client: a CONNECT
+// tunnel, or a forwarded request (a WebSocket's included).
+type conn struct {
+	key       string // the listener's: project/user
+	projectID string
+	t         target
+	addr      netip.Addr // where it connected, once known
+	end       func()
+}
+
+// How often open connections are checked against their project's list
+// (edits also check them at once: Recheck).
+const recheckEvery = 2 * time.Second
 
 func NewProxy() *Proxy {
 	p := &Proxy{srvs: map[string]*listener{}, logs: map[string]*history{}}
@@ -83,7 +104,7 @@ func (p *Proxy) Listen(path, projectID, userID string) error {
 	ln.(*net.UnixListener).SetUnlinkOnClose(false)
 	_ = os.Chmod(path, 0o600)
 	hs := &http.Server{
-		Handler:           p.handler(projectID),
+		Handler:           p.handler(projectID, key),
 		ReadHeaderTimeout: 30 * time.Second,
 		IdleTimeout:       5 * time.Minute,
 		MaxHeaderBytes:    64 << 10,
@@ -95,13 +116,15 @@ func (p *Proxy) Listen(path, projectID, userID string) error {
 }
 
 // Close stops the proxy of a project's container (userID "": all of the
-// project's, and its log).
+// project's, and its log), and ends the connections it has open.
 func (p *Proxy) Close(projectID, userID string) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	for key, l := range p.srvs {
+	mine := func(key string) bool {
 		pid, uid, _ := cutLast(key, "/")
-		if pid == projectID && (userID == "" || uid == userID) {
+		return pid == projectID && (userID == "" || uid == userID)
+	}
+	p.mu.Lock()
+	for key, l := range p.srvs {
+		if mine(key) {
 			_ = l.hs.Close()
 			_ = os.Remove(l.path)
 			delete(p.srvs, key)
@@ -109,6 +132,110 @@ func (p *Proxy) Close(projectID, userID string) {
 	}
 	if userID == "" {
 		delete(p.logs, projectID)
+	}
+	p.mu.Unlock()
+	p.endWhere(func(c *conn) bool { return mine(c.key) })
+}
+
+// Recheck ends the project's open connections that its list no longer
+// allows (call it when the list changes; it also runs every few seconds).
+func (p *Proxy) Recheck(projectID string) {
+	p.endWhere(func(c *conn) bool { return c.projectID == projectID && !p.stillAllowed(c) })
+}
+
+func (p *Proxy) recheckAll() {
+	lists := map[string]*list{} // each project's looked up once
+	p.endWhere(func(c *conn) bool { return !p.allowedBy(c, lists) })
+}
+
+type list struct {
+	entries []string
+	has     bool
+}
+
+// stillAllowed checks an open connection as a new one would be: its
+// destination against the list as it is now, and the address it went to.
+func (p *Proxy) stillAllowed(c *conn) bool { return p.allowedBy(c, nil) }
+
+func (p *Proxy) allowedBy(c *conn, lists map[string]*list) bool {
+	if p.Rules == nil {
+		return false
+	}
+	l := lists[c.projectID]
+	if l == nil {
+		l = &list{}
+		l.entries, l.has = p.Rules(c.projectID)
+		if lists != nil {
+			lists[c.projectID] = l
+		}
+	}
+	entries, has := l.entries, l.has
+	if !has {
+		return false
+	}
+	rl, ok := matchRule(entries, c.t)
+	if !ok {
+		return false
+	}
+	if a := c.addr; a.IsValid() && !p.anyAddr {
+		if neverReachable(a) || p.local.has(a) || (privateAddr(a) && !rl.prefix.IsValid()) {
+			return false
+		}
+	}
+	return true
+}
+
+// track notes a connection kept open for a client; untrack it when done.
+func (p *Proxy) track(key, projectID string, t target, end func()) *conn {
+	p.watch.Do(func() {
+		go func() {
+			for range time.Tick(recheckEvery) {
+				p.recheckAll()
+			}
+		}()
+	})
+	c := &conn{key: key, projectID: projectID, t: t, end: end}
+	p.cmu.Lock()
+	if p.conns == nil {
+		p.conns = map[*conn]bool{}
+	}
+	p.conns[c] = true
+	p.cmu.Unlock()
+	return c
+}
+
+func (p *Proxy) untrack(c *conn) {
+	p.cmu.Lock()
+	delete(p.conns, c)
+	p.cmu.Unlock()
+}
+
+func (p *Proxy) setAddr(c *conn, addr net.Addr) {
+	ap, err := netip.ParseAddrPort(addr.String())
+	if err != nil {
+		return
+	}
+	p.cmu.Lock()
+	c.addr = ap.Addr().Unmap()
+	p.cmu.Unlock()
+}
+
+// endWhere ends (and forgets) the open connections f picks. f runs
+// without the lock held: it may look up the project's list.
+func (p *Proxy) endWhere(f func(*conn) bool) {
+	p.cmu.Lock()
+	all := make([]conn, 0, len(p.conns))
+	ptrs := make([]*conn, 0, len(p.conns))
+	for c := range p.conns {
+		all = append(all, *c)
+		ptrs = append(ptrs, c)
+	}
+	p.cmu.Unlock()
+	for i := range all {
+		if f(&all[i]) {
+			p.untrack(ptrs[i])
+			ptrs[i].end()
+		}
 	}
 }
 
@@ -136,7 +263,7 @@ func cutLast(s, sep string) (string, string, bool) {
 	return s, "", false
 }
 
-func (p *Proxy) handler(projectID string) http.Handler {
+func (p *Proxy) handler(projectID, key string) http.Handler {
 	fwd := &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			// The Host header follows the URL, the destination that was
@@ -186,9 +313,19 @@ func (p *Proxy) handler(projectID string) http.Handler {
 		// Only an address listed as such may be on a private network.
 		ctx := context.WithValue(r.Context(), privateOK{}, rl.prefix.IsValid())
 		if r.Method == http.MethodConnect {
-			p.tunnel(w, r.WithContext(ctx), projectID, t)
+			p.tunnel(w, r.WithContext(ctx), projectID, key, t)
 			return
 		}
+		// A forwarded request (a download, a WebSocket) ends when the list
+		// stops allowing it: ReverseProxy closes both sides of an upgraded
+		// connection when the request's context ends.
+		ctx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		c := p.track(key, projectID, t, cancel)
+		defer p.untrack(c)
+		ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
+			GotConn: func(i httptrace.GotConnInfo) { p.setAddr(c, i.Conn.RemoteAddr()) },
+		})
 		fwd.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
@@ -204,7 +341,7 @@ func (t target) display() string {
 	return net.JoinHostPort(t.host, strconv.Itoa(t.port))
 }
 
-func (p *Proxy) tunnel(w http.ResponseWriter, r *http.Request, projectID string, t target) {
+func (p *Proxy) tunnel(w http.ResponseWriter, r *http.Request, projectID, key string, t target) {
 	up, err := p.dialer.DialContext(r.Context(), "tcp", t.display())
 	if err != nil {
 		p.dialFailed(w, r, projectID, t, err)
@@ -219,6 +356,19 @@ func (p *Proxy) tunnel(w http.ResponseWriter, r *http.Request, projectID string,
 	}
 	c, brw, err := hj.Hijack()
 	if err != nil {
+		up.Close()
+		return
+	}
+	// The tunnel lasts only while the list allows it.
+	tc := p.track(key, projectID, t, func() {
+		c.Close()
+		up.Close()
+	})
+	p.setAddr(tc, up.RemoteAddr())
+	defer p.untrack(tc)
+	if !p.stillAllowed(tc) {
+		// The list changed while connecting.
+		c.Close()
 		up.Close()
 		return
 	}

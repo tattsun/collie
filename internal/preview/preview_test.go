@@ -178,7 +178,7 @@ func TestRewriteLocation(t *testing.T) {
 func TestAllowCSP(t *testing.T) {
 	csp := allowCSP("https://box.ts.net:8443", []string{"github.com", "*.npmjs.org", "example.com:443", "203.0.113.7", "192.168.1.0/24", "2001:db8::1", "[2001:db8::1]:443"})
 	want := "default-src 'self' wss://box.ts.net:8443 github.com *.npmjs.org example.com:443 203.0.113.7 data: blob: 'unsafe-inline' 'unsafe-eval'; " +
-		"form-action 'self' github.com *.npmjs.org example.com:443 203.0.113.7; base-uri 'self'"
+		"form-action 'self' github.com *.npmjs.org example.com:443 203.0.113.7; base-uri 'self'; webrtc 'block'"
 	if csp != want {
 		t.Errorf("csp:\n%s\nwant\n%s", csp, want)
 	}

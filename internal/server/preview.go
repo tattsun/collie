@@ -259,19 +259,27 @@ func (s *Server) previewOrigin(r *http.Request, slot int) (origin, label string,
 	return scheme + "://" + h, "", true
 }
 
+// bindCookies are the names Collie's sign-in cookie may have (over HTTPS
+// it is a __Host- cookie, which pages can't shadow by path).
+var bindCookies = []string{sessionCookie, "__Host-" + sessionCookie}
+
 // bindPreview checks, on the shared preview origin, that a link is opened
 // in the browser it was made for. That origin is another port of Collie's
 // host name, so the browser sends Collie's cookies along; the one it is
 // signed in with must be the one the link was made from. Collie's cookie
-// is only compared here: it never opens anything by itself.
+// is only compared here: it never opens anything by itself. The preview
+// proxy asks again whenever the browser's sign-in cookies change, so a
+// grant cookie planted in another user's browser opens nothing there.
 func (s *Server) bindPreview(r *http.Request, g preview.Grant) bool {
 	switch {
 	case s.opt.NoAuth:
 		return true
 	case g.Login != "":
-		for _, c := range r.CookiesNamed(sessionCookie) {
-			if _, sess, ok := s.users.SessionUser(c.Value, ""); ok && sess.Hash == g.Login {
-				return true
+		for _, name := range bindCookies {
+			for _, c := range r.CookiesNamed(name) {
+				if _, sess, ok := s.users.SessionUser(c.Value, ""); ok && sess.Hash == g.Login {
+					return true
+				}
 			}
 		}
 	case g.Legacy:

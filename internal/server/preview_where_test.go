@@ -168,7 +168,7 @@ func TestHostRunSessionsSeeOnlyTheirOwnServers(t *testing.T) {
 		// Opening: only its own, typed in or not.
 		for _, port := range all {
 			w := f.do("POST", "/api/sessions/"+c.sid+"/preview", fmt.Sprintf(`{"port":%d}`, port), cookie(sessionCookie, c.sess),
-				header("Origin", "https://collie.example.com"))
+				header("Origin", "https://collie.example.com"), header("X-Forwarded-Proto", "https"))
 			if (w.Code == http.StatusOK) != (port == c.see) {
 				t.Errorf("%s: opening port %d: %d", c.sid, port, w.Code)
 			}
@@ -210,7 +210,7 @@ func TestPreviewSlots(t *testing.T) {
 	other := newDevServer(t)
 	at := func(sess string, port int) (string, string) {
 		w := f.do("POST", "/api/sessions/"+f.sessionID+"/preview", fmt.Sprintf(`{"port":%d}`, port), cookie(sessionCookie, sess),
-			header("Origin", "https://collie.example.com"))
+			header("Origin", "https://collie.example.com"), header("X-Forwarded-Proto", "https"))
 		var out struct{ URL string }
 		_ = json.Unmarshal(w.Body.Bytes(), &out)
 		u, err := url.Parse(out.URL)
@@ -231,7 +231,7 @@ func TestPreviewSlots(t *testing.T) {
 		t.Fatalf("open: %d", w.Code)
 	}
 	w = f.do("POST", "/api/sessions/"+f.sessionID+"/preview", fmt.Sprintf(`{"port":%d}`, f.dev.port), cookie(sessionCookie, f.ownerSess),
-		cookie(preview.CookieName(0), c), header("Origin", "https://collie.example.com"))
+		cookie(preview.CookieName(0), c), header("Origin", "https://collie.example.com"), header("X-Forwarded-Proto", "https"))
 	if !strings.Contains(w.Body.String(), ":8443/") {
 		t.Errorf("the same server again: %s", w.Body.String())
 	}

@@ -259,6 +259,26 @@ func TestUpdaterRejectsBadReleases(t *testing.T) {
 	}
 }
 
+// A signed pre-release that someone marked as the latest release on GitHub
+// is still not installed, by hand or automatically.
+func TestUpdaterRefusesPreReleases(t *testing.T) {
+	f := newFakeRelease(t, "v0.3.0-rc.1")
+	u := newTestUpdater(t, f, func([]string) error { t.Error("launched a pre-release"); return nil })
+	if err := u.SetAuto(true); err != nil {
+		t.Fatal(err)
+	}
+	if err := u.Check(t.Context()); err == nil || !strings.Contains(err.Error(), "pre-release") {
+		t.Fatalf("check: %v", err)
+	}
+	u.maybeAuto()
+	if st := u.Status(); st.Available || st.Phase != "" {
+		t.Fatalf("status: %+v", st)
+	}
+	if err := u.Apply(false); err == nil {
+		t.Fatal("applied a pre-release")
+	}
+}
+
 func TestUpdaterDropsOldToken(t *testing.T) {
 	f := newFakeRelease(t, "v0.3.0")
 	u := newTestUpdater(t, f, nil)

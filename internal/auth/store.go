@@ -118,13 +118,23 @@ type data struct {
 	Origin string `json:"origin,omitempty"`
 }
 
+// touch is a session's use that has not been written yet.
+type touch struct {
+	lastSeen, expiresAt int64
+	lastIP              string
+}
+
 type Store struct {
 	path string
 
 	mu    sync.Mutex
 	d     data
 	mtime time.Time
-	dirty bool // only LastSeen-style changes pending
+	size  int64
+	// touched holds the last-seen changes not written yet, by session
+	// hash. They are applied again whenever the file is re-read, so a CLI
+	// edit (e.g. reset-passkeys) is never overwritten by a stale copy.
+	touched map[string]touch
 	// OnChange is called after users / groups change (not on session churn).
 	OnChange func()
 }
@@ -167,7 +177,7 @@ func (s *Store) reloadLocked(force bool) error {
 	if err != nil {
 		return err
 	}
-	if !force && st.ModTime().Equal(s.mtime) {
+	if !force && st.ModTime().Equal(s.mtime) && st.Size() == s.size {
 		return nil
 	}
 	b, err := os.ReadFile(s.path)
@@ -178,18 +188,38 @@ func (s *Store) reloadLocked(force bool) error {
 	if err := json.Unmarshal(b, &d); err != nil {
 		return fmt.Errorf("auth.json: %w", err)
 	}
-	s.d, s.mtime = d, st.ModTime()
+	s.d, s.mtime, s.size = d, st.ModTime(), st.Size()
+	s.applyTouched()
 	return nil
 }
 
-// saveLocked writes the file; s.mu must be held. It takes the file lock.
-func (s *Store) saveLocked() error {
-	unlock, err := s.lockFile()
-	if err != nil {
-		return err
+// applyTouched re-applies pending session uses to the sessions that still
+// exist (a CLI edit may have removed them); s.mu must be held.
+func (s *Store) applyTouched() {
+	for h, t := range s.touched {
+		var x *Session
+		for _, y := range s.d.Sessions {
+			if y.Hash == h {
+				x = y
+			}
+		}
+		if x == nil {
+			delete(s.touched, h)
+			continue
+		}
+		if t.lastSeen > x.LastSeen {
+			x.LastSeen = t.lastSeen
+			if u := s.d.user(x.UserID); u != nil && u.LastSeen < t.lastSeen {
+				u.LastSeen = t.lastSeen
+			}
+		}
+		if t.expiresAt > x.ExpiresAt {
+			x.ExpiresAt = t.expiresAt
+		}
+		if t.lastIP != "" {
+			x.LastIP = t.lastIP
+		}
 	}
-	defer unlock()
-	return s.writeLocked()
 }
 
 // writeLocked writes the file; s.mu and the file lock must be held.
@@ -206,9 +236,9 @@ func (s *Store) writeLocked() error {
 		return err
 	}
 	if st, err := os.Stat(s.path); err == nil {
-		s.mtime = st.ModTime()
+		s.mtime, s.size = st.ModTime(), st.Size()
 	}
-	s.dirty = false
+	s.touched = nil
 	return nil
 }
 
@@ -243,12 +273,23 @@ func (s *Store) changed() {
 	}
 }
 
-// Flush persists pending last-seen updates.
+// Flush persists pending last-seen updates, on top of what is on disk now.
 func (s *Store) Flush() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.dirty {
-		_ = s.saveLocked()
+	if len(s.touched) == 0 {
+		return
+	}
+	unlock, err := s.lockFile()
+	if err != nil {
+		return
+	}
+	defer unlock()
+	if err := s.reloadLocked(false); err != nil {
+		return
+	}
+	if len(s.touched) > 0 {
+		_ = s.writeLocked()
 	}
 }
 
@@ -689,15 +730,23 @@ func (s *Store) SessionUser(secret, ip string) (User, Session, bool) {
 		if u == nil || u.Disabled {
 			return User{}, Session{}, false
 		}
+		pending := s.touched[h]
+		was := pending
 		if t-x.LastSeen > time.Hour.Milliseconds() {
 			x.LastSeen = t
 			x.ExpiresAt = t + SessionTTL.Milliseconds()
 			u.LastSeen = t
-			s.dirty = true
+			pending.lastSeen, pending.expiresAt = x.LastSeen, x.ExpiresAt
 		}
 		if ip != "" && x.LastIP != ip {
 			x.LastIP = ip
-			s.dirty = true
+			pending.lastIP = ip
+		}
+		if pending != was {
+			if s.touched == nil {
+				s.touched = map[string]touch{}
+			}
+			s.touched[h] = pending
 		}
 		return cloneUser(u), *x, true
 	}

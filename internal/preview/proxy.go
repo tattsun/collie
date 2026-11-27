@@ -113,6 +113,23 @@ const (
 // sign-in cookie along; it stops here.)
 var reserved = map[string]bool{"collie_sess": true, "collie_auth": true}
 
+// signInCookie reports whether a cookie is one of Collie's sign-in
+// cookies (under any of the browsers' name prefixes, e.g.
+// __Host-collie_sess).
+func signInCookie(name string) bool { return reserved[strings.ToLower(unprefixed(name))] }
+
+// unprefixed is a cookie name without __Host- or __Secure- (which
+// browsers match in any case).
+func unprefixed(name string) string {
+	name = strings.TrimSpace(name)
+	for _, pre := range []string{"__host-", "__secure-"} {
+		if len(name) >= len(pre) && strings.EqualFold(name[:len(pre)], pre) {
+			return name[len(pre):]
+		}
+	}
+	return name
+}
+
 // CookieName is the preview cookie of a slot. Cookies don't keep to
 // ports: each slot's has a name of its own, so opening a preview on one
 // port never replaces another port's, and is only ever read there.
@@ -126,11 +143,12 @@ var frontDoor = []string{"_oauth2_proxy", "_pomerium", "authelia_session", "CF_A
 // collieOrDoor reports whether a cookie is Collie's own or a sign-in
 // proxy's: never passed to a preview's server, nor set by one.
 func collieOrDoor(name string) bool {
-	if reserved[name] || strings.HasPrefix(name, cookiePrefix) {
+	n := strings.ToLower(unprefixed(name))
+	if reserved[n] || strings.HasPrefix(n, cookiePrefix) {
 		return true
 	}
 	for _, p := range frontDoor {
-		if strings.HasPrefix(name, p) {
+		if strings.HasPrefix(n, strings.ToLower(p)) {
 			return true
 		}
 	}
@@ -175,6 +193,9 @@ type grant struct {
 	target                 Target
 	dropped                bool
 	flights                map[*flight]bool // requests being served, WebSockets included
+	// bound sums up the Collie sign-in cookies (signIn) of the browser
+	// Bind last passed this grant for, on the shared origin.
+	bound string
 }
 
 // flight is one request being served for a grant.
@@ -426,21 +447,62 @@ func (p *Proxy) chooseSlotLocked(r *http.Request, g Grant, n int) int {
 
 // lookup finds the grant behind the request's preview cookie for this
 // origin and checks that it still holds.
+//
+// On the shared origin, a page on any port of Collie's host name can plant
+// a preview cookie for a narrower path, even one holding another user's
+// grant. So a grant counts there only in the browser signed in to Collie
+// with the grant's sign-in (Bind, asked again whenever the sign-in cookies
+// change), and a request carrying grants of different users or targets is
+// refused rather than served by one of them.
 func (p *Proxy) lookup(r *http.Request, label string, slot int) (*grant, error) {
 	now := p.clock()
-	var g *grant
+	shared := label == "" && p.Bind != nil
+	print := ""
+	if shared {
+		print = signIn(r)
+	}
+	var found, unbound, foreign []*grant
 	p.mu.Lock()
 	for h, x := range p.browserGrantsLocked(r, slot) {
 		if p.expired(x, now) {
 			p.dropLocked(h)
 			continue
 		}
-		if x.Label == label {
-			g = x
-			break
+		if x.Label != label {
+			continue
+		}
+		if shared && (x.bound == "" || x.bound != print) {
+			unbound = append(unbound, x)
+			continue
+		}
+		found = append(found, x)
+	}
+	p.mu.Unlock()
+	for _, x := range unbound {
+		// (Outside p.mu: Bind looks up Collie's sign-ins.)
+		if p.Bind(r, x.Grant) {
+			p.mu.Lock()
+			x.bound = print
+			p.mu.Unlock()
+			found = append(found, x)
+		} else {
+			foreign = append(foreign, x)
 		}
 	}
-	if g == nil {
+	if len(found) == 0 {
+		return nil, p.whyNot(foreign)
+	}
+	g := found[0]
+	for _, x := range found[1:] {
+		if x.UserID != g.UserID || x.Target != g.Target {
+			return nil, errMixed
+		}
+		if x.created.After(g.created) {
+			g = x
+		}
+	}
+	p.mu.Lock()
+	if g.dropped {
 		p.mu.Unlock()
 		return nil, errNoGrant
 	}
@@ -461,7 +523,56 @@ func (p *Proxy) lookup(r *http.Request, label string, slot int) (*grant, error) 
 	return g, nil
 }
 
-var errNoGrant = errors.New("no preview open")
+var (
+	errNoGrant = errors.New("no preview open")
+	// errMixed: the browser carries previews of different users or
+	// targets for this origin, so some were planted.
+	errMixed = errors.New("cookies of different previews")
+	// errOtherBrowser: the grant is good, but not in a browser with its
+	// sign-in.
+	errOtherBrowser = errors.New("preview of another browser")
+)
+
+// whyNot says why the grants behind a request's cookies, none of which
+// Bind passed, open nothing: they ended (signed out, the session gone,
+// and then they are dropped), or they are another browser's.
+func (p *Proxy) whyNot(foreign []*grant) error {
+	if len(foreign) == 0 {
+		return errNoGrant
+	}
+	var ended error
+	for _, x := range foreign {
+		if _, err := p.resolve(x.Grant); err != nil {
+			p.mu.Lock()
+			p.dropGrantLocked(x)
+			p.mu.Unlock()
+			if ended == nil {
+				ended = err
+			}
+			continue
+		}
+		return errOtherBrowser
+	}
+	return ended
+}
+
+// signIn sums up the request's Collie sign-in cookies: Bind's answer for
+// a grant holds as long as they stay the same.
+func signIn(r *http.Request) string {
+	var b strings.Builder
+	for _, c := range r.Cookies() {
+		if signInCookie(c.Name) {
+			b.WriteString(c.Name)
+			b.WriteByte('=')
+			b.WriteString(c.Value)
+			b.WriteByte(';')
+		}
+	}
+	if b.Len() == 0 {
+		return ""
+	}
+	return hashOf(b.String())
+}
 
 // Slot serves one of the preview ports.
 func (p *Proxy) Slot(slot int) http.Handler {
@@ -490,6 +601,12 @@ func (p *Proxy) serve(w http.ResponseWriter, r *http.Request, slot int) {
 	switch {
 	case errors.Is(err, errNoGrant):
 		p.page(w, r, http.StatusUnauthorized, msgNotOpen, nil)
+		return
+	case errors.Is(err, errMixed):
+		p.page(w, r, http.StatusForbidden, msgMixed, nil)
+		return
+	case errors.Is(err, errOtherBrowser):
+		p.page(w, r, http.StatusForbidden, msgOtherBrowser, nil)
 		return
 	case err != nil:
 		p.page(w, r, http.StatusForbidden, msgGone, nil)
@@ -611,7 +728,11 @@ func (p *Proxy) open(w http.ResponseWriter, r *http.Request, origin, label strin
 		}
 	}
 	p.makeRoomLocked(g.UserID)
-	p.grants[hashOf(s)] = &grant{Grant: g, created: now, used: now, checked: now, target: t}
+	ng := &grant{Grant: g, created: now, used: now, checked: now, target: t}
+	if label == "" && p.Bind != nil {
+		ng.bound = signIn(r) // Bind passed above
+	}
+	p.grants[hashOf(s)] = ng
 	p.mu.Unlock()
 	http.SetCookie(w, &http.Cookie{
 		Name: CookieName(slot), Value: s, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode,
@@ -777,7 +898,7 @@ func cleanRequest(h http.Header, origin, up string) {
 // Cloudflare or a sign-in proxy in front of Collie.
 var (
 	identityPrefixes = []string{"x-forwarded-", "tailscale-", "cf-", "x-auth-request-", "x-goog-authenticated-",
-		"x-amzn-oidc-", "x-ms-client-principal"}
+		"x-amzn-oidc-", "x-ms-client-principal", "x-pomerium-", "x-authentik-", "remote-"}
 	identityHeaders = []string{"Forwarded", "X-Real-Ip", "True-Client-Ip", "Via", "Remote-User", "Remote-Email",
 		"X-Remote-User", "X-Remote-Email", "X-Webauth-User", "X-Webauth-Email"}
 )
@@ -821,13 +942,24 @@ func filterCookies(h http.Header) {
 
 // Response headers a server may not send through a preview: they would
 // reach beyond its origin, to Collie's host name (cookies, HSTS, site data
-// don't keep to ports).
+// don't keep to ports), or have the browser send reports to any host,
+// past a project's allowlist and, for NEL, about what opens on the origin
+// later.
 var dropResponse = []string{"Clear-Site-Data", "Strict-Transport-Security", "Alt-Svc", "Public-Key-Pins",
-	"Public-Key-Pins-Report-Only", "Service-Worker-Allowed"}
+	"Public-Key-Pins-Report-Only", "Service-Worker-Allowed",
+	"Report-To", "Reporting-Endpoints", "NEL", "Content-Security-Policy-Report-Only"}
 
 func cleanResponse(h http.Header, origin string, port int, allow []string) {
 	for _, k := range dropResponse {
 		h.Del(k)
+	}
+	if csp := h.Values("Content-Security-Policy"); len(csp) > 0 {
+		h.Del("Content-Security-Policy")
+		for _, v := range csp {
+			if v = withoutReports(v); v != "" {
+				h.Add("Content-Security-Policy", v)
+			}
+		}
 	}
 	if sc := h.Values("Set-Cookie"); len(sc) > 0 {
 		h.Del("Set-Cookie")
@@ -845,13 +977,39 @@ func cleanResponse(h http.Header, origin string, port int, allow []string) {
 	}
 }
 
+// withoutReports is a CSP header value (one or more policies) without its
+// report-uri and report-to directives: violation reports go to any host,
+// whatever the policy allows the page itself.
+func withoutReports(v string) string {
+	var policies []string
+	for _, pol := range strings.Split(v, ",") {
+		var keep []string
+		for _, d := range strings.Split(pol, ";") {
+			d = strings.TrimSpace(d)
+			name, _, _ := strings.Cut(d, " ")
+			name, _, _ = strings.Cut(name, "\t")
+			switch strings.ToLower(name) {
+			case "", "report-uri", "report-to":
+				continue
+			}
+			keep = append(keep, d)
+		}
+		if len(keep) > 0 {
+			policies = append(policies, strings.Join(keep, "; "))
+		}
+	}
+	return strings.Join(policies, ", ")
+}
+
 // cleanSetCookie drops Collie's cookie names and any Domain attribute (a
 // cookie for a parent domain would also reach Collie): the server's
-// cookies stay on the preview's own host.
+// cookies stay on the preview's own host. Cookies without a name are
+// dropped too: browsers send `=collie_sess=x` back as `collie_sess=x`.
 func cleanSetCookie(c string) string {
 	parts := strings.Split(c, ";")
-	name, _, _ := strings.Cut(parts[0], "=")
-	if collieOrDoor(strings.TrimSpace(name)) {
+	name, _, hasValue := strings.Cut(parts[0], "=")
+	name = strings.TrimSpace(name)
+	if !hasValue || name == "" || collieOrDoor(name) {
 		return ""
 	}
 	out := parts[:1]
@@ -909,8 +1067,10 @@ func allowCSP(origin string, allow []string) string {
 		}
 	}
 	all := strings.Join(append(srcs, hosts...), " ")
+	// (webrtc: STUN and TURN reach any host, whatever connect-src says;
+	// browsers that know the directive block it.)
 	return "default-src " + all + " data: blob: 'unsafe-inline' 'unsafe-eval'; " +
-		"form-action " + strings.Join(append([]string{"'self'"}, hosts...), " ") + "; base-uri 'self'"
+		"form-action " + strings.Join(append([]string{"'self'"}, hosts...), " ") + "; base-uri 'self'; webrtc 'block'"
 }
 
 func cspSource(entry string) string {
@@ -949,6 +1109,10 @@ var (
 	msgOtherBrowser = msg{
 		"This preview link was made for another browser. Open the preview from Collie in this browser.",
 		"このリンクは別のブラウザ用に作られたものです。このブラウザの Collie からプレビューを開いてください。",
+	}
+	msgMixed = msg{
+		"This browser holds preview cookies that Collie didn't give it for this preview. Clear this site's cookies, then open the preview again from Collie.",
+		"このブラウザに、Collie がこのプレビュー用に発行していない Cookie が入っています。このサイトの Cookie を削除してから、Collie でプレビューを開き直してください。",
 	}
 	msgOpening  = msg{"Opening the preview…", "プレビューを開いています…"}
 	msgNotFound = msg{"Not found.", "見つかりません。"}

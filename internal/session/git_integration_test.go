@@ -121,7 +121,7 @@ func TestIntegrationGitStartsTheContainer(t *testing.T) {
 	// 3. A failure of the helper itself in the running container is
 	// reported, and the container left as it is.
 	before := started()
-	if _, err := m.runGitHelper(p, alice.ID, true, time.Minute, []byte("not a request")); err == nil || !strings.Contains(err.Error(), "collie git-helper:") {
+	if _, err := m.runGitHelper(p, alice.ID, true, false, time.Minute, []byte("not a request")); err == nil || !strings.Contains(err.Error(), "collie git-helper:") {
 		t.Fatalf("helper given garbage: %v", err)
 	}
 	if after := started(); after != before {

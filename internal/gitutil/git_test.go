@@ -18,6 +18,23 @@ func git(t *testing.T, dir string, args ...string) {
 	}
 }
 
+func gitOut(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	return gitIn(t, dir, "", args...)
+}
+
+func gitIn(t *testing.T, dir, stdin string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	cmd.Stdin = strings.NewReader(stdin)
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git %v: %v", args, err)
+	}
+	return string(out)
+}
+
 func TestWorktreeDiffAgainstBase(t *testing.T) {
 	repo := t.TempDir()
 	git(t, repo, "init", "-q")
@@ -156,5 +173,87 @@ func TestInitialCommit(t *testing.T) {
 	wt := filepath.Join(t.TempDir(), "wt")
 	if err := AddWorktree(repo, wt, "collie/test", head); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// Reading the working tree (the Changes tab) or removing a worktree runs
+// nothing the repository's configuration names: in a group project it runs
+// in a member's container on a repository another member can rig.
+func TestReadsRunNothingFromTheRepository(t *testing.T) {
+	repo := t.TempDir()
+	git(t, repo, "init", "-q")
+	marker := filepath.Join(t.TempDir(), "ran")
+	cmd := "sh -c 'echo $0 >> " + marker + "'"
+	os.WriteFile(filepath.Join(repo, "a.txt"), []byte("one\n"), 0o644)
+	os.WriteFile(filepath.Join(repo, "b.bin"), []byte("one\n"), 0o644)
+	git(t, repo, "add", ".")
+	git(t, repo, "commit", "-qm", "init")
+	wt := filepath.Join(t.TempDir(), "wt")
+	if err := AddWorktree(repo, wt, "collie/x", ""); err != nil {
+		t.Fatal(err)
+	}
+	// A commit with a signature on the worktree's branch: listing it with
+	// log.showSignature would run gpg.program.
+	base := HeadCommit(repo)
+	tree := strings.TrimSpace(gitOut(t, repo, "rev-parse", "HEAD^{tree}"))
+	obj := "tree " + tree + "\nparent " + base + "\nauthor a <a@b> 0 +0000\ncommitter a <a@b> 0 +0000\n" +
+		"gpgsig -----BEGIN PGP SIGNATURE-----\n \n iQEzBAABCAAdFiEE\n -----END PGP SIGNATURE-----\n\nsigned\n"
+	signed := strings.TrimSpace(gitIn(t, wt, obj, "hash-object", "-t", "commit", "-w", "--stdin"))
+	git(t, wt, "update-ref", "HEAD", signed)
+	gpg := filepath.Join(t.TempDir(), "gpg") // run as a program, not by a shell
+	os.WriteFile(gpg, []byte("#!/bin/sh\necho gpg >> "+marker+"\n"), 0o755)
+	for k, v := range map[string]string{
+		"log.showSignature":       "true",
+		"gpg.program":             gpg,
+		"core.fsmonitor":          cmd + " fsmonitor",
+		"diff.external":           cmd + " external",
+		"diff.evil.textconv":      cmd + " textconv",
+		"diff.evil.command":       cmd + " diffcmd",
+		"filter.evil.clean":       cmd + " clean",
+		"filter.evil.process":     cmd + " process",
+		"filter.evil.required":    "true",
+		"filter.a=b.clean":        cmd + " clean-eq",
+		"filter.a=b.required":     "true",
+		"core.hooksPath":          filepath.Join(repo, "hooks"),
+		"status.submoduleSummary": "true",
+		"submodule.recurse":       "true",
+	} {
+		git(t, repo, "config", k, v)
+	}
+	os.MkdirAll(filepath.Join(repo, "hooks"), 0o755)
+	for _, h := range []string{"post-checkout", "reference-transaction", "post-index-change"} {
+		os.WriteFile(filepath.Join(repo, "hooks", h), []byte("#!/bin/sh\necho hook-"+h+" >> "+marker+"\n"), 0o755)
+	}
+	attrs := "a.txt filter=evil diff=evil\nb.bin filter=a=b diff=evil\n"
+	os.WriteFile(filepath.Join(repo, ".git", "info", "attributes"), []byte(attrs), 0o644)
+	// Dirty both, so status and diff look at their contents.
+	for _, d := range []string{repo, wt} {
+		os.WriteFile(filepath.Join(d, "a.txt"), []byte("two\n"), 0o644)
+		os.WriteFile(filepath.Join(d, "b.bin"), []byte("two\n"), 0o644)
+		os.WriteFile(filepath.Join(d, "new.txt"), []byte("new\n"), 0o644)
+	}
+	if !HasFiles(repo) {
+		t.Fatal("HasFiles = false")
+	}
+	ch, err := Diff(repo, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ch.Files) < 2 {
+		t.Fatalf("Diff found %d files", len(ch.Files))
+	}
+	if ch, err := Diff(wt, base); err != nil {
+		t.Fatal(err)
+	} else if len(ch.Commits) != 1 {
+		t.Fatalf("Diff listed commits %q", ch.Commits)
+	}
+	if err := CheckWorktrees(repo); err != nil {
+		t.Fatal(err)
+	}
+	if err := RemoveWorktree(repo, wt); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := os.ReadFile(marker); err == nil {
+		t.Fatalf("git ran what the repository names:\n%s", b)
 	}
 }

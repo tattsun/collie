@@ -62,8 +62,7 @@ func TestHostWritesStayInsideHome(t *testing.T) {
 	victim := filepath.Join(outside, "victim")
 	os.WriteFile(victim, []byte("original"), 0o600)
 	home := m.HomeDir("p1", "u1")
-	codex := m.CodexDir("u1")
-	os.MkdirAll(home, 0o700)
+	codex := filepath.Join(home, ".codex")
 	os.MkdirAll(codex, 0o700)
 	if err := m.BuildEffective("u1"); err != nil {
 		t.Fatal(err)
@@ -71,7 +70,7 @@ func TestHostWritesStayInsideHome(t *testing.T) {
 
 	// 1. temp file planted (by the agent, in its CODEX_HOME) as a symlink to a server file
 	os.Symlink(victim, filepath.Join(codex, "config.toml.collie-tmp"))
-	if err := m.PrepareCodex("u1"); err != nil {
+	if err := m.PrepareCodex("p1", "u1"); err != nil {
 		t.Fatalf("PrepareCodex: %v", err)
 	}
 	if b, _ := os.ReadFile(victim); string(b) != "original" {
@@ -81,11 +80,24 @@ func TestHostWritesStayInsideHome(t *testing.T) {
 	// 2. the config file itself replaced by a symlink pointing outside
 	os.Remove(filepath.Join(codex, "config.toml"))
 	os.Symlink(victim, filepath.Join(codex, "config.toml"))
-	if err := m.PrepareCodex("u1"); err != nil {
+	if err := m.PrepareCodex("p1", "u1"); err != nil {
 		t.Fatalf("PrepareCodex: %v", err)
 	}
 	if b, _ := os.ReadFile(victim); string(b) != "original" {
 		t.Fatalf("victim overwritten through planted config symlink: %q", b)
+	}
+
+	// 2b. the login link replaced by a symlink pointing outside
+	os.Remove(filepath.Join(codex, "auth.json"))
+	os.Symlink(victim, filepath.Join(codex, "auth.json"))
+	if err := m.PrepareCodex("p1", "u1"); err != nil {
+		t.Fatalf("PrepareCodex: %v", err)
+	}
+	if b, _ := os.ReadFile(victim); string(b) != "original" {
+		t.Fatalf("victim touched through planted auth.json symlink: %q", b)
+	}
+	if got, _ := os.Readlink(filepath.Join(codex, "auth.json")); got != codexAuthLink {
+		t.Fatalf("auth.json links to %q, want %q", got, codexAuthLink)
 	}
 
 	// 3. uploads directory symlinked outside
@@ -263,6 +275,15 @@ func TestExecPassesEnvFiles(t *testing.T) {
 	}
 	if !slices.Contains(argv, Name("p1", "u1")) {
 		t.Fatalf("container name missing: %v", argv)
+	}
+
+	// Collie's own work there (git for the Changes tab) gets none of them.
+	bare, _ := m.ExecBare("p1", "u1", "/work", "id2", []string{"true"})
+	if slices.Contains(bare, "--env-file") {
+		t.Fatalf("ExecBare passes env files: %v", bare)
+	}
+	if !slices.Contains(bare, Name("p1", "u1")) || bare[len(bare)-1] != "true" {
+		t.Fatalf("ExecBare = %v", bare)
 	}
 }
 

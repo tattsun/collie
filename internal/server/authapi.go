@@ -5,8 +5,6 @@ import (
 	"errors"
 	"log"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -40,6 +38,7 @@ func (s *Server) authRoutes() {
 	mx.HandleFunc("DELETE /api/me/passkeys/{id}", s.deletePasskey)
 	mx.HandleFunc("POST /api/me/link", s.myDeviceLink)
 	mx.HandleFunc("POST /api/me/signout-others", s.signoutOthers)
+	mx.HandleFunc("DELETE /api/me/codex", s.codexLogout)
 	mx.HandleFunc("DELETE /api/me/sessions/{id}", s.signoutDevice)
 	mx.HandleFunc("GET /api/me/env", s.getMyEnv)
 	mx.HandleFunc("PUT /api/me/env", s.putMyEnv)
@@ -106,7 +105,7 @@ func (s *Server) loginBegin(w http.ResponseWriter, r *http.Request) {
 		httpError(w, 400, err.Error())
 		return
 	}
-	opts, id, err := s.pk.BeginLogin(rp)
+	opts, id, err := s.pk.BeginLogin(rp, limitKey(clientIP(r)))
 	if err != nil {
 		beginFailed(w, err)
 		return
@@ -204,16 +203,17 @@ func (s *Server) verifyFinish(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
-	// Every cookie of the name: one a preview page planted for a narrower
-	// path comes first, and the real one must not stay valid behind it.
-	for _, c := range r.CookiesNamed(sessionCookie) {
+	// Every sign-in cookie, of both names: one a preview page planted for
+	// a narrower path comes first, and the real one must not stay valid
+	// behind it.
+	cs := append(r.CookiesNamed(hostSessionCookie), r.CookiesNamed(sessionCookie)...)
+	for _, c := range cs {
 		if _, x, ok := s.users.SessionUser(c.Value, ""); ok {
 			s.users.DeleteSession(x.Hash)
 			s.m.Hub().KillSession("", x.Hash)
 		}
 	}
-	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true})
-	http.SetCookie(w, &http.Cookie{Name: legacyCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true})
+	s.clearSessionCookies(w, r)
 	ok(w)
 }
 
@@ -389,9 +389,7 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 	}
 	codex := false
 	if sb := s.m.Sandbox(); sb != nil {
-		if fi, err := os.Stat(filepath.Join(sb.CodexDir(u.ID), "auth.json")); err == nil && fi.Size() > 2 {
-			codex = true
-		}
+		codex = sb.CodexLoggedIn(u.ID)
 	}
 	accounts := 0
 	if sb := s.m.Sandbox(); sb != nil {
@@ -507,6 +505,17 @@ func (s *Server) myDeviceLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{"url": s.inviteURL(r, secret), "expiresIn": int(auth.LinkTTL.Seconds())})
+}
+
+// codexLogout signs the user's Codex out of all of their projects.
+func (s *Server) codexLogout(w http.ResponseWriter, r *http.Request) {
+	if sb := s.m.Sandbox(); sb != nil {
+		if err := sb.CodexLogout(current(r).ID); err != nil {
+			httpError(w, 500, err.Error())
+			return
+		}
+	}
+	ok(w)
 }
 
 func (s *Server) signoutOthers(w http.ResponseWriter, r *http.Request) {
@@ -672,6 +681,11 @@ func (s *Server) setMember(w http.ResponseWriter, r *http.Request) {
 		fail(w, forbiddenOr404(s.users.Role(gid, current(r).ID) != ""))
 		return
 	}
+	// Who is in a group decides who keeps its files and secrets: a stolen
+	// session must not add its own accounts there to stay in.
+	if !s.verified(w, r) {
+		return
+	}
 	var req struct {
 		User string `json:"user"` // user name or id
 		Role string `json:"role"`
@@ -702,6 +716,9 @@ func (s *Server) removeMember(w http.ResponseWriter, r *http.Request) {
 	me := current(r)
 	if !s.canManageGroup(r, gid) && uid != me.ID { // anyone may leave
 		fail(w, forbiddenOr404(s.users.Role(gid, me.ID) != ""))
+		return
+	}
+	if uid != me.ID && !s.verified(w, r) {
 		return
 	}
 	if err := s.users.SetMember(gid, uid, ""); err != nil {

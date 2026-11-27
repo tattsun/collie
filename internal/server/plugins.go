@@ -94,7 +94,8 @@ func (s *Server) getSharedPlugins(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) putSharedPlugins(w http.ResponseWriter, r *http.Request) {
-	if !requireAdmin(w, r) {
+	// Plugins run in every user's containers, with their accounts.
+	if !requireAdmin(w, r) || !s.verified(w, r) {
 		return
 	}
 	if sb := s.sandboxOr400(w); sb != nil {
@@ -146,6 +147,10 @@ func (s *Server) putGroupPlugins(w http.ResponseWriter, r *http.Request) {
 		fail(w, session.ErrForbidden)
 		return
 	}
+	// They run in every member's containers, with that member's accounts.
+	if !s.verified(w, r) {
+		return
+	}
 	if sb := s.sandboxOr400(w); sb != nil {
 		writePlugins(w, r, sb.GroupPluginsPath(gid))
 	}
@@ -163,6 +168,11 @@ func (s *Server) getProjectPlugins(w http.ResponseWriter, r *http.Request) {
 func (s *Server) putProjectPlugins(w http.ResponseWriter, r *http.Request) {
 	set, found := decodePlugins(w, r)
 	if !found {
+		return
+	}
+	// A group project's plugins reach every member's container, like the
+	// group's own.
+	if s.m.GroupProject(actor(r), r.PathValue("id")) && !s.verified(w, r) {
 		return
 	}
 	if err := s.m.SetProjectPlugins(actor(r), r.PathValue("id"), set); err != nil {

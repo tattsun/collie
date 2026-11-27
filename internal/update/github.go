@@ -89,8 +89,14 @@ func (g github) latest(ctx context.Context) (release, error) {
 	for _, a := range body.Assets {
 		rel.assets[a.Name] = asset{url: a.URL, size: a.Size}
 	}
-	if !parseVersion(rel.Tag).ok {
+	v := parseVersion(rel.Tag)
+	if !v.ok {
 		return release{}, fmt.Errorf("latest release tag %q is not a version", rel.Tag)
+	}
+	// GitHub's pre-release flag isn't signed: anyone who can edit releases
+	// can clear it. Servers go only to plain releases, whatever it says.
+	if v.pre != "" {
+		return release{}, fmt.Errorf("the latest release %s is a pre-release; servers update only to releases", rel.Tag)
 	}
 	return rel, nil
 }

@@ -18,7 +18,7 @@ import (
 // git-helper` does in their containers.
 func gitInProcess(m *Manager) {
 	m.gitHelper = func(model.Project, string) gitutil.Ops {
-		return gitutil.Helper{Run: func(_ time.Duration, req []byte) ([]byte, error) {
+		return gitutil.Helper{Run: func(_ time.Duration, _ bool, req []byte) ([]byte, error) {
 			var out bytes.Buffer
 			gitutil.ServeHelper(bytes.NewReader(req), &out)
 			return out.Bytes(), nil
@@ -74,11 +74,10 @@ func trapRepo(t *testing.T) (repo, sprung string) {
 // project's agents can rewrite its hooks and configuration. Each operation
 // runs in the container of whoever it is for.
 func TestIsolatedProjectsGitRunsInTheirContainers(t *testing.T) {
-	// The trap works: git on the server springs it.
+	// The trap works: plain git on the server springs it (gitutil's own
+	// reads are guarded against it too, see gitutil's tests).
 	repo, sprung := trapRepo(t)
-	if _, err := gitutil.Diff(repo, ""); err != nil {
-		t.Fatal(err)
-	}
+	gitIn(t, repo, "status", "--porcelain")
 	if _, err := os.Stat(sprung); err != nil {
 		t.Fatal("git on the server didn't run the repository's fsmonitor, so this test proves nothing")
 	}

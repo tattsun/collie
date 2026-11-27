@@ -121,8 +121,15 @@ func New(m *session.Manager, terms *term.Manager, users *auth.Store, opt Options
 	if up := opt.Updater; up != nil {
 		up.OnChange = s.pushUpdate
 	}
-	// Users or groups changed: everyone's view may have changed.
-	users.OnChange = func() { m.Revalidate(s.stateForID) }
+	// Users or groups changed: everyone's view may have changed, and what
+	// someone lost (a group, admin rights, their account) ends now: shells,
+	// agents and containers too, not only what the browser shows.
+	users.OnChange = func() {
+		m.Revalidate(s.stateForID)
+		s.closeLostTerms()
+		m.EnforceAccess()
+	}
+	go m.EnforceAccess() // what was lost while Collie wasn't running
 	s.routes()
 	go func() {
 		for range time.Tick(5 * time.Minute) {
@@ -146,9 +153,52 @@ const (
 )
 
 const (
+	// hostSessionCookie is the sign-in cookie over HTTPS. With the
+	// __Host- prefix, browsers refuse one set for a narrower path or for
+	// the parent domain, and a page's script can't replace it, so a page
+	// on another port of this host name (a preview) can't plant its own
+	// sign-in in front of it.
+	hostSessionCookie = "__Host-collie_sess"
+	// sessionCookie is the sign-in cookie over plain HTTP (where __Host-
+	// cookies don't exist), and over HTTPS before the switch to the
+	// __Host- name.
 	sessionCookie = "collie_sess"
 	legacyCookie  = "collie_auth"
 )
+
+// sessionCookies returns the sign-in cookies a request carries. Once it
+// has a __Host- one, cookies of the plain name don't count: anything on
+// this host name can set those. plain reports that they came by the plain
+// name.
+func sessionCookies(r *http.Request) (cs []*http.Cookie, plain bool) {
+	if cs := r.CookiesNamed(hostSessionCookie); len(cs) > 0 {
+		return cs, false
+	}
+	return r.CookiesNamed(sessionCookie), true
+}
+
+// signedInWith resolves the request's sign-in cookies. If they belong to
+// more than one login (a page planted a cookie of someone else's account
+// next to the user's own), nobody is signed in: the user's requests must
+// never quietly go to another account. secret is the cookie that signed in.
+func (s *Server) signedInWith(r *http.Request) (u auth.User, sess auth.Session, secret string, plain, ok bool) {
+	cs, plain := sessionCookies(r)
+	for _, c := range cs {
+		_, x, valid := s.users.SessionUser(c.Value, "")
+		if !valid {
+			continue
+		}
+		if secret != "" && x.Hash != sess.Hash {
+			return auth.User{}, auth.Session{}, "", false, false
+		}
+		sess, secret = x, c.Value
+	}
+	if secret == "" {
+		return auth.User{}, auth.Session{}, "", false, false
+	}
+	u, sess, ok = s.users.SessionUser(secret, clientIP(r))
+	return u, sess, secret, plain, ok
+}
 
 // identify resolves the signed-in user. Until the first passkey exists the
 // setup token signs the owner in; after that only passkey sessions count.
@@ -162,10 +212,8 @@ func (s *Server) identify(r *http.Request) (u auth.User, sess auth.Session, lega
 	// Every cookie of the name counts: a page on another port of this host
 	// name (a preview) can set one for a narrower path, which the browser
 	// sends first.
-	for _, c := range r.CookiesNamed(sessionCookie) {
-		if u, sess, ok := s.users.SessionUser(c.Value, clientIP(r)); ok {
-			return u, sess, false, true
-		}
+	if u, sess, _, _, ok := s.signedInWith(r); ok {
+		return u, sess, false, true
 	}
 	if s.users.PasskeysExist() {
 		return auth.User{}, auth.Session{}, false, false
@@ -266,6 +314,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			httpError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
+		if ok && !legacy && !s.opt.NoAuth {
+			s.upgradeCookie(w, r)
+		}
 		if ok {
 			ctx := context.WithValue(r.Context(), userKey, u)
 			ctx = context.WithValue(ctx, sessKey, sess.Hash)
@@ -288,21 +339,73 @@ func requireAdmin(w http.ResponseWriter, r *http.Request) bool {
 // allowedHosts lists the host[:port] values a same-origin browser request
 // can carry in its Origin header.
 func (s *Server) allowedHosts(r *http.Request) []string {
-	hosts := []string{r.Host}
+	var hosts []string
+	for _, o := range s.allowedOrigins(r) {
+		hosts = append(hosts, o.host)
+	}
+	return hosts
+}
+
+// webOrigin is a scheme and host[:port] browsers reach Collie at.
+type webOrigin struct{ scheme, host string }
+
+// allowedOrigins lists the origins a same-origin browser request can carry
+// in its Origin header: the scheme counts too, so a page served over plain
+// HTTP on Collie's name can't drive the HTTPS one.
+func (s *Server) allowedOrigins(r *http.Request) []webOrigin {
+	scheme := "http"
+	if requestHTTPS(r) {
+		scheme = "https"
+	}
+	out := []webOrigin{{scheme, r.Host}}
 	// The address users open (--public-url): a reverse proxy may pass on a
 	// different Host.
 	if u, err := url.Parse(s.opt.PublicURL); err == nil && u.Host != "" {
-		hosts = append(hosts, u.Host)
+		out = append(out, webOrigin{strings.ToLower(u.Scheme), u.Host})
 	}
 	// Behind a local reverse proxy (tailscale serve) the public name may only
 	// arrive in X-Forwarded-Host. Browsers cannot set this header themselves,
 	// and it is only trusted from loopback.
 	if isLoopback(r.RemoteAddr) {
 		if h := r.Header.Get("X-Forwarded-Host"); h != "" {
-			hosts = append(hosts, h)
+			out = append(out, webOrigin{scheme, h})
 		}
 	}
-	return hosts
+	return out
+}
+
+// requestHTTPS reports whether the browser used HTTPS: directly, through
+// a local reverse proxy that says so, or through tailscale serve (*.ts.net
+// is HTTPS only, and older versions don't say so).
+func requestHTTPS(r *http.Request) bool {
+	if isHTTPS(r) {
+		return true
+	}
+	if !isLoopback(r.RemoteAddr) {
+		return false
+	}
+	h := r.Host
+	if fh := r.Header.Get("X-Forwarded-Host"); fh != "" {
+		h = fh
+	}
+	if x, _, err := net.SplitHostPort(h); err == nil {
+		h = x
+	}
+	return strings.HasSuffix(strings.ToLower(h), ".ts.net")
+}
+
+// originKey is an origin as scheme://host:port, with the default port
+// spelled out, so http://x:443 and https://x:80 match nothing.
+func originKey(scheme, host string) string {
+	scheme, host = strings.ToLower(scheme), strings.ToLower(host)
+	if _, _, err := net.SplitHostPort(host); err != nil {
+		port := "80"
+		if scheme == "https" {
+			port = "443"
+		}
+		host = net.JoinHostPort(strings.TrimSuffix(strings.TrimPrefix(host, "["), "]"), port)
+	}
+	return scheme + "://" + host
 }
 
 func normHost(h string) string {
@@ -321,8 +424,9 @@ func (s *Server) sameOrigin(r *http.Request) bool {
 		if err != nil || u.Host == "" {
 			return false // includes the opaque "null" origin
 		}
-		for _, h := range s.allowedHosts(r) {
-			if normHost(u.Host) == normHost(h) {
+		got := originKey(u.Scheme, u.Host)
+		for _, a := range s.allowedOrigins(r) {
+			if got == originKey(a.scheme, a.host) {
 				return true
 			}
 		}
@@ -342,27 +446,38 @@ func isHTTPS(r *http.Request) bool {
 }
 
 // direct reports whether the request was made on this machine, to a local
-// name, without passing through a proxy (what --no-auth requires).
+// name (what --no-auth requires). A proxy on this machine (the web UI's
+// dev server) may pass it on, but only if it says the request came from
+// this machine too: one listening on the LAN (`vite --host`) passes on
+// requests from anyone, with a Host of localhost if they like.
 func direct(r *http.Request) bool {
 	if !isLoopback(r.RemoteAddr) {
 		return false
 	}
-	for _, h := range []string{"X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto", "Forwarded", "X-Real-Ip",
-		"Via", "Cf-Connecting-Ip", "Tailscale-User-Login", "Tailscale-Funnel-Request"} {
+	for _, h := range []string{"Forwarded", "X-Real-Ip", "Via", "Cf-Connecting-Ip", "Tailscale-User-Login", "Tailscale-Funnel-Request"} {
 		if r.Header.Get(h) != "" {
 			return false
 		}
 	}
-	host := r.Host
+	for _, v := range r.Header.Values("X-Forwarded-For") {
+		for _, part := range strings.Split(v, ",") {
+			if ip := net.ParseIP(strings.TrimSpace(part)); ip == nil || !ip.IsLoopback() {
+				return false
+			}
+		}
+	}
+	if fh := r.Header.Get("X-Forwarded-Host"); fh != "" && !loopbackHost(fh) {
+		return false
+	}
+	return loopbackHost(r.Host)
+}
+
+// loopbackHost reports whether host[:port] names this machine's loopback.
+func loopbackHost(host string) bool {
 	if h, _, err := net.SplitHostPort(host); err == nil {
 		host = h
 	}
-	host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
-	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
-		return true
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
+	return localName(strings.ToLower(strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")))
 }
 
 func (s *Server) tokenOK(t string) bool {
@@ -417,15 +532,76 @@ func (s *Server) relyingParty(r *http.Request) (auth.RP, error) {
 	return rp, nil
 }
 
-func (s *Server) setSessionCookie(w http.ResponseWriter, r *http.Request, secret string) {
+// secureCookies reports whether the browser reached Collie over HTTPS, so
+// that its sign-in cookie is a Secure __Host- one.
+func (s *Server) secureCookies(r *http.Request) bool {
 	rp, _ := s.relyingParty(r)
+	return isHTTPS(r) || strings.HasPrefix(rp.Origin, "https://")
+}
+
+func (s *Server) setSessionCookie(w http.ResponseWriter, r *http.Request, secret string) {
+	name, secure := sessionCookie, s.secureCookies(r)
+	if secure {
+		name = hostSessionCookie
+	}
 	http.SetCookie(w, &http.Cookie{
-		Name: sessionCookie, Value: secret, Path: "/", HttpOnly: true,
+		Name: name, Value: secret, Path: "/", HttpOnly: true,
 		SameSite: http.SameSiteLaxMode, MaxAge: int(auth.SessionTTL.Seconds()),
-		Secure: strings.HasPrefix(rp.Origin, "https://"),
+		Secure: secure,
 	})
+	if secure {
+		// The plain name could be shadowed; it is no longer used here.
+		http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: true})
+	}
 	// The legacy token cookie is no longer needed.
 	http.SetCookie(w, &http.Cookie{Name: legacyCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true})
+}
+
+// upgradeCookie moves a sign-in made before the __Host- cookie (or over
+// plain HTTP, then opened over HTTPS) to the __Host- name.
+func (s *Server) upgradeCookie(w http.ResponseWriter, r *http.Request) {
+	if _, plain := sessionCookies(r); !plain || !s.secureCookies(r) {
+		return
+	}
+	if _, _, secret, plain, ok := s.signedInWith(r); ok && plain {
+		s.setSessionCookie(w, r, secret)
+	}
+}
+
+// clearSessionCookies expires every sign-in cookie (over HTTPS, the
+// __Host- one becomes the signed-out placeholder).
+func (s *Server) clearSessionCookies(w http.ResponseWriter, r *http.Request) {
+	if s.secureCookies(r) {
+		setSignedOut(w)
+	} else {
+		http.SetCookie(w, &http.Cookie{Name: hostSessionCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: true})
+	}
+	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true})
+	http.SetCookie(w, &http.Cookie{Name: legacyCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true})
+}
+
+// signedOutValue is the __Host- cookie of a browser nobody is signed in
+// in. While the browser holds it (HttpOnly), a page on another port of
+// Collie's host name can't create one holding someone else's sign-in, and
+// a plain-named one it plants doesn't count (sessionCookies).
+const signedOutValue = "-"
+
+func setSignedOut(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{Name: hostSessionCookie, Value: signedOutValue, Path: "/", HttpOnly: true, Secure: true,
+		SameSite: http.SameSiteLaxMode, MaxAge: 400 * 24 * 3600})
+}
+
+// holdSignInCookie gives a browser that opens Collie over HTTPS signed out
+// the placeholder (a plain-named sign-in from before is moved by the API
+// instead, see upgradeCookie).
+func (s *Server) holdSignInCookie(w http.ResponseWriter, r *http.Request) {
+	if s.opt.NoAuth || !s.secureCookies(r) || len(r.CookiesNamed(hostSessionCookie)) > 0 {
+		return
+	}
+	if _, _, _, _, ok := s.signedInWith(r); ok {
+		return
+	}
+	setSignedOut(w)
 }
 
 // ---- state & websocket ----
@@ -495,7 +671,7 @@ func (s *Server) stateFor(u auth.User, legacy bool) map[string]any {
 		"schedules": s.m.Schedules(u.ID),
 		"groups":    s.groupsFor(u),
 		"users":     s.directory(),
-		"agentCaps": s.m.AgentCaps(),
+		"agentCaps": s.m.AgentCapsFor(u.ID),
 		"usage":     s.m.UsageFor(u.ID),
 		"modes":     agentModes(),
 		"efforts":   agentEfforts(),
@@ -725,6 +901,9 @@ func (s *Server) static(w http.ResponseWriter, r *http.Request) {
 	ctype := mime.TypeByExtension(filepath.Ext(p))
 	if ctype == "" {
 		ctype = http.DetectContentType(data)
+	}
+	if p == "index.html" {
+		s.holdSignInCookie(w, r)
 	}
 	w.Header().Set("Content-Type", ctype)
 	if strings.HasPrefix(p, "assets/") {

@@ -11,10 +11,12 @@ import (
 
 // Helper runs Ops through `collie git-helper` (ServeHelper) in a project's
 // container. Run starts it there with req on its stdin and returns what it
-// printed, giving up after timeout. Everything that comes back was made in
-// the container, so it is only ever used as data.
+// printed, giving up after timeout; creds says whether git needs the user's
+// credentials (to fetch), else it runs without their tokens. Everything
+// that comes back was made in the container, so it is only ever used as
+// data.
 type Helper struct {
-	Run func(timeout time.Duration, req []byte) ([]byte, error)
+	Run func(timeout time.Duration, creds bool, req []byte) ([]byte, error)
 }
 
 type helperReq struct {
@@ -40,7 +42,8 @@ func (h Helper) call(timeout time.Duration, req helperReq) (helperResp, error) {
 	if err != nil {
 		return helperResp{}, err
 	}
-	out, err := h.Run(timeout, b)
+	// Only a new worktree fetches.
+	out, err := h.Run(timeout, req.Op == "new-worktree", b)
 	if err != nil {
 		return helperResp{}, err
 	}

@@ -14,7 +14,9 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      '/api': { target: 'http://127.0.0.1:7878', ws: true },
+      // xfwd tells Collie who is really asking: `collie --no-auth` serves
+      // only this machine, also when the dev server listens on the LAN.
+      '/api': { target: 'http://127.0.0.1:7878', ws: true, xfwd: true },
     },
   },
 })

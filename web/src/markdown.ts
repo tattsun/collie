@@ -4,10 +4,21 @@ import { Marked, type Tokens } from 'marked'
 const esc = (s: string) =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
 
+// Links from agents may only go to web pages, mail, this page's anchors or
+// Collie's own paths. Browsers drop control characters and whitespace inside
+// a URL ("java\tscript:"), so any of them refuses the link.
 function safeHref(href: string): string | null {
   const h = href.trim()
-  if (/^(https?:|mailto:|#|\/)/i.test(h) || !/^[a-z][a-z0-9+.-]*:/i.test(h)) return h
-  return null
+  if (/[\x00-\x20\x7f]/.test(h)) return null
+  if (/^(https?:|mailto:)/i.test(h) || h.startsWith('#')) return h
+  let u: URL
+  try {
+    u = new URL(h, location.origin)
+  } catch {
+    return null
+  }
+  if (u.origin !== location.origin || (u.protocol !== 'https:' && u.protocol !== 'http:')) return null
+  return h
 }
 
 const md = new Marked({ gfm: true, breaks: true })

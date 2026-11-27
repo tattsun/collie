@@ -29,8 +29,8 @@ func (m *Manager) git(p model.Project, uid string, create bool) gitutil.Ops {
 	if m.gitHelper != nil {
 		return m.gitHelper(p, uid)
 	}
-	return gitutil.Helper{Run: func(timeout time.Duration, req []byte) ([]byte, error) {
-		return m.runGitHelper(p, uid, create, timeout, req)
+	return gitutil.Helper{Run: func(timeout time.Duration, creds bool, req []byte) ([]byte, error) {
+		return m.runGitHelper(p, uid, create, creds, timeout, req)
 	}}
 }
 
@@ -41,13 +41,20 @@ const maxHelperOutput = 64 << 20
 // runGitHelper runs `collie git-helper` in the user's container for the
 // project, starting the container if it isn't running (stopped as idle or
 // by a restart of Collie, only created, or, with create, not there yet).
-func (m *Manager) runGitHelper(p model.Project, uid string, create bool, timeout time.Duration, req []byte) ([]byte, error) {
+// Only with creds does it get the user's env files (their tokens): the
+// other operations don't need them, and in a group project they run in
+// the viewer's container on a repository another member may have rigged.
+func (m *Manager) runGitHelper(p model.Project, uid string, create, creds bool, timeout time.Duration, req []byte) ([]byte, error) {
 	if m.sb == nil || !m.sb.Available() {
 		return nil, errors.New("this project runs isolated, but podman is not installed on the server")
 	}
 	run := func() ([]byte, error) {
-		argv, kill := m.sb.Exec(p.ID, uid, sandbox.Home, "git-"+model.NewID(), false, nil,
-			[]string{sandbox.CollieBinPath, "git-helper"})
+		helper := []string{sandbox.CollieBinPath, "git-helper"}
+		id := "git-" + model.NewID()
+		argv, kill := m.sb.ExecBare(p.ID, uid, sandbox.Home, id, helper)
+		if creds {
+			argv, kill = m.sb.Exec(p.ID, uid, sandbox.Home, id, false, nil, helper)
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
 		cmd := exec.CommandContext(ctx, m.sb.Podman(), argv[1:]...)
@@ -109,20 +116,25 @@ type helperError struct{ msg string }
 func (e *helperError) Error() string { return "git in the project's container: " + e.msg }
 
 // cappedBuffer keeps up to max bytes and then fails the writes, which
-// stops the process writing.
+// stops the process writing. The bytes.Buffer is a field, not embedded:
+// its ReadFrom would be promoted, and io.Copy (as os/exec uses it) would
+// take that and skip Write and the cap.
 type cappedBuffer struct {
-	bytes.Buffer
+	buf  bytes.Buffer
 	max  int
 	full bool
 }
 
 func (b *cappedBuffer) Write(p []byte) (int, error) {
-	if b.Len()+len(p) > b.max {
+	if b.buf.Len()+len(p) > b.max {
 		b.full = true
 		return 0, io.ErrShortWrite
 	}
-	return b.Buffer.Write(p)
+	return b.buf.Write(p)
 }
+
+func (b *cappedBuffer) Bytes() []byte  { return b.buf.Bytes() }
+func (b *cappedBuffer) String() string { return b.buf.String() }
 
 // removeWorktree removes a session's worktree (keeping its branch). For
 // an isolated project, git does that in the owner's container when there

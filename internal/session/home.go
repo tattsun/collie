@@ -184,12 +184,40 @@ You are the user's **Home agent** in Collie, the web app where they run coding a
 
 // writeHomeInstructions (re)writes the Home agent's instructions into its
 // workspace, where Claude Code (CLAUDE.md) and Codex (AGENTS.md) read them.
+// The workspace is the Home container's to change: whatever is there
+// under these names (a symlink to anywhere, say) is replaced, never
+// followed.
 func writeHomeInstructions(dir string) {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		log.Printf("home: instructions: %v", err)
+		return
+	}
+	defer root.Close()
 	for _, n := range []string{"CLAUDE.md", "AGENTS.md"} {
-		if err := os.WriteFile(filepath.Join(dir, n), []byte(homeInstructions), 0o600); err != nil {
+		if err := writeNew(root, n, []byte(homeInstructions)); err != nil {
 			log.Printf("home: write %s: %v", n, err)
 		}
 	}
+}
+
+// writeNew replaces name in root with a new file holding b: written to a
+// file of its own first, then renamed over whatever had the name.
+func writeNew(root *os.Root, name string, b []byte) error {
+	tmp := name + ".collie-tmp"
+	_ = root.Remove(tmp)
+	f, err := root.OpenFile(tmp, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(b); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return root.Rename(tmp, name)
 }
 
 // ---- MCP (JSON-RPC 2.0, one message per line) ----
@@ -285,7 +313,7 @@ func (m *Manager) handleRPC(tc *toolConn, line []byte) (resp any) {
 	case "tools/list":
 		tools := []map[string]any{showMediaDef}
 		if home {
-			tools = append(withModels(slices.Concat(homeToolDefs, scheduleToolDefs, homeFollowToolDefs), m.AgentCaps()), showMediaDef)
+			tools = append(withModels(slices.Concat(homeToolDefs, scheduleToolDefs, homeFollowToolDefs), m.AgentCapsFor(tc.scope.uid)), showMediaDef)
 		}
 		return rpcResult(req.ID, map[string]any{"tools": tools})
 	case "tools/call":

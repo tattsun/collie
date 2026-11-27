@@ -25,6 +25,7 @@ type Runtime struct {
 	idx        map[string]int
 	loaded     bool
 	drv        agent.Driver
+	cur        *sink // the driver's
 	gen        int
 	startGen   int
 	closing    bool
@@ -229,6 +230,11 @@ func (r *Runtime) startDriver(flip bool) (agent.Driver, error) {
 		r.m.updateSession(r.id, func(s *model.Session) { s.AgentRef = ref })
 	}
 
+	if !r.m.sessionDrivable(sess) {
+		// Whatever got here (a queued message, a schedule, Home): the
+		// agent would run with the accounts of someone who lost them.
+		return nil, setupError{errOwnerGone}
+	}
 	proj, _ := r.m.st.Project(sess.ProjectID)
 	isolated := proj.Isolated()
 	if !isolated && !r.m.isAdmin(sess.Owner) {
@@ -277,7 +283,8 @@ func (r *Runtime) startDriver(flip bool) (agent.Driver, error) {
 	gen := r.gen
 	r.startGen = gen
 	r.closing = false
-	s := &sink{r: r, gen: gen}
+	s := newSink(r, gen)
+	r.cur = s
 	if isolated {
 		sb := r.m.sb
 		execID := fmt.Sprintf("%s-%d", r.id, gen)
@@ -291,7 +298,7 @@ func (r *Runtime) startDriver(flip bool) (agent.Driver, error) {
 		cfg.Bin = r.m.cfg.CodexBin
 		if isolated {
 			cfg.Bin = "codex"
-			if err := r.m.sb.PrepareCodex(sess.Owner); err != nil {
+			if err := r.m.sb.PrepareCodex(proj.ID, sess.Owner); err != nil {
 				log.Printf("session %s: prepare codex config: %v", r.id, err)
 			}
 		}
@@ -376,9 +383,27 @@ func (r *Runtime) stop() {
 
 // ---- sink ----
 
+// sink is how one run of an agent (one driver, one generation) writes to
+// the timeline.
+//
+// The ids a driver uses come from the agent: its message and tool call
+// ids, its request numbers. What an agent prints is not trusted (any
+// process in its container can write to its stdout), so a driver only
+// ever changes items it made itself in this run. An id that already names
+// another item (a user's message, an approval of an earlier run, Collie's
+// own notices) or that would change an item's kind gets a timeline id of
+// its own instead, and the driver goes on using its id for that item.
 type sink struct {
 	r   *Runtime
 	gen int
+	// With r.mu held:
+	ids     map[string]string // driver's id → timeline id, where they differ
+	agentID map[string]string // the other way round
+	mine    map[string]string // timeline ids this run made → their kind
+}
+
+func newSink(r *Runtime, gen int) *sink {
+	return &sink{r: r, gen: gen, ids: map[string]string{}, agentID: map[string]string{}, mine: map[string]string{}}
 }
 
 func (s *sink) lock() bool {
@@ -391,33 +416,116 @@ func (s *sink) lock() bool {
 	return true
 }
 
+// timelineID is the item a driver's id stands for. s.r.mu must be held.
+func (s *sink) timelineID(id string) string {
+	if t, ok := s.ids[id]; ok {
+		return t
+	}
+	return id
+}
+
+// own is the timeline id of an item this run made. s.r.mu must be held.
+func (s *sink) own(id string) (string, string, bool) {
+	id = s.timelineID(id)
+	kind, ok := s.mine[id]
+	if _, there := s.r.idx[id]; !there {
+		ok = false
+	}
+	return id, kind, ok
+}
+
 func (s *sink) Put(it *model.Item) {
 	if !s.lock() {
 		return
 	}
 	defer s.r.mu.Unlock()
-	s.r.put(it)
+	switch it.Kind {
+	case model.KindUser, model.KindMedia:
+		// Only Collie writes the user's messages and the files shown.
+		log.Printf("session %s: ignored a %s item from the agent", s.r.id, it.Kind)
+		return
+	}
+	c := *it
+	c.By, c.Via, c.Notes, c.Media = "", "", nil, nil
+	agentID := c.ID
+	id := s.timelineID(agentID)
+	kind, mine := s.mine[id]
+	_, there := s.r.idx[id]
+	switch {
+	case there && !mine:
+		// Someone else's item: from now on the agent's id means this one.
+		id = agentID + "~" + model.NewID()
+		s.ids[agentID] = id
+		s.agentID[id] = agentID
+	case mine && kind != c.Kind:
+		// The agent used one of its ids again for something else (a tool
+		// call named like a pending approval, say): the first item keeps
+		// the id, this one is shown apart.
+		log.Printf("session %s: the agent reused %q for a %s item", s.r.id, agentID, c.Kind)
+		id = agentID + "~" + model.NewID()
+		s.agentID[id] = agentID
+	}
+	c.ID = id
+	s.mine[id] = c.Kind
+	s.r.put(&c)
 }
 
+// Update changes an item this run made. For any other id it reports false,
+// so that the driver puts a new item (which gets an id of its own).
 func (s *sink) Update(id string, fn func(*model.Item)) bool {
 	if !s.lock() {
 		return true
 	}
 	defer s.r.mu.Unlock()
-	i, ok := s.r.idx[id]
+	id, kind, ok := s.own(id)
 	if !ok {
 		return false
 	}
-	it := s.r.items[i].Clone()
+	it := s.r.items[s.r.idx[id]].Clone()
 	if it.Kind == model.KindTool && it.Tool == nil {
 		it.Tool = &model.Tool{Status: "running"}
 	}
 	if (it.Kind == model.KindApproval || it.Kind == model.KindQuestion) && it.Ask == nil {
 		it.Ask = &model.Ask{}
 	}
-	fn(it)
+	if err := applyUpdate(it, fn); err != nil {
+		// E.g. a tool's result for an id the agent gave a text block.
+		log.Printf("session %s: ignored an update of %s (%s) from the agent: %v", s.r.id, id, kind, err)
+		return true
+	}
+	it.ID, it.Kind = id, kind
 	s.r.put(it)
 	return true
+}
+
+// applyUpdate runs a driver's change on an item, which may be of another
+// kind than the driver expects (the agent chose the id).
+func applyUpdate(it *model.Item, fn func(*model.Item)) (err error) {
+	defer func() {
+		if e := recover(); e != nil {
+			err = fmt.Errorf("%v", e)
+		}
+	}()
+	fn(it)
+	return nil
+}
+
+// agentAskID is the id the running agent knows a timeline item by, if this
+// run of it made the item.
+func (r *Runtime) agentAskID(id string) (string, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	s := r.cur
+	if s == nil || s.gen != r.gen {
+		return "", false
+	}
+	if _, ok := s.mine[id]; !ok {
+		return "", false
+	}
+	if a, ok := s.agentID[id]; ok {
+		return a, true
+	}
+	return id, true
 }
 
 func (s *sink) Append(id, field, text string) {
@@ -425,10 +533,11 @@ func (s *sink) Append(id, field, text string) {
 		return
 	}
 	defer s.r.mu.Unlock()
-	i, ok := s.r.idx[id]
+	id, _, ok := s.own(id)
 	if !ok {
 		return
 	}
+	i := s.r.idx[id]
 	it := s.r.items[i].Clone()
 	switch field {
 	case "output":
@@ -481,6 +590,7 @@ func (s *sink) Meta(fn func(*model.Session)) {
 }
 
 func (s *sink) Caps(c model.Caps) {
+	c = cleanCaps(c)
 	s.r.mu.Lock()
 	if s.r.gen != s.gen {
 		s.r.mu.Unlock()
@@ -497,7 +607,9 @@ func (s *sink) Caps(c model.Caps) {
 	s.r.m.hub.publish(s.r.id, b)
 	s.r.mu.Unlock()
 	if sess, ok := s.r.m.st.Session(s.r.id); ok {
-		s.r.m.setAgentCaps(sess.Agent, c)
+		// Its owner's: the agent runs with their accounts and lists
+		// their commands.
+		s.r.m.reportCaps(sess.Owner, sess.Agent, c)
 	}
 }
 

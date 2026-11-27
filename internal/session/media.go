@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
+	"time"
 	"unicode/utf8"
 
 	"github.com/tattsun/collie/internal/model"
@@ -396,17 +398,9 @@ func (m *Manager) toolShowMedia(tc *toolConn, raw json.RawMessage) (string, erro
 			path = filepath.Join(s.Cwd, path)
 		}
 		path = filepath.Clean(path)
-		data, err := m.readAgentFile(p, s, path, maxVideo)
+		name, ext, err := m.copyAgentFile(p, s, path)
 		if err != nil {
 			return "", fmt.Errorf("%s: %w", f.Path, err)
-		}
-		ext := sniffUpload(path, data, true)
-		if ext == "" {
-			return "", fmt.Errorf("%s: Collie shows PNG, JPEG, GIF, WebP, SVG, MP4, WebM (100 MB at most) and HTML (25 MB at most) files only", f.Path)
-		}
-		name, err := m.saveSessionUpload(s.ID, data, ext)
-		if err != nil {
-			return "", err
 		}
 		media = append(media, model.Media{ID: name, Mime: uploadTypes[ext], Caption: f.Caption, Name: filepath.Base(path)})
 		names = append(names, filepath.Base(path))
@@ -417,6 +411,74 @@ func (m *Manager) toolShowMedia(tc *toolConn, raw json.RawMessage) (string, erro
 	}
 	r.sinkPut(&model.Item{ID: "m-" + model.NewID(), Kind: model.KindMedia, Text: title, Media: media, Done: true})
 	return fmt.Sprintf("Shown to the user in Collie: %s.", strings.Join(names, ", ")), nil
+}
+
+// copyAgentFile copies a file the agent shows into the uploads.
+func (m *Manager) copyAgentFile(p model.Project, s model.Session, path string) (string, string, error) {
+	release, err := m.media.acquire(s.Owner)
+	if err != nil {
+		return "", "", err
+	}
+	defer release()
+	data, err := m.readAgentFile(p, s, path, maxVideo)
+	if err != nil {
+		return "", "", err
+	}
+	ext := sniffUpload(path, data, true)
+	if ext == "" {
+		return "", "", errors.New("Collie shows PNG, JPEG, GIF, WebP, SVG, MP4, WebM (100 MB at most) and HTML (25 MB at most) files only")
+	}
+	name, err := m.saveSessionUpload(s.ID, data, ext)
+	return name, ext, err
+}
+
+// Each file show_media copies is held in memory whole (up to maxVideo)
+// while it is read: only so many at once, and only a few per user, so
+// that agents calling it on many connections can't exhaust the server's
+// memory.
+const (
+	mediaReadsPerUser = 2
+	mediaReadsAll     = 6
+)
+
+var mediaReadWait = 2 * time.Minute // a variable for tests
+
+var errMediaBusy = errors.New("Collie is busy copying other files to show; try again in a moment")
+
+type mediaGate struct {
+	mu   sync.Mutex
+	all  chan struct{}
+	user map[string]chan struct{}
+}
+
+// acquire waits for a slot to read a file for the user, and returns what
+// frees it.
+func (g *mediaGate) acquire(uid string) (func(), error) {
+	g.mu.Lock()
+	if g.all == nil {
+		g.all = make(chan struct{}, mediaReadsAll)
+		g.user = map[string]chan struct{}{}
+	}
+	u := g.user[uid]
+	if u == nil {
+		u = make(chan struct{}, mediaReadsPerUser)
+		g.user[uid] = u
+	}
+	g.mu.Unlock()
+	t := time.NewTimer(mediaReadWait)
+	defer t.Stop()
+	select {
+	case u <- struct{}{}:
+	case <-t.C:
+		return nil, errMediaBusy
+	}
+	select {
+	case g.all <- struct{}{}:
+	case <-t.C:
+		<-u
+		return nil, errMediaBusy
+	}
+	return func() { <-g.all; <-u }, nil
 }
 
 // readAgentFile reads a file as the session's agent sees it.

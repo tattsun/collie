@@ -1,7 +1,7 @@
 # Toolchain and build tasks. On a fresh server:
 #   mise trust && mise install && mise run build
 [tools]
-go = "1.27.3"
+go = "1.27.4"
 node = "26.13.1"
 
 [env]

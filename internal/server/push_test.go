@@ -71,7 +71,10 @@ func TestWebPush(t *testing.T) {
 	phone, _ := s.users.NewSession(s.owner, "iPhone", "")
 	_, phoneSess, _ := s.users.SessionUser(phone, "")
 	me := cookie(sessionCookie, phone)
-	origin := header("Origin", "https://collie.example.com")
+	origin := func(r *http.Request) {
+		r.Header.Set("Origin", "https://collie.example.com")
+		r.Header.Set("X-Forwarded-Proto", "https")
+	}
 
 	if w := s.do("GET", "/api/push", "", me); w.Code != http.StatusOK || !json.Valid(w.Body.Bytes()) {
 		t.Fatalf("key: %d %s", w.Code, w.Body.String())

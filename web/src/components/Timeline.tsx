@@ -10,6 +10,7 @@ import { cls, copyText, duration, money } from '../util'
 import { t, ts } from '../i18n'
 import { ICheck, IX, IChevron, IBrain, IShield, IDown, IStop, IBell, Spinner } from './icons'
 import { MediaCard, Thumbstrip, imagesAsMedia, openViewer } from './Media'
+import { FileChips } from './attach'
 
 // ---------------------------------------------------------------- shared bits
 
@@ -97,6 +98,7 @@ function UserMsg({ item }: { item: Item }) {
           ))}
         </div>
       )}
+      {item.files && item.files.length > 0 && <FileChips files={item.files} />}
       {item.text && <div class="bubble">{item.text}</div>}
     </div>
   )

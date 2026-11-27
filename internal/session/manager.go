@@ -117,6 +117,7 @@ func NewManager(cfg Config, st *store.Store, hub *Hub, sb *sandbox.Manager) *Man
 		st.UpdateProject(p.ID, func(x *model.Project) { x.Git = git })
 	}
 	m.loadCaps()
+	m.claimExisting()
 	go m.reaper()
 	go m.probeCaps()
 	go func() {
@@ -467,6 +468,7 @@ type CreateSessionReq struct {
 	Title     string   `json:"title"`
 	Prompt    string   `json:"prompt"`
 	Images    []string `json:"images"`
+	Files     []string `json:"files"`
 	Worktree  bool     `json:"worktree"`
 	// Set by schedules: the new session's id, and the schedule starting it.
 	id, schedule string
@@ -541,8 +543,8 @@ func (m *Manager) createSession(a Actor, req CreateSessionReq, via string) (mode
 	}
 	m.st.PutSession(s)
 	m.pushSession(s)
-	if strings.TrimSpace(req.Prompt) != "" || len(req.Images) > 0 {
-		if err := m.send(a, sid, req.Prompt, req.Images, via); err != nil {
+	if strings.TrimSpace(req.Prompt) != "" || len(req.Images) > 0 || len(req.Files) > 0 {
+		if err := m.send(a, sid, req.Prompt, req.Images, req.Files, via); err != nil {
 			return s, err
 		}
 	}
@@ -605,11 +607,11 @@ func validMode(agentName, mode string) bool {
 	return agentName == "claude" && mode == "dontAsk"
 }
 
-func (m *Manager) Send(a Actor, sid, text string, imageIDs []string) error {
-	return m.send(a, sid, text, imageIDs, "")
+func (m *Manager) Send(a Actor, sid, text string, imageIDs, fileIDs []string) error {
+	return m.send(a, sid, text, imageIDs, fileIDs, "")
 }
 
-func (m *Manager) send(a Actor, sid, text string, imageIDs []string, via string) error {
+func (m *Manager) send(a Actor, sid, text string, imageIDs, fileIDs []string, via string) error {
 	sess, err := m.visibleSession(a.ID, sid)
 	if err != nil {
 		return err
@@ -635,23 +637,18 @@ func (m *Manager) send(a Actor, sid, text string, imageIDs []string, via string)
 		}
 		imgs = append(imgs, agent.Image{Path: p, Mime: mime.TypeByExtension(filepath.Ext(p))})
 	}
-	if sess.Agent == "codex" && len(imgs) > 0 {
-		// Codex takes image paths: make them visible inside the container.
-		if proj, ok := m.st.Project(sess.ProjectID); ok && proj.Isolated() && m.sb != nil {
-			for i := range imgs {
-				ap, err := m.sb.StageUpload(proj.ID, sess.Owner, imgs[i].Path)
-				if err != nil {
-					return err
-				}
-				imgs[i].AgentPath = ap
-			}
-		}
+	files, err := m.attachedFiles(fileIDs)
+	if err != nil {
+		return err
 	}
 	text = strings.TrimRight(text, " \t\r\n")
-	if text == "" && len(imgs) == 0 {
+	if text == "" && len(imgs) == 0 && len(files) == 0 {
 		return errors.New("empty message")
 	}
-	it := &model.Item{ID: "u-" + model.NewID(), Kind: model.KindUser, Text: text, Images: imageIDs, Done: true, By: a.ID, Via: via}
+	if err := m.claimSent(sid, imageIDs, files); err != nil {
+		return err
+	}
+	it := &model.Item{ID: "u-" + model.NewID(), Kind: model.KindUser, Text: text, Images: imageIDs, Files: files, Done: true, By: a.ID, Via: via}
 	r.mu.Lock()
 	r.ensureLoaded()
 	r.put(it)
@@ -662,7 +659,7 @@ func (m *Manager) send(a Actor, sid, text string, imageIDs []string, via string)
 			s.Archived = false
 		}
 	})
-	r.enqueue(agent.Input{ItemID: it.ID, Text: text, Images: imgs})
+	r.enqueue(agent.Input{ItemID: it.ID, Text: text, Images: imgs}, files)
 	return nil
 }
 
@@ -837,8 +834,10 @@ func (m *Manager) deleteSession(sid string, removeWorktree bool) error {
 	if !ok {
 		return errSessionGone
 	}
+	var rf refs
 	if r, err := m.runtime(sid); err == nil {
 		r.stop()
+		rf = r.refs()
 	}
 	if s.Worktree && removeWorktree {
 		if p, ok := m.st.Project(s.ProjectID); ok {
@@ -848,6 +847,7 @@ func (m *Manager) deleteSession(sid string, removeWorktree bool) error {
 	m.mu.Lock()
 	delete(m.rts, sid)
 	m.mu.Unlock()
+	m.deleteAttachments(s, rf)
 	m.st.DeleteSession(sid)
 	m.pushSessionDeleted(sid)
 	return nil
@@ -947,7 +947,12 @@ func (m *Manager) BusySessions(staleWaiting time.Duration) int {
 // reaper stops idle agent processes and unloads unused timelines.
 func (m *Manager) reaper() {
 	t := time.NewTicker(time.Minute)
+	var swept time.Time
 	for range t.C {
+		if time.Since(swept) > time.Hour {
+			m.sweepAttachments()
+			swept = time.Now()
+		}
 		m.mu.Lock()
 		rts := make([]*Runtime, 0, len(m.rts))
 		for _, r := range m.rts {

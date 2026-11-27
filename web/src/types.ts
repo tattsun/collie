@@ -287,11 +287,20 @@ export interface Item {
   result?: Result
   /** upload names: attached to a user message, or images in a tool's result */
   images?: string[]
+  /** other files attached to a user message (/api/files/<id>) */
+  files?: AttachedFile[]
   media?: Media[]
   by?: string
   /** home: sent for the user by their Home agent; schedule: by one of their schedules; collie: Collie's notification to Home */
   via?: 'home' | 'schedule' | 'collie'
   notes?: Note[]
+}
+
+/** A file a user attached to a message. */
+export interface AttachedFile {
+  id: string
+  name: string
+  size: number
 }
 
 /** A change in a session a Home agent watches, as Collie told it. */

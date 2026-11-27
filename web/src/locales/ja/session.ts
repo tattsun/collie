@@ -164,7 +164,6 @@ const ja: Record<string, string> = {
   'Reply to decline with instructions…': '指示を添えて拒否する返信を入力…',
   'Send a follow-up…': '追加の指示を送信…',
   'Message {agent}…': '{agent} にメッセージ…',
-  'Attach image': '画像を添付',
   Stop: '停止',
   'Stop (Esc)': '停止 (Esc)',
   Send: '送信',

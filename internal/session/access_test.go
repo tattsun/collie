@@ -93,7 +93,7 @@ func TestVisibility(t *testing.T) {
 	if !m.SessionVisible("alice", s) || m.sessionDrivable(s) {
 		t.Error("an ex-member's shared session should be visible but read-only")
 	}
-	if err := m.Send(Actor{ID: "alice"}, "t-bob", "hi", nil); !errors.Is(err, errOwnerGone) {
+	if err := m.Send(Actor{ID: "alice"}, "t-bob", "hi", nil, nil); !errors.Is(err, errOwnerGone) {
 		t.Errorf("driving an ex-member's session: %v", err)
 	}
 }
@@ -126,7 +126,7 @@ func TestHostProjectsAreAdminOnly(t *testing.T) {
 	if _, err := m.CreateSession(bob, CreateSessionReq{ProjectID: "ph", Agent: "claude"}); !errors.Is(err, errHostOnly) {
 		t.Errorf("member created a session in a host project: %v", err)
 	}
-	if err := m.Send(bob, "hs", "rm -rf ~", nil); !errors.Is(err, errHostOnly) {
+	if err := m.Send(bob, "hs", "rm -rf ~", nil, nil); !errors.Is(err, errHostOnly) {
 		t.Errorf("member drove a host agent: %v", err)
 	}
 	if err := m.Reply(bob, "hs", "ask-1", agent.Reply{Option: "allow"}); !errors.Is(err, errHostOnly) {

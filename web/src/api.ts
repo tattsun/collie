@@ -1,6 +1,7 @@
 import { t } from './i18n'
 import { authed } from './store'
 import { confirmIdentity } from './authflow'
+import type { AttachedFile } from './types'
 
 export class ApiError extends Error {
   constructor(message: string, public status: number) {
@@ -52,6 +53,16 @@ async function shrink(file: File): Promise<Blob> {
   } catch {
     return file
   }
+}
+
+/** Attach any other file (documents, spreadsheets…), kept as it is. */
+export async function uploadFile(file: File): Promise<AttachedFile> {
+  const fd = new FormData()
+  fd.append('file', file, file.name || 'file')
+  const r = await fetch('/api/files', { method: 'POST', body: fd, credentials: 'same-origin' })
+  const data = await r.json().catch(() => ({}))
+  if (!r.ok) throw new ApiError(data.error || r.statusText, r.status)
+  return data
 }
 
 export async function uploadImage(file: File): Promise<{ id: string; url: string }> {

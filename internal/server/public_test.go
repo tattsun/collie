@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -72,6 +73,17 @@ func (s *testServer) do(method, path, body string, opts ...reqOpt) *httptest.Res
 	} else {
 		r = httptest.NewRequest(method, path, nil)
 	}
+	return s.serve(r, opts...)
+}
+
+// doBody sends a request with a body of the given content type.
+func (s *testServer) doBody(method, path string, body io.Reader, ctype string, opts ...reqOpt) *httptest.ResponseRecorder {
+	r := httptest.NewRequest(method, path, body)
+	r.Header.Set("Content-Type", ctype)
+	return s.serve(r, opts...)
+}
+
+func (s *testServer) serve(r *http.Request, opts ...reqOpt) *httptest.ResponseRecorder {
 	r.RemoteAddr = "127.0.0.1:50000"
 	r.Host = "collie.example.com"
 	for _, o := range opts {

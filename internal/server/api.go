@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
+	"mime"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -48,6 +51,8 @@ func (s *Server) apiRoutes() {
 
 	mx.HandleFunc("POST /api/uploads", s.upload)
 	mx.HandleFunc("GET /api/uploads/{name}", s.getUpload)
+	mx.HandleFunc("POST /api/files", s.uploadFile)
+	mx.HandleFunc("GET /api/files/{id}", s.getFile)
 
 	mx.HandleFunc("GET /api/terms", s.listTerms)
 	mx.HandleFunc("POST /api/terms", s.createTerm)
@@ -262,12 +267,13 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Text   string   `json:"text"`
 		Images []string `json:"images"`
+		Files  []string `json:"files"`
 	}
 	if err := decode(r, &req); err != nil {
 		httpError(w, 400, err.Error())
 		return
 	}
-	if err := s.m.Send(actor(r), r.PathValue("id"), req.Text, req.Images); err != nil {
+	if err := s.m.Send(actor(r), r.PathValue("id"), req.Text, req.Images, req.Files); err != nil {
 		fail(w, err)
 		return
 	}
@@ -413,6 +419,76 @@ func (s *Server) getUpload(w http.ResponseWriter, r *http.Request) {
 		h.Set("Referrer-Policy", "no-referrer")
 	}
 	http.ServeFile(w, r, p)
+}
+
+// Attached files are any other file a user attaches to a message. Like
+// uploads, any signed-in user may fetch one by its random id. They are
+// only ever downloaded, never shown as a page of Collie's origin.
+func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, session.MaxFile+1<<20)
+	mr, err := r.MultipartReader()
+	if err != nil {
+		httpError(w, 400, "missing file")
+		return
+	}
+	for {
+		part, err := mr.NextPart()
+		if err != nil {
+			var tooBig *http.MaxBytesError
+			if errors.As(err, &tooBig) {
+				httpError(w, 413, session.ErrFileTooBig.Error())
+			} else {
+				httpError(w, 400, "missing file")
+			}
+			return
+		}
+		if part.FormName() != "file" {
+			part.Close()
+			continue
+		}
+		f, err := s.m.SaveFile(part.FileName(), part)
+		part.Close()
+		var tooBig *http.MaxBytesError
+		switch {
+		case errors.Is(err, session.ErrFileTooBig), errors.As(err, &tooBig):
+			httpError(w, 413, session.ErrFileTooBig.Error())
+		case err != nil:
+			httpError(w, 500, err.Error())
+		default:
+			writeJSON(w, f)
+		}
+		return
+	}
+}
+
+func (s *Server) getFile(w http.ResponseWriter, r *http.Request) {
+	p, f, ok := s.m.AttachedFile(r.PathValue("id"))
+	if !ok {
+		httpError(w, 404, "not found")
+		return
+	}
+	fh, err := os.Open(p)
+	if err != nil {
+		httpError(w, 404, "not found")
+		return
+	}
+	defer fh.Close()
+	fi, err := fh.Stat()
+	if err != nil {
+		httpError(w, 500, err.Error())
+		return
+	}
+	h := w.Header()
+	h.Set("Content-Type", "application/octet-stream")
+	disp := mime.FormatMediaType("attachment", map[string]string{"filename": f.Name})
+	if disp == "" {
+		disp = "attachment"
+	}
+	h.Set("Content-Disposition", disp)
+	h.Set("Content-Security-Policy", "sandbox; default-src 'none'")
+	h.Set("Cache-Control", "private, max-age=31536000, immutable")
+	h.Set("Cross-Origin-Resource-Policy", "same-origin")
+	http.ServeContent(w, r, "", fi.ModTime(), fh)
 }
 
 // ---- terminals (each visible only to the user who opened it) ----

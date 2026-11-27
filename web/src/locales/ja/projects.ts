@@ -152,7 +152,6 @@ const ja: Record<string, string> = {
   'Create a project': 'プロジェクトを作成',
   'What should we work on?': '何に取り組みますか？',
   'Describe a task for {agent}…': '{agent} に頼むタスクを入力…',
-  'Attach image': '画像を添付',
   'Start session': 'セッションを開始',
   Project: 'プロジェクト',
   'Claude Code plugins installed for every member’s agents in this project. Plugins enabled in the repository’s {file} are installed too.':

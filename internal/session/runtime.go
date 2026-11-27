@@ -31,12 +31,19 @@ type Runtime struct {
 	lastActive time.Time
 	caps       model.Caps
 
-	queue chan agent.Input
+	queue chan queued
 	once  sync.Once
 }
 
+// queued is input waiting for the agent, with the files attached to it
+// (copied for the agent on delivery, see stageInput).
+type queued struct {
+	agent.Input
+	files []model.File
+}
+
 func newRuntime(m *Manager, id string) *Runtime {
-	return &Runtime{m: m, id: id, idx: map[string]int{}, lastActive: time.Now(), queue: make(chan agent.Input, 64)}
+	return &Runtime{m: m, id: id, idx: map[string]int{}, lastActive: time.Now(), queue: make(chan queued, 64)}
 }
 
 // ensureLoaded must be called with r.mu held.
@@ -145,8 +152,13 @@ func (r *Runtime) page(before, limit int) ([]*model.Item, int) {
 // worker delivers user input to the agent strictly in order, starting (or
 // resuming) the agent process when needed.
 func (r *Runtime) worker() {
-	for in := range r.queue {
+	for q := range r.queue {
 		d, err := r.ensureDriver()
+		if err != nil {
+			r.fail(err)
+			continue
+		}
+		in, err := r.m.stageInput(r.id, q)
 		if err != nil {
 			r.fail(err)
 			continue
@@ -157,9 +169,9 @@ func (r *Runtime) worker() {
 	}
 }
 
-func (r *Runtime) enqueue(in agent.Input) {
+func (r *Runtime) enqueue(in agent.Input, files []model.File) {
 	r.once.Do(func() { go r.worker() })
-	r.queue <- in
+	r.queue <- queued{in, files}
 }
 
 func (r *Runtime) driver() agent.Driver {
@@ -296,6 +308,7 @@ func (r *Runtime) startDriver(flip bool) (agent.Driver, error) {
 		if toolCmd != "" {
 			cfg.ExtraArgs = collieClaudeArgs(cfg.ExtraArgs, toolCmd, toolArgs, allowed)
 		}
+		cfg.ExtraArgs = append(cfg.ExtraArgs, r.m.claudeStageArgs(proj, sess)...)
 		d = agent.NewClaude(cfg, s)
 	}
 	r.drv = d
@@ -500,7 +513,7 @@ func (s *sink) Usage(u model.Usage) {
 	}
 }
 
-func (s *sink) Blob(data []byte) string { return s.r.m.blob(data) }
+func (s *sink) Blob(data []byte) string { return s.r.m.blob(s.r.id, data) }
 
 func (s *sink) Exited(err error) {
 	r := s.r

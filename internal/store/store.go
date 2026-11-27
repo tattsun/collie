@@ -39,7 +39,7 @@ type Store struct {
 }
 
 func Open(dir string) (*Store, error) {
-	for _, d := range []string{dir, filepath.Join(dir, "sessions"), filepath.Join(dir, "uploads"), filepath.Join(dir, "worktrees")} {
+	for _, d := range []string{dir, filepath.Join(dir, "sessions"), filepath.Join(dir, "uploads"), filepath.Join(dir, "files"), filepath.Join(dir, "worktrees")} {
 		if err := os.MkdirAll(d, 0o700); err != nil {
 			return nil, err
 		}
@@ -390,4 +390,5 @@ func (s *Store) CompactItems(sid string, items []*model.Item) error {
 }
 
 func (s *Store) UploadsDir() string   { return filepath.Join(s.dir, "uploads") }
+func (s *Store) FilesDir() string     { return filepath.Join(s.dir, "files") }
 func (s *Store) WorktreesDir() string { return filepath.Join(s.dir, "worktrees") }

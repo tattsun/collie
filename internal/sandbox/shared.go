@@ -458,19 +458,46 @@ func (m *Manager) PrepareCodex(userID string) error {
 	return copyInto(root, src, "config.toml")
 }
 
-// StageUpload copies an uploaded image into the user's container home for
-// the project and returns its path inside the container.
-func (m *Manager) StageUpload(projectID, userID, hostPath string) (string, error) {
-	name := filepath.Base(hostPath)
+// StageUpload copies a file the user attached into their container home
+// for the project, as name (a path relative to the home), and returns its
+// path inside the container.
+func (m *Manager) StageUpload(projectID, userID, hostPath, name string) (string, error) {
 	root, err := os.OpenRoot(m.HomeDir(projectID, userID))
 	if err != nil {
 		return "", err
 	}
 	defer root.Close()
-	if err := copyInto(root, hostPath, ".collie-uploads/"+name); err != nil {
+	if err := copyInto(root, hostPath, name); err != nil {
 		return "", err
 	}
-	return Home + "/.collie-uploads/" + name, nil
+	return Home + "/" + name, nil
+}
+
+// RemoveStaged deletes a file or folder (relative to the home) from the
+// user's container home for the project.
+func (m *Manager) RemoveStaged(projectID, userID, name string) error {
+	root, err := os.OpenRoot(m.HomeDir(projectID, userID))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	defer root.Close()
+	return root.RemoveAll(name)
+}
+
+// StageDir creates a folder (relative to the home) in the user's container
+// home for the project and returns its path inside the container.
+func (m *Manager) StageDir(projectID, userID, name string) (string, error) {
+	root, err := os.OpenRoot(m.HomeDir(projectID, userID))
+	if err != nil {
+		return "", err
+	}
+	defer root.Close()
+	if err := root.MkdirAll(name, 0o700); err != nil {
+		return "", err
+	}
+	return Home + "/" + name, nil
 }
 
 // claudeKey is how Claude Code names a project directory under

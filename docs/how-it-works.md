@@ -14,6 +14,7 @@ A **project** is a folder on the server. You can create a new one, clone a repos
 - With **Isolated worktree**, a session gets its own `collie/<id>` branch and checkout, so several sessions can work on the same repository at once. When it is created, Collie fetches the branch's upstream (or the remote's default branch if it has none) and starts from its tip if your local branch is behind. Your local branch is never moved, and unpushed local commits are kept. In an isolated project this happens in the project's container, so the fetch uses that project's network setting and its agents' credentials. A repository with no commits yet (a new project, a clone of an empty repository) gets an empty "Initial commit" to branch off when its first worktree session starts.
 - An agent process stops after 30 idle minutes. Your next message resumes the conversation, and that works after a server restart too.
 - Messages you send while the agent is running reach it as extra instructions. A message typed while an approval is waiting denies the request and passes your text along with the denial.
+- Deleting a session also deletes, from the server, the images and files in it: what was attached, the agent's screenshots and what it showed you, and the copies Collie gave the agent. Copies the agent made itself, for example into the project, stay.
 
 ## Schedules
 
@@ -32,6 +33,14 @@ Agents in every session can show you files right in the chat. Try asking "make t
 
 - Playwright records video as WebM. If a video won't play on your iPhone, ask for MP4.
 - HTML pages open in a sandbox without network access, so they have to be a single file with styles and images embedded. The agent is told this. Scripts run only after you press **Run scripts**.
+
+## Attaching files
+
+Besides images, you can attach any file to a message, such as a Word brief, a spreadsheet or a PDF: with the paperclip, by pasting, or by dropping it on the message box. Each file can be up to 25 MB.
+
+- The agent gets a copy to read, outside the project, and the message tells it where. If the file belongs in the project, ask the agent to put it there.
+- Everyone who can see the session can download its attachments.
+- Images and files you attach but don't send are deleted after a day.
 
 ## Notifications
 

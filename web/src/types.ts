@@ -152,6 +152,49 @@ export interface Session {
   shared?: boolean
   /** work the agent has running in the background, past the end of its turn */
   tasks?: BgTask[]
+  /** the schedule that started it */
+  schedule?: string
+}
+
+/** Starts a session with the same instructions at set times (mine only). */
+export interface Schedule {
+  id: string
+  owner: string
+  projectId: string
+  title?: string
+  prompt: string
+  agent: Agent
+  model?: string
+  effort?: string
+  mode: string
+  worktree?: boolean
+  shared?: boolean
+  /** five-field cron expression, read in tz */
+  cron: string
+  tz: string
+  paused?: boolean
+  /** next planned run (unix ms) */
+  nextAt?: number
+  createdAt: number
+  updatedAt: number
+  /** newest first */
+  runs?: ScheduleRun[]
+}
+
+export interface ScheduleRun {
+  id: string
+  /** schedule: on time · catchup: late, Collie was not running · manual: run now */
+  trigger: 'schedule' | 'catchup' | 'manual'
+  at: number
+  planned?: number
+  /** planned times this one run stands for (Collie was not running) */
+  missed?: number
+  /** repeated skips folded into one entry */
+  count?: number
+  sessionId?: string
+  status: 'running' | 'ok' | 'error' | 'skipped'
+  error?: string
+  endedAt?: number
 }
 
 export interface BgTask {
@@ -244,7 +287,7 @@ export interface Item {
   images?: string[]
   media?: Media[]
   by?: string
-  via?: 'home'
+  via?: 'home' | 'schedule'
 }
 
 export interface Command {

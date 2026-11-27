@@ -36,7 +36,7 @@ var (
 )
 
 // homeReadTools never change anything, so agents may call them unasked.
-var homeReadTools = []string{"list_projects", "list_sessions", "read_session"}
+var homeReadTools = []string{"list_projects", "list_sessions", "read_session", "list_schedules"}
 
 func (m *Manager) homeOf(uid string) (model.Project, bool) {
 	for _, p := range m.st.Projects() {
@@ -157,6 +157,7 @@ You are the user's **Home agent** in Collie, the web app where they run coding a
 - ` + "`list_projects`, `list_sessions`, `read_session`" + `: the user's projects, what each session is doing, and what was said in it.
 - ` + "`start_session`" + `: start an agent in a project with your instructions. It runs with the user's default model and reasoning effort for that agent unless you pass ` + "`model` / `effort`" + `; the effort cannot be changed once it runs.
 - ` + "`send_message`" + `: give an existing session more instructions.
+- ` + "`create_schedule`, `list_schedules`, `delete_schedule`" + `: start a session in a project (or here in Home) at set times, with the same instructions every time.
 - ` + "`show_media`" + `: show the user images, videos or an HTML page right in this chat.
 
 ## How to work
@@ -167,6 +168,7 @@ You are the user's **Home agent** in Collie, the web app where they run coding a
 - The user's instructions for all sessions (set in Collie) reach every session they start, including yours and the ones you start, so don't repeat them in prompts.
 - Confirm with the user before starting work that is large, costly or hard to undo. Clearly requested, simple tasks need no confirmation.
 - After starting or instructing a session, tell the user its title and project so they can follow it in Collie. When asked how it is going, check with ` + "`read_session`" + `.
+- For recurring work ("every morning at 9…", "every Friday at 18:00…"), make a schedule with ` + "`create_schedule`" + `. Its runs start while the user may be away: write instructions that stand on their own, and use the user's time zone (ask if you cannot tell). Tell them when it first runs; they can pause, change or run it in Collie under Schedules.
 - Answer in the user's language. Keep replies short and conversational; they are often read on a phone.
 `
 
@@ -224,7 +226,7 @@ func toolText(text string, isErr bool) map[string]any {
 }
 
 const (
-	homeServerInstructions  = "Collie: see the user's projects and sessions, start or instruct sessions in their projects, and show the user files with show_media."
+	homeServerInstructions  = "Collie: see the user's projects and sessions, start or instruct sessions in their projects, schedule recurring sessions, and show the user files with show_media."
 	mediaServerInstructions = "Collie is the app the user follows this session in, often on a phone. show_media puts files in front of them: screenshots, design options, " +
 		"screen recordings (e.g. Playwright's recordVideo), HTML reports. Use it when seeing the result helps them review your work."
 )
@@ -268,7 +270,7 @@ func (m *Manager) handleRPC(tc *toolConn, line []byte) (resp any) {
 	case "tools/list":
 		tools := []map[string]any{showMediaDef}
 		if home {
-			tools = append(withModels(homeToolDefs, m.AgentCaps()), showMediaDef)
+			tools = append(withModels(append(slices.Clone(homeToolDefs), scheduleToolDefs...), m.AgentCaps()), showMediaDef)
 		}
 		return rpcResult(req.ID, map[string]any{"tools": tools})
 	case "tools/call":
@@ -373,7 +375,8 @@ var homeToolDefs = []map[string]any{
 }
 
 // withModels returns the tool definitions with the models each agent
-// offers (as last reported) added to start_session's model description.
+// offers (as last reported) added to the model descriptions of
+// start_session and create_schedule.
 func withModels(defs []map[string]any, caps map[string]model.Caps) []map[string]any {
 	var known []string
 	for _, name := range []string{"claude", "codex"} {
@@ -387,7 +390,7 @@ func withModels(defs []map[string]any, caps map[string]model.Caps) []map[string]
 	}
 	out := slices.Clone(defs)
 	for i, d := range out {
-		if d["name"] != "start_session" || len(known) == 0 {
+		if (d["name"] != "start_session" && d["name"] != "create_schedule") || len(known) == 0 {
 			continue
 		}
 		schema := maps.Clone(d["inputSchema"].(map[string]any))
@@ -454,6 +457,9 @@ func (m *Manager) callTool(uid, name string, raw json.RawMessage) (string, error
 			return "", err
 		}
 		return m.toolSendMessage(a, p.Session, p.Text)
+	}
+	if text, ok, err := m.callScheduleTool(a, name, raw); ok {
+		return text, err
 	}
 	return "", fmt.Errorf("unknown tool %q", name)
 }
@@ -680,8 +686,11 @@ func formatItem(it *model.Item) string {
 	switch it.Kind {
 	case model.KindUser:
 		who := "user"
-		if it.Via == "home" {
+		switch it.Via {
+		case "home":
 			who = "user (sent by you, the Home agent)"
+		case "schedule":
+			who = "user (sent by one of their schedules)"
 		}
 		text := clip(it.Text, 4000)
 		if len(it.Images) > 0 {

@@ -1,6 +1,6 @@
 import { signal, computed, batch } from '@preact/signals'
 import { t, ts } from './i18n'
-import type { AgentUsage, Caps, GroupInfo, Item, ModeInfo, Project, SandboxStatus, Session, SessionPrefs, TermInfo, UpdateStatus, UserInfo } from './types'
+import type { AgentUsage, Caps, GroupInfo, Item, ModeInfo, Project, SandboxStatus, Schedule, Session, SessionPrefs, TermInfo, UpdateStatus, UserInfo } from './types'
 
 // ---------------------------------------------------------------- state
 
@@ -10,6 +10,8 @@ export const conn = signal<'connecting' | 'online' | 'offline'>('connecting')
 export const projects = signal<Project[]>([])
 export const homeProject = signal<Project | null>(null)
 export const sessions = signal<Session[]>([])
+/** My schedules (nobody else's are ever sent). */
+export const schedules = signal<Schedule[]>([])
 export const agentCaps = signal<Record<string, Caps>>({})
 /** My agent accounts' plan usage, by agent. */
 export const usage = signal<Record<string, AgentUsage>>({})
@@ -57,6 +59,7 @@ export const projectById = computed(() => {
   return m
 })
 export const sessionById = computed(() => new Map(sessions.value.map((s) => [s.id, s])))
+export const scheduleById = computed(() => new Map(schedules.value.map((s) => [s.id, s])))
 
 export const attention = computed(() =>
   sessions.value.filter((s) => !s.archived && (s.status === 'waiting' || s.status === 'error' || s.unread)),
@@ -65,7 +68,7 @@ export const attention = computed(() =>
 // ---------------------------------------------------------------- routing
 
 export interface Route {
-  name: 'home' | 'new' | 'session' | 'projects' | 'project' | 'account' | 'groups' | 'admin'
+  name: 'home' | 'new' | 'session' | 'projects' | 'project' | 'account' | 'groups' | 'admin' | 'schedules'
   id?: string
   tab?: string
   query: URLSearchParams
@@ -82,6 +85,7 @@ function parseHash(): Route {
   if (parts[0] === 'account') return { name: 'account', tab: parts[1], query }
   if (parts[0] === 'groups') return { name: 'groups', id: parts[1], query }
   if (parts[0] === 'admin') return { name: 'admin', tab: parts[1] || 'users', query }
+  if (parts[0] === 'schedules') return { name: 'schedules', id: parts[1], query }
   if (parts[0] === 'new') return { name: 'new', query }
   return { name: 'home', query }
 }
@@ -293,6 +297,7 @@ export function applyState(d: any) {
     homeProject.value = all.find((p) => p.home) || null
     projects.value = all.filter((p) => !p.home)
     sessions.value = d.sessions || []
+    schedules.value = d.schedules || []
     agentCaps.value = d.agentCaps || {}
     usage.value = d.usage || {}
     modes.value = d.modes || {}
@@ -343,6 +348,17 @@ function onMessage(m: any) {
       break
     case 'session_del':
       sessions.value = sessions.value.filter((s) => s.id !== m.id)
+      break
+    case 'schedule': {
+      const list = schedules.value.slice()
+      const i = list.findIndex((x) => x.id === m.schedule.id)
+      if (i >= 0) list[i] = m.schedule
+      else list.push(m.schedule)
+      schedules.value = list
+      break
+    }
+    case 'schedule_del':
+      schedules.value = schedules.value.filter((s) => s.id !== m.id)
       break
     case 'project': {
       if (m.project.home) {

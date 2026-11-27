@@ -3040,3 +3040,239 @@ pre.out.error-box {
   font-family: var(--mono);
   font-size: 12.5px;
 }
+
+/* ---------------------------------------------------------------- schedules */
+.sched-row {
+  align-items: center;
+  gap: 8px;
+  padding: 7px 11px;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+.sched-row .icon {
+  margin-top: 0;
+}
+.sched-row .srow-title {
+  font-weight: 500;
+}
+.srow-sched,
+.sub-link.sched {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--accent);
+}
+.sched-intro {
+  margin: 0 0 14px;
+  line-height: 1.5;
+}
+.sched-card .icon {
+  color: var(--accent);
+  flex: none;
+}
+.sched-card.paused .icon {
+  color: var(--dim);
+}
+.sched-card.paused .sched-next {
+  color: var(--amber);
+}
+.sched-next {
+  color: var(--dim);
+  margin-top: 2px;
+}
+.sched-last {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  flex: none;
+}
+.run-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--border2);
+}
+.run-dot.ok {
+  background: var(--green);
+}
+.run-dot.error {
+  background: var(--red);
+}
+.run-dot.skipped {
+  background: transparent;
+  box-shadow: inset 0 0 0 2px var(--border2);
+}
+.sched-empty {
+  margin-top: 8px;
+  line-height: 1.6;
+}
+.sched-empty p {
+  margin: 0;
+}
+.sched-empty ul {
+  margin: 6px 0 10px;
+  padding-left: 1.2em;
+}
+.sched-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.sched-when {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.sched-when .icon {
+  color: var(--accent);
+}
+.sched-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 12.5px;
+  color: var(--dim);
+}
+.sched-prompt {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 13.5px;
+  line-height: 1.55;
+  max-height: 14em;
+  overflow-y: auto;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+.sched-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 12px 0 18px;
+}
+.sched-actions .btn.danger {
+  margin-left: auto;
+}
+.sched-h {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin: 0 0 8px;
+}
+.run-list {
+  padding: 4px 0;
+}
+.run-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  color: inherit;
+  text-decoration: none;
+}
+.run-row + .run-row {
+  border-top: 1px solid var(--border);
+}
+.run-row.link:hover {
+  background: var(--hover);
+}
+.run-row > .icon {
+  color: var(--faint);
+  flex: none;
+}
+.run-top {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.run-ago {
+  color: var(--faint);
+}
+.run-err {
+  word-break: break-word;
+}
+.sched-form textarea.input {
+  resize: vertical;
+  min-height: 96px;
+  line-height: 1.5;
+}
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.chip-opt,
+.day {
+  border: 1px solid var(--border2);
+  background: var(--bg);
+  color: var(--dim);
+  border-radius: 99px;
+  padding: 7px 13px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.chip-opt.on,
+.day.on {
+  background: color-mix(in srgb, var(--accent) 16%, var(--elev));
+  border-color: var(--accent);
+  color: var(--text);
+}
+.days {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+.day {
+  width: 42px;
+  height: 38px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+}
+.sched-time {
+  margin-top: 4px;
+}
+.input.time {
+  width: auto;
+  min-width: 120px;
+}
+.input.num {
+  width: 80px;
+}
+.sched-time .select {
+  width: auto;
+}
+.field-h.warn {
+  color: var(--amber);
+}
+/* model and effort: side by side when there is room, else stacked */
+.sched-me > .field {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+.sched-me-h {
+  display: block;
+}
+.sched-preview {
+  min-height: 1.4em;
+  line-height: 1.4;
+}
+@media (max-width: 440px) {
+  .day {
+    width: 38px;
+  }
+  .sched-actions .btn {
+    flex: 1;
+  }
+  .sched-actions .btn.danger {
+    flex: none;
+    margin-left: 0;
+  }
+}

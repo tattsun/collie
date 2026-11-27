@@ -13,6 +13,7 @@ import { InvitePage, LoginPage, PasskeyBanner, VerifyDialog } from './components
 import { AccountPage } from './components/Account'
 import { GroupsPage } from './components/Groups'
 import { AdminPage } from './components/Admin'
+import { SchedulesPage } from './components/Schedules'
 
 function Main() {
   const r = route.value
@@ -29,6 +30,8 @@ function Main() {
       return <GroupsPage key={r.id || ''} />
     case 'admin':
       return <AdminPage />
+    case 'schedules':
+      return <SchedulesPage key={r.id || ''} id={r.id} />
     default:
       return <NewSession key={r.query.get('project') || ''} />
   }

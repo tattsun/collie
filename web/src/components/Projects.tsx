@@ -6,7 +6,7 @@ import { go, groupById, groups, me, ownerLabel, projectById, projects, root, roo
 import { ago, cls, home } from '../util'
 import { ChangesView } from './Changes'
 import { AgentBadge, Segmented, StatusDot, Toggle } from './ui'
-import { IBack, IBox, IDiff, IFolder, IHome, IList, IPlus, ISettings, ITerminal, ITrash, Spinner } from './icons'
+import { IBack, IBox, IClock, IDiff, IFolder, IHome, IList, IPlus, ISettings, ITerminal, ITrash, Spinner } from './icons'
 import { ProjectSettings } from './ProjectSettings'
 import { t, ts } from '../i18n'
 
@@ -280,6 +280,11 @@ export function ProjectPage({ id }: { id: string }) {
                   <div class="b ellipsis">{s.title}</div>
                   <div class="dim small ellipsis">{s.preview || s.branch}</div>
                 </div>
+                {s.schedule && (
+                  <span class="dim" title={t('Started by a schedule')}>
+                    <IClock size={13} />
+                  </span>
+                )}
                 <AgentBadge agent={s.agent} small />
                 <span class="dim small">{ago(s.updatedAt)}</span>
               </a>

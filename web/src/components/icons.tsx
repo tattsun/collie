@@ -132,4 +132,14 @@ export const IUsers = (p: P) =>
   )
 export const IExternal = (p: P) => svg(<path d="M15 3h6v6M10 14L21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />, p)
 export const ICode = (p: P) => svg(<path d="M16 18l6-6-6-6M8 6l-6 6 6 6" />, p)
+export const IClock = (p: P) =>
+  svg(
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7v5l3 2" />
+    </>,
+    p,
+  )
+export const IPause = (p: P) => svg(<path d="M9 5v14M15 5v14" />, p)
+export const IPlay = (p: P) => svg(<path d="M7 4.5v15l12-7.5z" />, p)
 export const IExpand = (p: P) => svg(<path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />, p)

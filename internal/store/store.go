@@ -20,18 +20,20 @@ import (
 )
 
 type state struct {
-	Projects []*model.Project `json:"projects"`
-	Sessions []*model.Session `json:"sessions"`
+	Projects  []*model.Project  `json:"projects"`
+	Sessions  []*model.Session  `json:"sessions"`
+	Schedules []*model.Schedule `json:"schedules,omitempty"`
 }
 
 type Store struct {
 	dir string
 
-	mu       sync.Mutex
-	projects map[string]*model.Project
-	sessions map[string]*model.Session
-	timer    *time.Timer
-	dirty    bool
+	mu        sync.Mutex
+	projects  map[string]*model.Project
+	sessions  map[string]*model.Session
+	schedules map[string]*model.Schedule
+	timer     *time.Timer
+	dirty     bool
 
 	logMu sync.Mutex
 }
@@ -42,7 +44,7 @@ func Open(dir string) (*Store, error) {
 			return nil, err
 		}
 	}
-	s := &Store{dir: dir, projects: map[string]*model.Project{}, sessions: map[string]*model.Session{}}
+	s := &Store{dir: dir, projects: map[string]*model.Project{}, sessions: map[string]*model.Session{}, schedules: map[string]*model.Schedule{}}
 	b, err := os.ReadFile(filepath.Join(dir, "state.json"))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
@@ -57,6 +59,9 @@ func Open(dir string) (*Store, error) {
 		}
 		for _, x := range st.Sessions {
 			s.sessions[x.ID] = x
+		}
+		for _, x := range st.Schedules {
+			s.schedules[x.ID] = x
 		}
 	}
 	return s, nil
@@ -90,9 +95,14 @@ func (s *Store) Flush() error {
 		c := *x
 		st.Sessions = append(st.Sessions, &c)
 	}
+	for _, x := range s.schedules {
+		c := cloneSchedule(x)
+		st.Schedules = append(st.Schedules, &c)
+	}
 	s.mu.Unlock()
 	sort.Slice(st.Projects, func(i, j int) bool { return st.Projects[i].CreatedAt < st.Projects[j].CreatedAt })
 	sort.Slice(st.Sessions, func(i, j int) bool { return st.Sessions[i].CreatedAt < st.Sessions[j].CreatedAt })
+	sort.Slice(st.Schedules, func(i, j int) bool { return st.Schedules[i].CreatedAt < st.Schedules[j].CreatedAt })
 	b, err := json.MarshalIndent(st, "", " ")
 	if err != nil {
 		return err
@@ -205,6 +215,71 @@ func (s *Store) DeleteSession(id string) {
 		_ = os.Remove(path)
 	}
 	s.logMu.Unlock()
+}
+
+// ---- schedules ----
+
+// cloneSchedule copies a schedule with its own Runs (callers get copies
+// they may keep while the store's one changes).
+func cloneSchedule(x *model.Schedule) model.Schedule {
+	c := *x
+	c.Runs = append([]model.ScheduleRun(nil), x.Runs...)
+	return c
+}
+
+func (s *Store) Schedules() []model.Schedule {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]model.Schedule, 0, len(s.schedules))
+	for _, x := range s.schedules {
+		out = append(out, cloneSchedule(x))
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].CreatedAt < out[j].CreatedAt || out[i].CreatedAt == out[j].CreatedAt && out[i].ID < out[j].ID
+	})
+	return out
+}
+
+func (s *Store) Schedule(id string) (model.Schedule, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	x, ok := s.schedules[id]
+	if !ok {
+		return model.Schedule{}, false
+	}
+	return cloneSchedule(x), true
+}
+
+func (s *Store) PutSchedule(x model.Schedule) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c := cloneSchedule(&x)
+	s.schedules[x.ID] = &c
+	s.scheduleSave()
+}
+
+// UpdateSchedule changes a schedule in place; fn reports whether it
+// changed anything. It returns the schedule (zero if there is none) and
+// whether it changed.
+func (s *Store) UpdateSchedule(id string, fn func(*model.Schedule) bool) (model.Schedule, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	x, ok := s.schedules[id]
+	if !ok {
+		return model.Schedule{}, false
+	}
+	changed := fn(x)
+	if changed {
+		s.scheduleSave()
+	}
+	return cloneSchedule(x), changed
+}
+
+func (s *Store) DeleteSchedule(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.schedules, id)
+	s.scheduleSave()
 }
 
 // ---- timelines ----

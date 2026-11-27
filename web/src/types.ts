@@ -19,6 +19,29 @@ export interface Project {
   home?: boolean
 }
 
+/** Release updates (admins only). */
+export interface UpdateStatus {
+  current: string
+  enabled: boolean
+  repo?: string
+  latest?: string
+  notes?: string
+  url?: string
+  published?: number
+  available: boolean
+  canApply: boolean
+  why?: string
+  devBuild?: boolean
+  auto: boolean
+  tokenSet: boolean
+  checkedAt?: number
+  checkError?: string
+  phase?: '' | 'downloading' | 'preparing' | 'waiting' | 'restarting'
+  error?: string
+  busy: number
+  last?: { from: string; to: string; ok: boolean; error?: string; at: number }
+}
+
 export interface SandboxStatus {
   available: boolean
   limits?: boolean

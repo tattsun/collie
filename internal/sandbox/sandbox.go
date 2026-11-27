@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"embed"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -67,6 +68,8 @@ type Manager struct {
 	built    chan struct{} // closed when the current build finishes
 	ready    bool
 	locks    map[string]*sync.Mutex
+	imgID    string    // ID of the image tag, cached briefly
+	imgIDAt  time.Time // when imgID was looked up
 
 	// OnChange is called when the image status changes.
 	OnChange func()
@@ -186,11 +189,15 @@ func (m *Manager) Build(refresh bool) error {
 			log.Printf("agent image build failed: %v", err)
 		} else {
 			m.ready = true
+			m.imgID = ""
 			log.Printf("agent image %s built", m.tag)
 		}
 		close(done)
 		m.mu.Unlock()
 		m.changed()
+		if err == nil {
+			m.PruneImages()
+		}
 	}()
 	return nil
 }
@@ -214,7 +221,7 @@ func (m *Manager) build(refresh bool, w io.Writer) error {
 	if err != nil {
 		return err
 	}
-	args := append(append([]string(nil), m.global...), "build", "-t", m.tag, "-t", "localhost/collie-agent:latest", "-f", "Containerfile")
+	args := append(append([]string(nil), m.global...), "build", "-t", m.tag, "-t", latestTag, "-f", "Containerfile")
 	if refresh {
 		args = append(args, "--build-arg", "AGENTS_REV="+strconv.FormatInt(time.Now().Unix(), 10))
 	}
@@ -237,6 +244,89 @@ func (m *Manager) BuildSync(w io.Writer) error {
 		return ErrUnavailable
 	}
 	return m.build(true, w)
+}
+
+// BuildIfMissing builds the image in the foreground unless it exists (an
+// update prepares the new version's image this way before switching).
+func (m *Manager) BuildIfMissing(w io.Writer) error {
+	if !m.available {
+		return ErrUnavailable
+	}
+	if m.imageExists() {
+		fmt.Fprintf(w, "agent image %s is up to date\n", m.tag)
+		return nil
+	}
+	return m.build(false, w)
+}
+
+// imageID returns the ID the image tag points to. It is part of each
+// container's configuration, so containers move to a rebuilt image (e.g.
+// with newer agents) the next time they are (re)started while unused.
+func (m *Manager) imageID(ctx context.Context) string {
+	m.mu.Lock()
+	id, at := m.imgID, m.imgIDAt
+	m.mu.Unlock()
+	if id != "" && time.Since(at) < time.Minute {
+		return id
+	}
+	out, err := m.podman(ctx, "image", "inspect", "--format", "{{.Id}}", m.tag)
+	if err != nil {
+		return ""
+	}
+	id = strings.TrimSpace(out)
+	m.mu.Lock()
+	m.imgID, m.imgIDAt = id, time.Now()
+	m.mu.Unlock()
+	return id
+}
+
+const latestTag = "localhost/collie-agent:latest"
+
+// PruneImages removes agent images older than the current one — earlier
+// versions' tags and what rebuilds left behind — to reclaim their
+// gigabytes. Newer ones (an update being prepared) stay, and podman keeps
+// anything a container still uses; that goes on a later prune.
+func (m *Manager) PruneImages() {
+	if !m.available {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	out, err := m.podman(ctx, "images", "--format", "json", "--filter", "reference=localhost/collie-agent")
+	if err != nil {
+		return
+	}
+	var imgs []struct {
+		Names   []string `json:"Names"`
+		Created int64    `json:"Created"`
+	}
+	if json.Unmarshal([]byte(out), &imgs) != nil {
+		return
+	}
+	cur := int64(-1)
+	for _, im := range imgs {
+		for _, n := range im.Names {
+			if n == m.tag {
+				cur = im.Created
+			}
+		}
+	}
+	if cur < 0 {
+		return
+	}
+	for _, im := range imgs {
+		if im.Created >= cur {
+			continue
+		}
+		for _, n := range im.Names {
+			if n != m.tag && n != latestTag {
+				if _, err := m.podman(ctx, "rmi", n); err == nil {
+					log.Printf("removed old agent image %s", n)
+				}
+			}
+		}
+	}
+	_, _ = m.podman(ctx, "image", "prune", "-f", "--filter", "label=io.collie.agent=1")
 }
 
 // WaitImage makes sure the image exists, building it if needed, and waits

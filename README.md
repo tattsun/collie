@@ -21,6 +21,7 @@ Tailscale 経由でスマホや別 PC からプロジェクトを作り、エー
 - **日本語 / English**: ブラウザの言語で自動選択。アカウント画面・ログイン画面で切り替え可能
 - 画像添付（スマホのスクショ等。大きい画像は端末側で縮小してから送信）
 - 要対応セッションのバッジ・通知（HTTPS 時）、PWA としてホーム画面に追加可能
+- **アップデート**: 署名付きリリースを検知して管理者に通知し、ワンタップで更新（任意で完全自動）。新版が起動しなければ自動で元に戻す
 
 ## 必要なもの
 
@@ -45,6 +46,10 @@ mise run build               # web/ をビルドして bin/collie を生成
 | `mise run test` | Go のテスト・vet とフロントの型チェック |
 | `mise run install [--serve]` | ビルドして systemd ユーザーサービスとして導入 |
 | `mise run dev` | 開発用 API サーバ（認証なし・:7878） |
+| `mise run dist` | リリース用のバイナリ（linux amd64/arm64）と `SHA256SUMS` を `dist/` に作成 |
+| `mise run release-key` | リリース署名鍵を作成（メンテナが最初に 1 回。「リリースの作り方」参照） |
+
+ビルドしたバイナリにはバージョンが埋め込まれます（タグちょうどなら `0.3.0`、タグ以降のコミットなら `0.3.0-4-gabc1234` のような `git describe` の値、タグがなければ `dev-<commit>`）。`collie --version` で確認できます。
 
 ## 起動（お試し）
 
@@ -114,16 +119,56 @@ codex login --device-auth
 
 ### アップデート
 
+Collie は GitHub のリリース（タグを打って公開したもの）を 6 時間ごとに確認します。新しいリリースがあると、管理者の画面のサイドバー下部に `v0.3.0 → v0.4.0` と表示されます。
+
+- **ワンタップ更新（既定）**: Admin → **Updates** の「v… に更新」を押します。新しいバイナリをダウンロードして署名を検証し、必要ならエージェント用イメージを先に作ってから Collie を再起動します。開いているブラウザは自動でリロードされます
+- **完全自動（任意）**: 同じ画面の「アップデートを自動でインストール」をオンにすると、エージェントが動いておらず、ターミナルも使われていない状態が 10 分続いたところで自動的に更新します（開発ビルドでは自動更新しません）
+- **失敗したら元に戻す**: 新しいバージョンが 90 秒以内に起動しない、または起動直後に落ちた場合は、元のバイナリと `state.json` / `auth.json` を戻して再起動し、結果を Updates 画面に表示します。自動更新は失敗したバージョンを再度試しません。直前のバイナリは `~/.local/bin/collie.prev` に残ります
+- 再起動すると実行中のエージェントとターミナルは止まります（会話は次のメッセージで再開）。ワンタップ更新では、止まるものがあれば確認ダイアログに件数が出ます
+- **非公開リポジトリの間は**、Updates 画面で GitHub トークンを設定してください（fine-grained トークン、対象リポジトリの Contents の Read-only だけ）。トークンは `~/.collie/update/settings.json` に保存され、コンテナからは見えません
+- 前提: `mise run install` で入れた systemd ユーザーサービスとして動いていること（更新処理は `systemd-run --user` の一時ユニットで動き、Collie 本体の停止に巻き込まれません）。`collie update` で今のバージョンと最新リリースを確認できます
+- 別のリポジトリ（フォーク）のリリースを追うときは `--update-repo owner/name`、更新の確認自体を止めるときは `--update-repo off`
+
+ソースから手動で更新する場合:
+
 ```bash
 cd collie && git pull
 mise install
 mise run install --serve      # 初回と同じオプションで（--serve なしで入れた場合はなし）
 ```
 
-- サービスが再起動するので、実行中のエージェントは止まります（会話は次のメッセージで再開）。開いているブラウザは自動でリロードされます
-- エージェント用イメージも必要に応じて作り直されます。Claude Code / Codex だけ最新にしたいときは `collie --build-image`
+- エージェント用イメージも必要に応じて作り直されます。Claude Code / Codex だけ最新にしたいときは Admin → Containers → Agent image の「Rebuild」か `collie --build-image`（各プロジェクトのコンテナは、次に使われていないときに再起動されたタイミングで新しいイメージに切り替わります）。古いイメージは自動で削除されます
 - 既存のプロジェクトは「ホスト実行」のまま残ります。Project → Settings で **Isolated container** に切り替えると、Claude のメモリーと会話はそのプロジェクトの分だけ引き継がれ、旧バージョンで作った worktree セッションもそのまま使えます（Codex の会話は新しいスレッドとして続きます）
 - 自分のユーザーで動かしていたものを専用ユーザー構成に移す場合: `sudo ./deploy/setup-host.sh` → 旧サービスを `systemctl --user disable --now collie` で止める → `collie` ユーザーで導入し直し、プロジェクトは `collie` ユーザーが読み書きできる場所へ移して登録し直してください（専用ユーザーからは元ユーザーのホームは見えません）
+
+### リリースの作り方（メンテナ向け）
+
+リリースのバイナリは GitHub Actions（`.github/workflows/release.yml`）がビルドし、Ed25519 鍵で署名します。Collie はバイナリに埋め込まれた公開鍵（`internal/update/release.pub`）で署名を確かめてから更新するので、リリースのファイルを差し替えられても偽物は入りません。
+
+最初に 1 回だけ（`gh` に、このリポジトリの Secrets を書き込める権限が必要です）:
+
+```bash
+mise run release-key     # 鍵ペアを作成: 公開鍵 → internal/update/release.pub、秘密鍵 → リポジトリの secret COLLIE_SIGNING_KEY
+git add internal/update/release.pub && git commit -m "Add the release signing key"
+```
+
+秘密鍵のファイル（既定は `collie-release.key`）はオフラインの安全な場所に保管するか削除してください（コミットしないこと。`.gitignore` 済み）。**公開鍵の入っていないビルドは自分を更新できない**ので、鍵を入れたコミットから作ったバイナリを一度手動で導入する必要があります。
+
+リリースするたびに:
+
+1. main の上にタグを打って push します（エージェントに頼んでも構いません）
+
+   ```bash
+   git tag v0.4.0 origin/main && git push origin v0.4.0
+   ```
+
+2. **人が** GitHub の Actions → **Release** → **Run workflow** でタグ（`v0.4.0`）を入れて実行します（スマホのブラウザからでも可。PC なら `gh workflow run release.yml -f tag=v0.4.0`）
+
+Actions が、タグが main 上にあるかの確認 → ビルド（amd64 / arm64）→ テスト → 署名 → リリース作成まで行います。`v0.4.0-rc.1` のような接尾辞つきのタグはプレリリースになり、サーバは自動では追いません。
+
+**2 を手動にしているのは安全のためです。** タグの push で自動的に署名する作りにすると、push できるトークンを持つ人やエージェントなら誰でも、全サーバに入るリリースを作れてしまいます。そのため、エージェントが使うトークン（このサーバの `GH_TOKEN` など）には、**Actions・Workflows・Secrets の書き込み権限を付けないでください**。Actions があるとリリースを実行でき、Workflows があるとワークフローを書き換えて秘密鍵を読み出せ、Secrets があると鍵を差し替えられます。リポジトリを公開した後は、Environment の「Required reviewers」（非公開リポジトリでは Enterprise プラン以外は使えません）で承認を必須にするとさらに安全です。
+
+鍵を替えるときは、新しい公開鍵を `release.pub` に追記したリリースを古い鍵で 1 回出してから、secret を差し替えます。
 
 ### `--serve`（tailscale serve）を推奨する理由
 
@@ -240,6 +285,8 @@ mise run install --serve      # 初回と同じオプションで（--serve な�
 | `--container-pids` | | `4096` | コンテナのプロセス数上限の既定値 |
 | `--trusted-proxy-uid` | | `0` | Tailscale のアイデンティティヘッダを信用するプロキシの uid（tailscaled = root） |
 | `--build-image` | | | エージェント用イメージをビルド（エージェント更新）して終了 |
+| `--update-repo` | `COLLIE_UPDATE_REPO` | `tattsun/collie` | 更新に使う GitHub リポジトリ（`off` で確認しない） |
+| `--version` | | | バージョンを表示して終了 |
 | `--public-url` | `COLLIE_PUBLIC_URL` | 最初の登録時のホスト | パスキーを紐づける URL（マシン名を変えたときなど） |
 
 サブコマンド（サーバ上で `collie` ユーザーとして実行）:
@@ -249,6 +296,7 @@ mise run install --serve      # 初回と同じオプションで（--serve な�
 | `collie link [--user NAME]` | パスキーを追加する 1 回限りのリンク（30 分有効）を表示。パスキーを失くしたときの復旧用 |
 | `collie users` | ユーザー一覧 |
 | `collie make-admin NAME` | 管理者にする |
+| `collie update` | 今のバージョンと最新リリースを表示 |
 
 ## セキュリティ
 
@@ -264,6 +312,7 @@ Collie はブラウザから**サーバ上で任意のコマンドを実行で�
 - `tailscale serve` のアイデンティティヘッダは、接続元ソケットの所有者が tailscaled（root）の場合だけ信用します。同じマシン上の他プロセス（エージェントを含む）がヘッダを偽装しても通りません
 - 隔離プロジェクトのコンテナは `--cap-drop all`・`no-new-privileges` で、ホストへの近道（loopback・`host.containers.internal`）を塞いで起動します。さらに `setup-host.sh` のファイアウォールで、サーバ自身のアドレス（LAN・tailnet・グローバル IP）と Collie のポートへの接続を拒否します
 - エージェント出力の Markdown は生 HTML を無効化して描画し、さらに CSP でスクリプト実行を禁止しています
+- アップデートで入れるのは、バイナリに埋め込まれた公開鍵で署名を検証できたリリースだけです（チェックサムの署名はタグにも紐づくので、古いリリースを新しいものとして渡すこともできません）。更新の操作は管理者だけができ、Home エージェントの MCP ツールにはありません
 - プロジェクトを削除しても**ディスク上のファイルは削除しません**（Collie が作った worktree のみ削除。ブランチは残ります）
 
 ## データ
@@ -281,6 +330,7 @@ Collie はブラウザから**サーバ上で任意のコマンドを実行で�
   projmem/<project>/  グループプロジェクトで共有する Claude のメモリー
   shared/             全体共通のプロファイル・環境変数
   caps.json           エージェントのモデル一覧キャッシュ
+  update/             アップデートの設定（GitHub トークン）・ダウンロード中のバイナリ・直前の state.json / auth.json の控え・結果
   token               アクセストークン
 ```
 
@@ -305,6 +355,10 @@ internal/term/           PTY ターミナル
 internal/gitutil/        worktree・diff
 internal/sandbox/        (プロジェクト, ユーザー) 単位の Podman コンテナ・プロファイル合成・エージェント用イメージ（image/Containerfile）
 internal/auth/           ユーザー・パスキー（WebAuthn）・ログインセッション・招待・グループ
+internal/update/         リリースの確認・署名検証・差し替えとロールバック（apply.go）
+internal/version/        ビルド時に埋め込まれるバージョン
+tools/release/           リリース署名鍵の作成・SHA256SUMS の署名と検証
+.github/workflows/       タグ push でリリースを作る Actions
 deploy/setup-host.sh     ホスト準備（専用ユーザー・podman・nftables）
 web/                     Preact + Vite フロントエンド
 deploy/install.sh        systemd ユーザーサービス導入

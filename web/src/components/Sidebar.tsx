@@ -8,6 +8,7 @@ import { IBell, IBox, IFolder, IHome, IPlus, IBranch, IUsers, Spinner } from './
 import { AgentBadge, Menu, StatusDot } from './ui'
 import { signOut } from '../authflow'
 import { ImageIndicator } from './ProjectSettings'
+import { VersionBadge } from './Updates'
 import { UsagePanel } from './Usage'
 import { t, ts } from '../i18n'
 
@@ -251,7 +252,7 @@ export function Sidebar() {
         </button>
         <ImageIndicator />
         <span class="grow" />
-        <span class="dim small">v{version.value}</span>
+        <VersionBadge version={version.value} />
       </footer>
     </aside>
   )

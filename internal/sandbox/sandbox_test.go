@@ -259,3 +259,18 @@ func TestExecPassesEnvFiles(t *testing.T) {
 		t.Fatalf("container name missing: %v", argv)
 	}
 }
+
+// What podman 5.7 prints when an exec finds no running container; the
+// helper's own complaints are not that.
+func TestExecSaysNotRunning(t *testing.T) {
+	for msg, want := range map[string]bool{
+		"Error: can only create exec sessions on running containers: container state improper": true, // stopped or only created (exit 255)
+		`Error: no container with name or ID "collie-p1-u1" found: no such container`:          true, // gone (exit 125)
+		"collie git-helper: unexpected EOF":                                                    false,
+		"exit status 255":                                                                      false,
+	} {
+		if got := ExecSaysNotRunning(msg); got != want {
+			t.Errorf("ExecSaysNotRunning(%q) = %v", msg, got)
+		}
+	}
+}

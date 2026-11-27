@@ -362,6 +362,10 @@ func (c *Codex) Send(in Input) error {
 	return nil
 }
 
+// secretAnswer stands in for an answer to a secret question (a password,
+// say) on the timeline.
+const secretAnswer = "(hidden)"
+
 func (c *Codex) Reply(askID string, r Reply) error { return c.reply(askID, r, false) }
 
 func (c *Codex) reply(askID string, r Reply, cancel bool) error {
@@ -438,7 +442,13 @@ func (c *Codex) reply(askID string, r Reply, cancel bool) error {
 				v = []string{}
 			}
 			answers[q.ID] = map[string]any{"answers": v}
-			parts = append(parts, strings.Join(v, ", "))
+			shown := strings.Join(v, ", ")
+			if q.Secret && shown != "" {
+				// It goes to the agent only: the timeline is kept on disk
+				// and seen by everyone who sees the session (and by Home).
+				shown = secretAnswer
+			}
+			parts = append(parts, shown)
 		}
 		result = map[string]any{"answers": answers}
 		label = strings.Join(parts, " / ")

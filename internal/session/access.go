@@ -119,11 +119,14 @@ func (m *Manager) sessionAdmin(uid string, s model.Session) bool {
 }
 
 // sessionDrivable: the session's agent identity is still valid — its
-// starter still has access to the project.
+// starter still has access to the project, and their account is not
+// disabled (the agent runs with their accounts and tokens).
 func (m *Manager) sessionDrivable(s model.Session) bool {
 	p, ok := m.st.Project(s.ProjectID)
-	return ok && m.ProjectVisible(s.Owner, p)
+	return ok && m.ProjectVisible(s.Owner, p) && m.userActive(s.Owner)
 }
+
+func (m *Manager) userActive(uid string) bool { return m.UserActive == nil || m.UserActive(uid) }
 
 func (m *Manager) visibleSession(uid, sid string) (model.Session, error) {
 	s, ok := m.st.Session(sid)

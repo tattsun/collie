@@ -276,8 +276,8 @@ func readRepoPlugins(dir string) (PluginSet, []error) {
 	defer root.Close()
 	var errs []error
 	for _, name := range []string{".claude/settings.json", ".claude/settings.local.json"} {
-		b, err := root.ReadFile(name)
-		if err != nil || len(b) > 1<<20 {
+		b, err := readInRoot(root, name, 1<<20)
+		if err != nil {
 			continue
 		}
 		var raw struct {
@@ -358,7 +358,7 @@ const managedFile = ".claude/collie-plugins.json"
 func readHomePlugins(root *os.Root) homePlugins {
 	h := homePlugins{installed: map[string]bool{}, markets: map[string]bool{}, managed: map[string]bool{}}
 	read := func(name string, v any) {
-		if b, err := root.ReadFile(name); err == nil && len(b) < 8<<20 {
+		if b, err := readRegular(root, name, 8<<20); err == nil {
 			_ = json.Unmarshal(b, v)
 		}
 	}

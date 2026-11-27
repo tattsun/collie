@@ -83,6 +83,7 @@ const ja: Record<string, string> = {
     'エージェントはあなた自身の Claude アカウントを使います。いずれかのプロジェクトの「ターミナル」タブで {cmd} を実行し、Claude アカウントでログインして、表示されたトークンをここに貼り付けてください。',
   'logged in': 'ログイン済み',
   'not logged in': '未ログイン',
+  'Sign Codex out of all of your projects?': 'すべてのプロジェクトで Codex からログアウトしますか？',
   'Open any of your isolated projects → Terminal, run {cmd} and follow the link. The login is kept for all of your projects.':
     '自分の隔離プロジェクトのいずれかで「ターミナル」を開き、{cmd} を実行して、表示されるリンクの指示に従ってください。ログイン状態はすべてのプロジェクトで共通です。',
   'My environment': '自分の環境変数',
@@ -268,6 +269,7 @@ const ja: Record<string, string> = {
   'Open the link and sign in with your Claude account.': 'リンクを開いて、Claude アカウントでサインインしてください。',
   'Open sign-in page': 'サインインページを開く',
   'Copy link': 'リンクをコピー',
+  'The page is on {host}.': 'ページは {host} にあります。',
   'Paste the code it shows here.': '表示されたコードをここに貼り付けてください。',
   Code: 'コード',
   Continue: '続ける',

@@ -4,7 +4,6 @@
 package sandbox
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"embed"
@@ -82,6 +81,9 @@ type Manager struct {
 	imgIDs   map[string]imageIDAt // IDs of image tags, cached briefly
 	stale    map[string]bool      // containers left running with an older configuration
 	egress   *egress.Proxy        // for containers on an allowlist (network.go)
+	// held, while not nil, keeps Ensure from starting containers until it
+	// is closed (HoldStarts, ReleaseStarts).
+	held chan struct{}
 
 	// Custom images (images.go).
 	defs      imageDefs
@@ -187,12 +189,26 @@ func imageHash() string {
 	return hex.EncodeToString(h.Sum(nil))[:12]
 }
 
+// The most of podman's answers kept: some come from commands run in a
+// container (podman exec), whose binaries an agent may have replaced.
+const (
+	maxPodmanOutput = 32 << 20
+	maxPodmanErrors = 1 << 20
+)
+
 func (m *Manager) podman(ctx context.Context, args ...string) (string, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	cmd := exec.CommandContext(ctx, m.cfg.Podman, append(append([]string(nil), m.global...), args...)...)
-	var out, errb bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &errb
-	if err := cmd.Run(); err != nil {
+	out := &cappedBuffer{max: maxPodmanOutput, full: cancel}
+	errb := &cappedBuffer{max: maxPodmanErrors}
+	cmd.Stdout = out
+	cmd.Stderr = errb
+	err := cmd.Run()
+	if out.over {
+		return "", fmt.Errorf("podman %s: more output than expected", args[0])
+	}
+	if err != nil {
 		msg := strings.TrimSpace(errb.String())
 		if msg == "" {
 			msg = err.Error()

@@ -22,7 +22,7 @@ Choose before you create the first passkey. Passkeys work only on the address th
 sudo ./deploy/setup-host.sh            # add --public for your own domain
 ```
 
-This installs Podman and creates a `collie` user that runs Collie and every agent, so agents can't touch your own `~/.ssh` or personal files. It also adds a firewall rule: that user's processes can reach the internet, but not your LAN, your tailnet or this server. To let agents reach something like a NAS, pass `--allow 192.168.1.20/32`. See `--help` for all options.
+This installs Podman and creates a `collie` user that runs Collie and every agent, so agents can't touch your own `~/.ssh` or personal files. It also adds a firewall rule: that user's processes can reach the internet, but not your LAN, your tailnet or this server. That includes the networks the server is directly attached to, even ones with public addresses (an IPv6 home network, say). Further out, it assumes your LAN uses private addresses. To let agents reach something like a NAS, pass `--allow 192.168.1.20/32`; it never opens this server's own addresses. See `--help` for all options. If the server was set up with an older `setup-host.sh`, run it again to get these rules.
 
 With `--public`, Collie may listen on ports 80 and 443 even though it doesn't run as root. This lets every user on the machine listen on ports from 80 up, so use it on a server that is there for Collie. It also opens 80, 443 and 8443–8446 (for [previews](#previews)) in ufw or firewalld if one is on. Open them in your cloud provider's firewall yourself.
 
@@ -53,7 +53,7 @@ Point the domain's DNS at the server and open ports 80 and 443 (and 8443–8446 
 
 ### Your reverse proxy
 
-Run it on the same machine and forward to `http://127.0.0.1:7878`, including WebSockets. Keep the client's address in `X-Forwarded-For`: Collie limits sign-in attempts per address, and without it every visitor shares one limit. With Caddy, this is all:
+Run it on the same machine and forward to `http://127.0.0.1:7878`, including WebSockets. Keep the client's address in `X-Forwarded-For`: Collie limits sign-in attempts per address, and without it every visitor shares one limit. Collie also has to know the page is HTTPS: `--proxy` tells it the address, and otherwise the proxy must send `X-Forwarded-Proto: https` (Caddy does). With Caddy, this is all:
 
 ```
 collie.example.com {

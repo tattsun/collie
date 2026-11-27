@@ -1,6 +1,7 @@
 package server
 
 import (
+	neturl "net/url"
 	"regexp"
 	"strings"
 	"sync"
@@ -38,16 +39,48 @@ func stripANSI(s string) string {
 	return ansiOther.ReplaceAllString(s, "")
 }
 
+// officialLink reports whether a sign-in link goes to Anthropic, and so
+// does the page it sends the code back to. The program runs in the user's
+// Home container, where their Home agent could print a link of its own
+// first, for a look-alike site.
+func officialLink(raw string) bool {
+	u, err := neturl.Parse(raw)
+	if err != nil || u.Scheme != "https" || u.User != nil || (u.Port() != "" && u.Port() != "443") || !anthropicHost(u.Hostname()) {
+		return false
+	}
+	for _, k := range []string{"redirect_uri", "redirect_url"} {
+		if v := u.Query().Get(k); v != "" {
+			r, err := neturl.Parse(v)
+			if err != nil || r.Scheme != "https" || !anthropicHost(r.Hostname()) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func anthropicHost(h string) bool {
+	h = strings.ToLower(h)
+	for _, d := range []string{"claude.ai", "claude.com", "anthropic.com"} {
+		if h == d || strings.HasSuffix(h, "."+d) {
+			return true
+		}
+	}
+	return false
+}
+
 // parseSetupToken pulls the sign-in link and (once printed in full) the
 // token out of raw `claude setup-token` terminal output.
 func parseSetupToken(raw string) (url, token string) {
-	if ms := osc8URL.FindAllStringSubmatch(raw, -1); len(ms) > 0 {
-		url = ms[len(ms)-1][1]
+	for _, m := range osc8URL.FindAllStringSubmatch(raw, -1) {
+		if officialLink(m[1]) {
+			url = m[1]
+		}
 	}
 	plain := stripANSI(raw)
 	if url == "" {
 		for _, u := range plainURL.FindAllString(plain, -1) {
-			if strings.Contains(u, "oauth") || strings.Contains(u, "claude") {
+			if officialLink(u) {
 				url = u
 				break
 			}
@@ -73,7 +106,11 @@ type claudeLogin struct {
 func (l *claudeLogin) snapshot() map[string]any {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return map[string]any{"id": l.id, "state": l.state, "url": l.url, "error": l.err, "accountId": l.acct}
+	host := ""
+	if u, err := neturl.Parse(l.url); err == nil {
+		host = u.Hostname()
+	}
+	return map[string]any{"id": l.id, "state": l.state, "url": l.url, "host": host, "error": l.err, "accountId": l.acct}
 }
 
 func (l *claudeLogin) set(state, errMsg string) {

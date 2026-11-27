@@ -131,6 +131,9 @@ type Schedule struct {
 	NextAt    int64  `json:"nextAt,omitempty"` // next planned run (unix ms); 0 = none
 	CreatedAt int64  `json:"createdAt"`
 	UpdatedAt int64  `json:"updatedAt"`
+	// FromHome: the user's Home agent made it (its runs get no more say
+	// over host-run projects than Home itself).
+	FromHome bool `json:"fromHome,omitempty"`
 	// Runs are the latest runs, newest first.
 	Runs []ScheduleRun `json:"runs,omitempty"`
 }

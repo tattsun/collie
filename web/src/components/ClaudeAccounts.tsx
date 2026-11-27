@@ -31,6 +31,8 @@ interface Login {
   id: string
   state: 'starting' | 'link' | 'saving' | 'done' | 'error'
   url: string
+  /** The link's host: only Anthropic's are ever offered. */
+  host?: string
   error: string
 }
 
@@ -118,6 +120,7 @@ function SignInModal({ accountId, name, onDone, onClose }: { accountId?: string;
               {t('Copy link')}
             </button>
           </div>
+          {login.host && <p class="dim small">{rich(t('The page is on {host}.'), { host: <b class="mono">{login.host}</b> })}</p>}
           <p>
             <b>2.</b> {t('Paste the code it shows here.')}
           </p>

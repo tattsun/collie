@@ -149,7 +149,8 @@ export function Viewer() {
             <ICode size={13} /> {js ? t('Stop scripts') : t('Run scripts')}
           </button>
         )}
-        <a class="icon-btn" href={url(cur.id, view === 'html' && js)} target="_blank" rel="noopener noreferrer" title={t('Open in a new tab')} aria-label={t('Open in a new tab')}>
+        {/* Never with scripts: a page of its own could navigate away with what it read. */}
+        <a class="icon-btn" href={url(cur.id)} target="_blank" rel="noopener noreferrer" title={t('Open in a new tab')} aria-label={t('Open in a new tab')}>
           <IExternal size={17} />
         </a>
         <button class="icon-btn" onClick={close} title={t('Close')} aria-label={t('Close')}>

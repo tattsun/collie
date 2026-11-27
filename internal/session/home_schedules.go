@@ -121,7 +121,7 @@ func (m *Manager) toolCreateSchedule(a Actor, project, prompt, cronExpr, tz, age
 		return &v
 	}
 	req := ScheduleReq{ProjectID: &p.ID, Prompt: &prompt, Cron: &cronExpr, Worktree: &worktree,
-		TZ: given(tz), Agent: given(agentName), Mode: given(mode), Model: given(mdl), Effort: given(effort), Title: given(title)}
+		TZ: given(tz), Agent: given(agentName), Mode: given(mode), Model: given(mdl), Effort: given(effort), Title: given(title), fromHome: true}
 	sc, err := m.CreateSchedule(a, req)
 	if err != nil {
 		return "", err

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -73,6 +74,55 @@ func within(p, dir string) bool {
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, "../")
 }
 
+// DefaultRuntime is the runtime of a new project that doesn't choose one:
+// isolated where podman is available, the host otherwise.
+func (m *Manager) DefaultRuntime() string {
+	if m.sb != nil && m.sb.Available() {
+		return "container"
+	}
+	return "host"
+}
+
+// RuntimeFor is the runtime a project created with req gets.
+func (m *Manager) RuntimeFor(a Actor, req CreateProjectReq) string {
+	switch {
+	case !a.Admin:
+		return "container"
+	case req.Runtime == "":
+		return m.DefaultRuntime()
+	}
+	return req.Runtime
+}
+
+// remoteURL checks that an admin's clone URL names a remote repository:
+// https://, http://, ssh:// or git://, or scp-like user@host:path. Git
+// would take anything else as a path on the server (relative ones too,
+// such as another user's project), or run a transport helper (ext::).
+func remoteURL(raw string) bool {
+	for _, c := range raw {
+		if c <= ' ' || c == 0x7f {
+			return false
+		}
+	}
+	if scpURLRe.MatchString(raw) {
+		return true
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	switch u.Scheme {
+	case "https", "http", "ssh", "git":
+	default:
+		return false
+	}
+	host := u.Hostname()
+	return host != "" && !strings.HasPrefix(host, "-") && !strings.HasPrefix(u.User.Username(), "-") && u.Opaque == ""
+}
+
+// scpURLRe is git's scp-like syntax with a user: user@host:path.
+var scpURLRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*@[A-Za-z0-9][A-Za-z0-9.-]*:[^:]+$`)
+
 func (m *Manager) CreateProject(a Actor, req CreateProjectReq) (model.Project, error) {
 	if req.Group != "" && m.role(req.Group, a.ID) == "" {
 		return model.Project{}, ErrNotFound
@@ -85,14 +135,17 @@ func (m *Manager) CreateProject(a Actor, req CreateProjectReq) (model.Project, e
 		if req.Runtime == "host" {
 			return model.Project{}, errors.New("only admins can run agents directly on the server")
 		}
-		req.Runtime = "container"
 	}
-	if req.Group != "" && req.Runtime == "host" {
-		return model.Project{}, errors.New("group projects always run isolated")
-	}
+	// Decided first, so that every check below (and the caller's passkey
+	// check) sees the runtime the project really gets.
+	req.Runtime = m.RuntimeFor(a, req)
 	root, err := m.OwnerRoot(a, req.Group)
 	if err != nil {
 		return model.Project{}, err
+	}
+	// Also where there is no podman: then a group project can't be made.
+	if req.Group != "" && req.Runtime == "host" {
+		return model.Project{}, errors.New("group projects always run isolated")
 	}
 	name := strings.TrimSpace(req.Name)
 	var path string
@@ -114,8 +167,8 @@ func (m *Manager) CreateProject(a Actor, req CreateProjectReq) (model.Project, e
 		if url == "" {
 			return model.Project{}, errors.New("repository URL is required")
 		}
-		if strings.HasPrefix(url, "-") || strings.HasPrefix(url, "file:") || strings.HasPrefix(url, "/") || strings.HasPrefix(url, ".") || strings.Contains(url, "::") {
-			return model.Project{}, errors.New("only remote repository URLs can be cloned")
+		if strings.HasPrefix(url, "-") || strings.HasPrefix(url, "file:") || strings.HasPrefix(url, "/") || strings.HasPrefix(url, ".") || strings.Contains(url, "::") || !remoteURL(url) {
+			return model.Project{}, errors.New("only remote repository URLs can be cloned (https://, ssh://, git:// or user@host:path)")
 		}
 		if !a.Admin && !strings.HasPrefix(url, "https://") {
 			return model.Project{}, errors.New("use an https:// URL (private GitHub repositories work with GH_TOKEN in your account environment)")
@@ -172,11 +225,6 @@ func (m *Manager) CreateProject(a Actor, req CreateProjectReq) (model.Project, e
 			return model.Project{}, errors.New("isolated projects need podman on the server")
 		}
 		p.Runtime = "container"
-	case "":
-		p.Runtime = "host"
-		if m.sb != nil && m.sb.Available() {
-			p.Runtime = "container"
-		}
 	default:
 		return model.Project{}, fmt.Errorf("unknown runtime %q", req.Runtime)
 	}
@@ -415,6 +463,11 @@ func (m *Manager) PatchProject(a Actor, id string, req PatchProjectReq) (model.P
 			log.Printf("stop project %s: %v", id, err)
 		}
 	}
+	// Moving to the host pauses the project's schedules first, so that none
+	// starts there in between.
+	if req.Runtime != nil && p.Isolated() && *req.Runtime != "container" {
+		m.pauseProjectSchedules(id)
+	}
 	np, _ := m.st.UpdateProject(id, func(x *model.Project) {
 		if req.Name != nil && strings.TrimSpace(*req.Name) != "" {
 			x.Name = strings.TrimSpace(*req.Name)
@@ -433,10 +486,13 @@ func (m *Manager) PatchProject(a Actor, id string, req PatchProjectReq) (model.P
 		}
 		x.Nested = nested
 		// The list applies at once: the proxy looks it up for every
-		// connection.
+		// connection, and ends open ones it no longer allows (below).
 		x.Network, x.NetAllow = network, netAllow
 		x.Image = image
 	})
+	if m.sb != nil && (req.NetAllow != nil || req.Network != nil) {
+		m.sb.Egress().Recheck(id)
+	}
 	m.pushProject(np)
 	return np, nil
 }
@@ -600,6 +656,7 @@ func (m *Manager) PurgeUser(uid string) {
 		m.sb.RemoveUser(uid)
 	}
 	m.forgetUsage(uid)
+	m.forgetCaps(uid)
 }
 
 // GroupProjects lists the projects owned by a group.

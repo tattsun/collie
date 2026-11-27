@@ -170,11 +170,14 @@ func TestHomeChoosesModelAndEffort(t *testing.T) {
 		return ""
 	}
 	before := modelHelp()
-	m.caps = map[string]model.Caps{"codex": {Models: []model.ModelOpt{{ID: "gpt-5.5"}, {ID: "gpt-5.5-mini"}}}}
+	m.reportCaps("alice", "codex", model.Caps{Models: []model.ModelOpt{{ID: "gpt-5.5"}, {ID: "gpt-5.5-mini"}}})
 	if got := modelHelp(); !strings.Contains(got, "Offered now: codex: gpt-5.5, gpt-5.5-mini") || strings.Contains(before, "gpt") {
 		t.Errorf("model description: %q, before the models were known: %q", got, before)
 	}
-	m.caps = nil
+	m.forgetCaps("alice")
+	if m.sb != nil {
+		_ = os.Remove(m.capsPath("alice"))
+	}
 	if got := modelHelp(); got != before {
 		t.Errorf("listing the models changed the shared definitions: %q", got)
 	}
@@ -206,7 +209,7 @@ func fakeAgent(t *testing.T, kind, log string) string {
 // started, even in a group project where others can see and drive them.
 func TestInstructionsReachOnlyTheirOwnersAgents(t *testing.T) {
 	m := newHomeTestManager(t)
-	m.SetAccess(allAdmins{fakeAccess{"team": {"alice": "owner", "bob": "member"}}})
+	m.SetAccess(allAdmins{fakeAccess{"team": {"alice": "owner", "bob": "member", "carol": "member"}}})
 	log := filepath.Join(t.TempDir(), "started")
 	m.cfg.ClaudeBin, m.cfg.CodexBin = fakeAgent(t, "claude", log), fakeAgent(t, "codex", log)
 	m.st.PutProject(model.Project{ID: "pt", Name: "team", Path: t.TempDir(), OwnerGroup: "team"})

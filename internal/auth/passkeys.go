@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 	"sync"
 	"time"
 
@@ -41,6 +42,10 @@ type Ceremony struct {
 	RP      RP
 	data    webauthn.SessionData
 	expires time.Time
+	// key groups the ceremonies of one client (anonymous sign-ins, by
+	// address) or one user or invite (the others).
+	key  string
+	anon bool
 }
 
 type Passkeys struct {
@@ -61,28 +66,64 @@ func (p *Passkeys) wa(rp RP) (*webauthn.WebAuthn, error) {
 	})
 }
 
-// maxCeremonies bounds the sign-in attempts kept in memory at once: anyone
-// who can reach Collie can start one.
-const maxCeremonies = 2000
+// Ceremonies are kept in memory between their begin and finish steps.
+// Anyone who can reach Collie can start a sign-in, so those are bounded per
+// client address and in total, and the oldest give way to new ones rather
+// than turning everyone away. Re-checks and new passkeys of signed-in users
+// and invitations are kept apart, so a flood of sign-ins never blocks them.
+const (
+	maxAnonCeremonies    = 2000
+	maxTrustedCeremonies = 2000
+	perKeyCeremonies     = 8
+)
 
 // ErrBusy means too many sign-in attempts are in progress.
 var ErrBusy = errors.New("too many sign-in attempts right now; try again in a minute")
 
 func (p *Passkeys) put(c *Ceremony) (string, error) {
 	id := newSecret()
-	c.expires = time.Now().Add(5 * time.Minute)
+	t := time.Now()
+	c.expires = t.Add(5 * time.Minute)
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	var mine, pool []string
 	for k, v := range p.cs {
-		if time.Now().After(v.expires) {
+		switch {
+		case t.After(v.expires):
 			delete(p.cs, k)
+		case v.anon == c.anon:
+			pool = append(pool, k)
+			if v.key == c.key {
+				mine = append(mine, k)
+			}
 		}
 	}
-	if len(p.cs) >= maxCeremonies {
+	if len(mine) >= perKeyCeremonies {
+		k := p.oldest(mine)
+		delete(p.cs, k)
+		pool = slices.DeleteFunc(pool, func(x string) bool { return x == k })
+	}
+	if c.anon {
+		if len(pool) >= maxAnonCeremonies {
+			delete(p.cs, p.oldest(pool))
+		}
+	} else if len(pool) >= maxTrustedCeremonies {
 		return "", ErrBusy
 	}
 	p.cs[id] = c
 	return id, nil
+}
+
+// oldest returns the ceremony among ids that expires first; p.mu must be
+// held.
+func (p *Passkeys) oldest(ids []string) string {
+	best := ids[0]
+	for _, k := range ids[1:] {
+		if p.cs[k].expires.Before(p.cs[best].expires) {
+			best = k
+		}
+	}
+	return best
 }
 
 func (p *Passkeys) take(id, kind string) (*Ceremony, error) {
@@ -119,6 +160,10 @@ func (p *Passkeys) BeginRegistration(rp RP, c Ceremony) (json.RawMessage, string
 		return nil, "", err
 	}
 	c.Kind, c.RP, c.data = "register", rp, *data
+	c.key = "user:" + c.User.ID
+	if c.Invite != "" {
+		c.key = "invite:" + hashSecret(c.Invite)
+	}
 	return finishBegin(creation, &c, p)
 }
 
@@ -149,8 +194,9 @@ func (p *Passkeys) FinishRegistration(id string, r *http.Request) (*Ceremony, *w
 	return c, cred, nil
 }
 
-// BeginLogin starts a username-less (discoverable) passkey sign-in.
-func (p *Passkeys) BeginLogin(rp RP) (json.RawMessage, string, error) {
+// BeginLogin starts a username-less (discoverable) passkey sign-in for a
+// client (its address, as rate limited).
+func (p *Passkeys) BeginLogin(rp RP, client string) (json.RawMessage, string, error) {
 	w, err := p.wa(rp)
 	if err != nil {
 		return nil, "", err
@@ -159,7 +205,7 @@ func (p *Passkeys) BeginLogin(rp RP) (json.RawMessage, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	return finishBegin(assertion, &Ceremony{Kind: "login", RP: rp, data: *data}, p)
+	return finishBegin(assertion, &Ceremony{Kind: "login", RP: rp, data: *data, key: "addr:" + client, anon: true}, p)
 }
 
 // FinishLogin verifies a sign-in and returns the user.
@@ -206,7 +252,7 @@ func (p *Passkeys) BeginVerify(rp RP, u User) (json.RawMessage, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	return finishBegin(assertion, &Ceremony{Kind: "verify", RP: rp, User: u, data: *data}, p)
+	return finishBegin(assertion, &Ceremony{Kind: "verify", RP: rp, User: u, data: *data, key: "user:" + u.ID}, p)
 }
 
 // FinishVerify checks that the response comes from one of uid's passkeys.

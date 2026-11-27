@@ -5,7 +5,9 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/tattsun/collie/internal/model"
 )
@@ -99,6 +101,53 @@ func TestReadRepoPluginsDoesNotFollowSymlinksOut(t *testing.T) {
 	}
 	if s, _ := readRepoPlugins(dir); len(s.EnabledPlugins) != 0 {
 		t.Fatalf("read settings through a symlink out of the repository: %v", s.EnabledPlugins)
+	}
+}
+
+// The repository's settings and the container home are the agents' to
+// write: a huge (sparse) file, a FIFO or a symlink must neither exhaust
+// Collie's memory, hang it, nor be followed.
+func TestPluginReadsAreBounded(t *testing.T) {
+	dir := t.TempDir()
+	claude := filepath.Join(dir, ".claude")
+	os.MkdirAll(filepath.Join(claude, "plugins"), 0o700)
+	big, err := os.Create(filepath.Join(claude, "settings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := big.Truncate(1 << 40); err != nil { // 1 TiB, sparse
+		t.Skip(err)
+	}
+	big.Close()
+	if err := syscall.Mkfifo(filepath.Join(claude, "settings.local.json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "x.json")
+	os.WriteFile(outside, []byte(`{"plugins":{"evil@m":[{"scope":"user"}]}}`), 0o600)
+	os.Symlink(outside, filepath.Join(claude, "plugins", "installed_plugins.json"))
+	if err := syscall.Mkfifo(filepath.Join(claude, "plugins", "known_marketplaces.json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		if s, _ := readRepoPlugins(dir); len(s.EnabledPlugins) != 0 {
+			t.Errorf("read %v", s.EnabledPlugins)
+		}
+		root, err := os.OpenRoot(dir)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer root.Close()
+		if h := readHomePlugins(root); len(h.installed) != 0 || len(h.markets) != 0 {
+			t.Errorf("read %+v through a symlink or FIFO", h)
+		}
+	}()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("reading plugin settings hangs")
 	}
 }
 
@@ -222,5 +271,22 @@ func TestSearchCatalog(t *testing.T) {
 	}
 	if n := len(SearchCatalog(list, "", 2)); n != 2 {
 		t.Fatalf("empty query returned %d, want the first 2", n)
+	}
+}
+
+// A repository's settings may be a link to another file of the repository,
+// never to one outside it.
+func TestRepoPluginSettingsFollowLinksInTheRepo(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, ".claude"), 0o700)
+	os.MkdirAll(filepath.Join(dir, "config"), 0o700)
+	os.WriteFile(filepath.Join(dir, "config", "claude.json"), []byte(`{"enabledPlugins":{"good@m":true}}`), 0o600)
+	os.Symlink("../config/claude.json", filepath.Join(dir, ".claude", "settings.json"))
+	outside := filepath.Join(t.TempDir(), "x.json")
+	os.WriteFile(outside, []byte(`{"enabledPlugins":{"evil@m":true}}`), 0o600)
+	os.Symlink(outside, filepath.Join(dir, ".claude", "settings.local.json"))
+	s, _ := readRepoPlugins(dir)
+	if !s.EnabledPlugins["good@m"] || s.EnabledPlugins["evil@m"] {
+		t.Errorf("read %v", s.EnabledPlugins)
 	}
 }

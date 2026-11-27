@@ -87,8 +87,9 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Registering a server folder or running agents on the host reaches
-	// beyond any container.
-	if (req.Kind == "existing" || req.Runtime == "host") && actor(r).Admin && !s.verified(w, r) {
+	// beyond any container (on a server without podman, that is where a
+	// project without a runtime runs).
+	if a := actor(r); a.Admin && (req.Kind == "existing" || s.m.RuntimeFor(a, req) == "host") && !s.verified(w, r) {
 		return
 	}
 	p, err := s.m.CreateProject(actor(r), req)
@@ -390,13 +391,15 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 // cross-site origins), and forbids forms, popups, dialogs and navigating
 // the app. Nothing is loaded from the network or from other URLs, so
 // nothing leaks out either. Scripts stay off unless the viewer asks for
-// them (?js=1, HTML only); they then run inline-only, still sandboxed and
-// offline.
+// them (?js=1, HTML only) in Collie's own viewer frame; they then run
+// inline-only, still sandboxed and offline (where the browser supports
+// blocking WebRTC). Opened as a page of its own, a document could navigate
+// itself away with what it read, so there scripts never run.
 const (
 	sandboxCSP = "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; font-src data:; " +
-		"base-uri 'none'; form-action 'none'; frame-ancestors 'self'"
+		"base-uri 'none'; form-action 'none'; frame-ancestors 'self'; webrtc 'block'"
 	sandboxScriptCSP = "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'; " +
-		"img-src data: blob:; media-src data: blob:; font-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'self'"
+		"img-src data: blob:; media-src data: blob:; font-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'self'; webrtc 'block'"
 )
 
 func (s *Server) getUpload(w http.ResponseWriter, r *http.Request) {
@@ -412,11 +415,12 @@ func (s *Server) getUpload(w http.ResponseWriter, r *http.Request) {
 	h.Set("Cross-Origin-Resource-Policy", "same-origin")
 	if session.UploadActive(name) {
 		csp := sandboxCSP
-		if r.URL.Query().Get("js") == "1" && strings.HasSuffix(name, ".html") {
+		if r.URL.Query().Get("js") == "1" && strings.HasSuffix(name, ".html") && r.Header.Get("Sec-Fetch-Dest") == "iframe" {
 			csp = sandboxScriptCSP
 		}
 		h.Set("Content-Security-Policy", csp)
 		h.Set("Referrer-Policy", "no-referrer")
+		h.Add("Vary", "Sec-Fetch-Dest")
 	}
 	http.ServeFile(w, r, p)
 }
@@ -551,10 +555,42 @@ func (s *Server) createTerm(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) ownTerm(r *http.Request) (*term.Term, bool) {
 	t, ok := s.terms.Get(r.PathValue("id"))
-	if !ok || t.User != current(r).ID {
+	if !ok || t.User != current(r).ID || !s.termAllowed(t.Info) {
 		return nil, false
 	}
 	return t, true
+}
+
+// termAllowed reports whether a terminal's user may still use it, as when
+// it was opened: the project (and the session, for a session's terminal)
+// is still theirs to see, and a shell on the server itself is still an
+// admin's.
+func (s *Server) termAllowed(t term.Info) bool {
+	p, ok := s.m.Store().Project(t.Project)
+	if !ok || !s.m.MayUse(t.User, p) {
+		return false
+	}
+	if !t.Isolated && !s.users.IsAdmin(t.User) {
+		return false
+	}
+	if t.Owner != "" && t.Owner != p.ID {
+		sess, ok := s.m.Store().Session(t.Owner)
+		if !ok || !s.m.SessionVisible(t.User, sess) {
+			return false
+		}
+	}
+	return true
+}
+
+// closeLostTerms closes the terminals whose users lost them.
+func (s *Server) closeLostTerms() {
+	for _, info := range s.terms.List() {
+		if !s.termAllowed(info) {
+			if t, ok := s.terms.Get(info.ID); ok {
+				t.Close()
+			}
+		}
+	}
 }
 
 func (s *Server) deleteTerm(w http.ResponseWriter, r *http.Request) {
@@ -598,6 +634,11 @@ func (s *Server) termWS(w http.ResponseWriter, r *http.Request) {
 			case <-check.C:
 				if !s.stillSignedIn(u.ID, sessHash, legacy) {
 					_ = c.Close(4401, "signed out")
+					return
+				}
+				if !s.termAllowed(t.Info) {
+					t.Close()
+					_ = c.Close(4000, "no longer allowed")
 					return
 				}
 			case b, ok := <-ch:

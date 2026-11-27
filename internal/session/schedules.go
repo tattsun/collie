@@ -61,6 +61,8 @@ type ScheduleReq struct {
 	Cron      *string `json:"cron"`
 	TZ        *string `json:"tz"`
 	Paused    *bool   `json:"paused"`
+
+	fromHome bool // made by the user's Home agent
 }
 
 func (m *Manager) now() time.Time {
@@ -98,7 +100,7 @@ func (m *Manager) CreateSchedule(a Actor, req ScheduleReq) (model.Schedule, erro
 	}
 	now := m.now()
 	sc := model.Schedule{ID: model.NewID(), Owner: a.ID, Agent: "claude", TZ: m.defaultTZ(a.ID),
-		CreatedAt: now.UnixMilli(), UpdatedAt: now.UnixMilli()}
+		CreatedAt: now.UnixMilli(), UpdatedAt: now.UnixMilli(), FromHome: req.fromHome}
 	if req.ProjectID == nil || req.Prompt == nil || req.Cron == nil {
 		return model.Schedule{}, errors.New("a schedule needs a project, instructions and a time")
 	}
@@ -151,6 +153,27 @@ func (m *Manager) deleteSchedule(sc model.Schedule) {
 			c.enqueue(b)
 		}
 	})
+}
+
+// pauseProjectSchedules pauses the schedules of a project that moved to the
+// host: they were made for its containers, and their runs would now run on
+// the server itself. Their owners turn them on again if they should.
+func (m *Manager) pauseProjectSchedules(projectID string) {
+	m.schedMu.Lock()
+	defer m.schedMu.Unlock()
+	now := m.now().UnixMilli()
+	for _, sc := range m.st.Schedules() {
+		if sc.ProjectID != projectID || sc.Paused {
+			continue
+		}
+		sc, _ = m.st.UpdateSchedule(sc.ID, func(x *model.Schedule) bool {
+			x.Paused, x.NextAt, x.UpdatedAt = true, 0, now
+			return true
+		})
+		m.pushSchedule(sc)
+		m.addRun(sc.ID, model.ScheduleRun{Trigger: model.RunScheduled, At: now, Status: model.RunSkipped,
+			Error: "Paused: the project now runs directly on the server. Turn the schedule on again if it should run there."})
+	}
 }
 
 // deleteSchedulesWhere removes the schedules of a deleted project or user.
@@ -482,12 +505,21 @@ func (m *Manager) launch(sc model.Schedule, trigger string, planned int64, misse
 	m.addRun(sc.ID, run)
 	req := m.scheduleSessionReq(sc)
 	req.id, req.schedule = run.SessionID, sc.ID
-	s, err := m.createSession(Actor{ID: sc.Owner, Admin: m.isAdmin(sc.Owner)}, req, "schedule")
+	who := Actor{ID: sc.Owner, Admin: m.isAdmin(sc.Owner)}
+	if sc.FromHome {
+		// Home wrote its instructions: its runs may do what Home may, also
+		// in a project that moved to the host after it was made.
+		who = m.toolActor(sc.Owner)
+	}
+	s, err := m.createSession(who, req, "schedule")
 	if err == nil {
 		return run
 	}
-	if errors.Is(err, ErrNotFound) {
+	switch {
+	case errors.Is(err, ErrNotFound):
 		err = errors.New("the project is gone, or you no longer have access to it")
+	case sc.FromHome && errors.Is(err, errHostOnly):
+		err = errors.New("your Home agent made this schedule, and the project now runs directly on the server, where Home's schedules don't run; make a schedule for it in Collie yourself")
 	}
 	log.Printf("schedule %s: start run: %v", sc.ID, err)
 	run, _ = m.updateRun(sc.ID, run.ID, func(r *model.ScheduleRun) {

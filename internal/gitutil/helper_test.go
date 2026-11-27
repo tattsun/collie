@@ -2,7 +2,9 @@ package gitutil
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,13 +16,34 @@ import (
 // inProcess is a Helper that serves its requests in this process, as
 // `collie git-helper` does in a container.
 func inProcess(t *testing.T) Helper {
-	return Helper{Run: func(_ time.Duration, req []byte) ([]byte, error) {
+	return Helper{Run: func(_ time.Duration, _ bool, req []byte) ([]byte, error) {
 		var out bytes.Buffer
 		if code := ServeHelper(bytes.NewReader(req), &out); code != 0 {
 			t.Fatalf("git-helper exited with %d", code)
 		}
 		return out.Bytes(), nil
 	}}
+}
+
+// Only a new worktree (which fetches) asks for the user's credentials.
+func TestHelperCredsOnlyToFetch(t *testing.T) {
+	got := map[string]bool{}
+	h := Helper{Run: func(_ time.Duration, creds bool, req []byte) ([]byte, error) {
+		var r helperReq
+		if err := json.Unmarshal(req, &r); err != nil {
+			t.Fatal(err)
+		}
+		got[r.Op] = creds
+		return []byte(`{"error":"x"}`), nil
+	}}
+	_ = h.CheckWorktrees("/r")
+	_, _ = h.NewWorktree("/r", "/w", "b", Author{})
+	_ = h.RemoveWorktree("/r", "/w")
+	_, _ = h.Diff("/r", "")
+	want := map[string]bool{"check-worktrees": false, "new-worktree": true, "remove-worktree": false, "diff": false}
+	if !maps.Equal(got, want) {
+		t.Fatalf("creds per operation = %v, want %v", got, want)
+	}
 }
 
 func TestHelperRoundTrip(t *testing.T) {
@@ -67,7 +90,7 @@ func TestHelperRoundTrip(t *testing.T) {
 // What comes back from a container is the agent's to make up.
 func TestHelperDistrustsAnswers(t *testing.T) {
 	answer := func(s string) Helper {
-		return Helper{Run: func(time.Duration, []byte) ([]byte, error) { return []byte(s), nil }}
+		return Helper{Run: func(time.Duration, bool, []byte) ([]byte, error) { return []byte(s), nil }}
 	}
 	if _, err := answer(`{"base":"--output=/home/collie/x"}`).NewWorktree("/r", "/w", "b", Author{}); err == nil {
 		t.Error("an option passed for a base commit")

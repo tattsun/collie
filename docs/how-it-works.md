@@ -26,13 +26,14 @@ A **project** is a folder on the server. You can create a new one, clone a repos
 - If Collie is not running at a planned time (stopped, restarting for an update), it runs once when it starts again, however many times were missed.
 - Runs start while you may be away. With a permission mode that asks first, a run stops at the first approval and waits in **Needs you**, and the next planned times are skipped until it ends.
 - A schedule runs at most every 5 minutes. Times that a daylight-saving change skips don't run that day; times it repeats run once.
+- Moving a project to the host (Project → Settings) pauses its schedules. Turn them back on in **Schedules** once you've checked them. Schedules that Home made never run there.
 
 ## Screenshots, videos and HTML
 
 Agents in every session can show you files right in the chat. Try asking "make three design options and show me screenshots", "record the sign-in flow and show me" or "write it up as an HTML page and show me".
 
 - Playwright records video as WebM. If a video won't play on your iPhone, ask for MP4.
-- HTML pages open in a sandbox without network access, so they have to be a single file with styles and images embedded. The agent is told this. Scripts run only after you press **Run scripts**.
+- HTML pages open in a sandbox without network access, so they have to be a single file with styles and images embedded. The agent is told this. Scripts run only after you press **Run scripts**, and only in Collie's viewer: **Open in a new tab** shows the page without them.
 
 ## Attaching files
 
@@ -61,11 +62,11 @@ Ask the agent to start the app (`npm run dev` and the like), then open the sessi
 New projects run in an **Isolated container** by default. You can change this in Project → Settings.
 
 - Each project and user pair gets its own rootless Podman container. That user's agents and terminals for the project all run inside it.
-- The container sees only that project's folder and its worktrees. Collie's data, other projects and your host `~/.claude` are not visible.
+- The container sees only that project's folder and its worktrees. Collie's data, other projects and your host `~/.claude` are not visible. Codex's settings, threads and memories are kept per project too; only the Codex login is shared by all of your projects. Sign it out in Account → **Agent accounts** (`codex logout` in a terminal doesn't).
 - Toolchains the project installs with mise (`mise install`, from its `mise.toml` or `.tool-versions`) work by name in its containers, and its mise config is trusted there without `mise trust`. Where the image has its own (Node.js, Python), the image's comes first; run the project's with `mise exec -- node` and the like.
 - Memory, CPU and process limits apply. The defaults are 4 GB, half the cores and 4096 processes, and admins can change them per project.
 - If an agent runs away, **Kill now** stops the whole container. The conversation resumes on the next message.
-- A project's owner can choose where its containers may connect in Project → Settings → **Network**. With **Allowlist only**, they reach only the listed hosts and Claude's and Codex's own services. Tools that use `HTTPS_PROXY` work as usual, including git over `https://`, but SSH and other direct connections can't get out, so use `https://` remotes with a `GH_TOKEN`. Hosts that were blocked show up under **Recent connections**, where one tap allows them. Edits to the list apply at once. Switching between Internet and an allowlist restarts the project's containers, terminals included. Containers started inside such a project (with **Allow containers inside**) have no internet of their own.
+- A project's owner can choose where its containers may connect in Project → Settings → **Network**. With **Allowlist only**, they reach only the listed hosts and Claude's and Codex's own services. Tools that use `HTTPS_PROXY` work as usual, including git over `https://`, but SSH and other direct connections can't get out, so use `https://` remotes with a `GH_TOKEN`. Hosts that were blocked show up under **Recent connections**, where one tap allows them. Edits to the list apply at once, also to connections already open: removing a host ends them within a few seconds. Switching between Internet and an allowlist restarts the project's containers, terminals included. Containers started inside such a project (with **Allow containers inside**) have no internet of their own.
 - Since the agent is boxed in, letting it run without approvals (Claude's **Bypass**, Codex's **Full access**) is easier to justify. You can switch the mode at any time from the chip in the message box.
 - An admin can turn on **Allow containers inside (Podman)** for a project, for example to develop Collie itself there. Agents can then use `podman` in that project's containers. Each user's images are kept per project and count against the server's disk. Changes apply when the containers restart, and the first start after updating Collie rebuilds the agent image.
 
@@ -76,14 +77,14 @@ Containers run Collie's standard image: Ubuntu with Claude Code, Codex, Playwrig
 - Whoever manages a project (its owner, or the group's owner) picks its image in Project → Settings. Projects that don't pick one, and everyone's Home, run the default image, which admins choose.
 - Whatever an image sets as `USER` or `ENTRYPOINT`, agents run as the `collie` user, with the same files, network and limits. A build without Claude Code, Codex or Collie's helpers is rejected.
 - Collie rebuilds an image when its definition changes and when an update brings a new standard image. Until the new build succeeds, projects keep running the previous one, so a failed build doesn't stop anyone. Only an image's very first build makes agents wait. **Rebuild** builds it again without the cache, to pick up newer packages.
-- Builds sit behind the same firewall as agents, so they can't reach your LAN or tailnet. To use a registry or package mirror on your network, allow it with `setup-host.sh --allow`. Agents can then reach it too. For a private registry, run `podman login` as the `collie` user. Agents can't see that login.
+- Builds sit behind the same firewall as agents, so they can't reach your LAN or tailnet. To use a registry or package mirror on your network, allow it with `setup-host.sh --allow` (one on this server itself can't be allowed). Agents can then reach it too. For a private registry, run `podman login` as the `collie` user. Agents can't see that login.
 - There is no folder to copy files from. Write them in with a heredoc (`COPY <<'EOF' /path`), or take them from another image with `COPY --from=`.
 - Each image adds its own layers to the server's disk.
 
 ## Users and groups
 
 - Personal projects and conversations are visible only to their owner. Admins can't see them either.
-- In a **group project**, all members share the files and Changes. Sessions are shared with the group by default (you can choose **Make private**), so members can watch, instruct, approve and interrupt.
+- In a **group project**, all members share the files and Changes. Sessions are shared with the group by default (you can choose **Make private**), so members can watch, instruct, approve and interrupt. **Make private** hides the conversation, not its files: every member's container sees all sessions' worktrees.
 - An agent always runs on the account of the person who **started** the session (the Claude account they chose for that project), not the person sending the message.
 - A terminal is visible only to the person who opened it.
 - Admins invite and manage users, edit the global skills, MCP and environment variables, and manage host-run projects, existing folders and resource limits.

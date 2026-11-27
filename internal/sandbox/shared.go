@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"log"
 	"os"
@@ -440,22 +439,27 @@ func (m *Manager) ClaudeArgs(userID string) []string {
 	return args
 }
 
-// PrepareCodex copies the user's effective Codex config into their
-// CODEX_HOME so that the next app-server start picks it up.
-func (m *Manager) PrepareCodex(userID string) error {
-	src := filepath.Join(m.EffectiveDir(userID), "codex", "config.toml")
-	if _, err := os.Stat(src); err != nil {
-		return nil
-	}
-	if err := os.MkdirAll(m.CodexDir(userID), 0o700); err != nil {
+// PrepareCodex readies the CODEX_HOME of the user's container for the
+// project for the next app-server start: the user's effective Codex config,
+// and the link to their Codex login.
+func (m *Manager) PrepareCodex(projectID, userID string) error {
+	home := m.HomeDir(projectID, userID)
+	if err := os.MkdirAll(home, 0o700); err != nil {
 		return err
 	}
-	root, err := os.OpenRoot(m.CodexDir(userID))
+	root, err := os.OpenRoot(home)
 	if err != nil {
 		return err
 	}
 	defer root.Close()
-	return copyInto(root, src, "config.toml")
+	if err := m.linkCodexAuth(root, userID); err != nil {
+		return fmt.Errorf("link the Codex login: %w", err)
+	}
+	src := filepath.Join(m.EffectiveDir(userID), "codex", "config.toml")
+	if _, err := os.Stat(src); err != nil {
+		return nil
+	}
+	return copyInto(root, src, ".codex/config.toml")
 }
 
 // StageUpload copies a file the user attached into their container home
@@ -568,23 +572,7 @@ func copyInto(root *os.Root, src, name string) error {
 		return err
 	}
 	defer in.Close()
-	if err := root.MkdirAll(filepath.Dir(name), 0o700); err != nil {
-		return err
-	}
-	tmp := name + ".collie-tmp"
-	_ = root.Remove(tmp)
-	out, err := root.OpenFile(tmp, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
-		return err
-	}
-	if err := out.Close(); err != nil {
-		return err
-	}
-	return root.Rename(tmp, name)
+	return writeInto(root, name, in)
 }
 
 // copyTreeInto copies a host directory tree (regular files only) into root.

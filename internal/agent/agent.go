@@ -10,8 +10,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"syscall"
@@ -149,6 +151,46 @@ type proc struct {
 	stderr *tailBuffer
 	err    error
 	kill   func(sig string) // remote signaller (container), may be nil
+	// fault is why Collie stopped reading the agent's output (a line too
+	// long, or one it could not handle). Set before done is closed.
+	fault error
+}
+
+// maxLine bounds one line of an agent's output. Lines carry whole tool
+// results, but Collie clips those far below this. Anything longer is an
+// agent, or a process in its container writing to its stdout, trying to
+// make Collie hold it all in memory.
+const maxLine = 32 << 20
+
+var errLineTooLong = fmt.Errorf("it printed a line longer than %d MB", maxLine>>20)
+
+// readLine reads one line (with its newline) of at most max bytes.
+func readLine(r *bufio.Reader, max int) ([]byte, error) {
+	var line []byte
+	for {
+		frag, err := r.ReadSlice('\n')
+		if len(line)+len(frag) > max {
+			return nil, errLineTooLong
+		}
+		line = append(line, frag...)
+		if err != bufio.ErrBufferFull {
+			return line, err
+		}
+	}
+}
+
+// handleLine runs a driver's line handler. What an agent prints is not
+// trusted (any process in its container can write to its stdout), so a
+// line the handler chokes on stops that agent, never Collie.
+func handleLine(onLine func([]byte), line []byte) (err error) {
+	defer func() {
+		if e := recover(); e != nil {
+			log.Printf("agent output: panic: %v\n%s", e, debug.Stack())
+			err = fmt.Errorf("Collie could not handle its output (%v)", e)
+		}
+	}()
+	onLine(line)
+	return nil
 }
 
 func startProc(cfg Config, bin string, args []string, onLine func([]byte)) (*proc, error) {
@@ -180,11 +222,16 @@ func startProc(cfg Config, bin string, args []string, onLine func([]byte)) (*pro
 	go func() {
 		r := bufio.NewReaderSize(stdout, 1<<16)
 		for {
-			line, err := r.ReadBytes('\n')
+			line, err := readLine(r, maxLine)
 			if len(line) > 1 {
-				onLine(line)
+				if herr := handleLine(onLine, line); herr != nil {
+					err = herr
+				}
 			}
 			if err != nil {
+				if err != io.EOF && !errors.Is(err, os.ErrClosed) {
+					p.stop(err)
+				}
 				break
 			}
 		}
@@ -192,6 +239,16 @@ func startProc(cfg Config, bin string, args []string, onLine func([]byte)) (*pro
 		close(p.done)
 	}()
 	return p, nil
+}
+
+// stop ends an agent whose output Collie gave up on.
+func (p *proc) stop(why error) {
+	p.fault = why
+	log.Printf("agent %s: stopping it: %v", p.cmd.Path, why)
+	p.wmu.Lock()
+	_ = p.stdin.Close()
+	p.wmu.Unlock()
+	p.signal("KILL", syscall.SIGKILL)
 }
 
 func (p *proc) writeJSON(v any) error {
@@ -244,6 +301,9 @@ func (p *proc) signal(name string, sig syscall.Signal) {
 }
 
 func (p *proc) exitError() error {
+	if p.fault != nil {
+		return fmt.Errorf("Collie stopped the agent: %w", p.fault)
+	}
 	tail := strings.TrimSpace(p.stderr.String())
 	if p.err == nil && tail == "" {
 		return nil

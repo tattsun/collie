@@ -4,14 +4,12 @@ package session
 
 import (
 	"cmp"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"mime"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -65,10 +63,17 @@ type Manager struct {
 	noteMu sync.Mutex
 	notes  map[string]*noteBox
 
-	mu   sync.Mutex
-	rts  map[string]*Runtime
-	caps map[string]model.Caps
-	bmu  sync.Mutex // serializes session update+broadcast so clients never see stale order
+	mu  sync.Mutex
+	rts map[string]*Runtime
+	bmu sync.Mutex // serializes session update+broadcast so clients never see stale order
+
+	// What agents offer (models, commands) by user, then agent, and what
+	// Collie's own probe found (see caps.go).
+	cmu    sync.Mutex
+	caps   map[string]map[string]model.Caps
+	probed map[string]model.Caps
+
+	media mediaGate // files show_media copies at once (see media.go)
 
 	// Plan usage by user, then agent (see usage.go).
 	umu   sync.Mutex
@@ -91,7 +96,8 @@ type Manager struct {
 }
 
 func NewManager(cfg Config, st *store.Store, hub *Hub, sb *sandbox.Manager) *Manager {
-	m := &Manager{cfg: cfg, st: st, hub: hub, sb: sb, rts: map[string]*Runtime{}, caps: map[string]model.Caps{},
+	m := &Manager{cfg: cfg, st: st, hub: hub, sb: sb, rts: map[string]*Runtime{},
+		caps: map[string]map[string]model.Caps{}, probed: map[string]model.Caps{},
 		usage:     map[string]map[string]model.Usage{},
 		ctrActive: map[string]time.Time{}, hostOwner: cfg.HostOwner, toolLn: map[string]net.Listener{}}
 	if sb != nil {
@@ -120,6 +126,9 @@ func NewManager(cfg Config, st *store.Store, hub *Hub, sb *sandbox.Manager) *Man
 	m.claimExisting()
 	go m.reaper()
 	go m.probeCaps()
+	if m.sb != nil {
+		m.sb.HoldStarts()
+	}
 	go func() {
 		m.stopStaleContainers()
 		// After that, so that it does not stop the containers of runs that
@@ -134,15 +143,28 @@ func (m *Manager) Sandbox() *sandbox.Manager { return m.sb }
 // stopStaleContainers stops project containers left running by a previous
 // collie process: nothing in them is attached any more, and the next start
 // picks up configuration changes.
+//
+// Containers start only after this (HoldStarts): the migrations move files
+// they mount (an agent resuming before its Codex thread moved would start a
+// new one), and only the containers listed before them are stopped.
 func (m *Manager) stopStaleContainers() {
-	if m.sb == nil || !m.sb.Available() {
+	if m.sb == nil {
 		return
 	}
-	m.sb.MigrateLayout(m.hostOwner)
+	defer m.sb.ReleaseStarts()
+	if !m.sb.Available() {
+		return
+	}
+	var stale []sandbox.ContainerInfo
 	for _, c := range m.sb.All() {
 		if c.Running {
-			_ = m.sb.Stop(c.ProjectID, c.UserID, false)
+			stale = append(stale, c)
 		}
+	}
+	m.sb.MigrateLayout(m.hostOwner)
+	m.sb.MigrateCodex(m.st.Projects())
+	for _, c := range stale {
+		_ = m.sb.Stop(c.ProjectID, c.UserID, false)
 	}
 }
 
@@ -308,79 +330,9 @@ func (m *Manager) KillContainer(projectID, uid string) error {
 	return m.sb.Stop(projectID, uid, true)
 }
 
-func (m *Manager) capsPath() string { return filepath.Join(m.st.Dir(), "caps.json") }
-
-func (m *Manager) loadCaps() {
-	b, err := os.ReadFile(m.capsPath())
-	if err == nil {
-		_ = json.Unmarshal(b, &m.caps)
-	}
-	if m.caps == nil {
-		m.caps = map[string]model.Caps{}
-	}
-}
-
-func (m *Manager) saveCaps() {
-	m.mu.Lock()
-	b, err := json.Marshal(m.caps)
-	m.mu.Unlock()
-	if err == nil {
-		_ = os.WriteFile(m.capsPath(), b, 0o600)
-	}
-}
-
-// probeCaps fills in the Codex model list on first run so the new-session
-// form can offer models before any session has started. (Claude's list
-// arrives with the first Claude session.)
-func (m *Manager) probeCaps() {
-	m.mu.Lock()
-	_, have := m.caps["codex"]
-	m.mu.Unlock()
-	if have {
-		return
-	}
-	if _, err := exec.LookPath(m.cfg.CodexBin); err != nil {
-		return
-	}
-	home, _ := os.UserHomeDir()
-	caps, err := agent.ProbeCodex(m.cfg.CodexBin, home)
-	if err != nil {
-		log.Printf("codex model probe: %v", err)
-		return
-	}
-	if len(caps.Models) > 0 {
-		m.setAgentCaps("codex", caps)
-	}
-}
-
 func (m *Manager) Hub() *Hub           { return m.hub }
 func (m *Manager) Store() *store.Store { return m.st }
 func (m *Manager) Config() Config      { return m.cfg }
-
-func (m *Manager) AgentCaps() map[string]model.Caps {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	out := make(map[string]model.Caps, len(m.caps))
-	for k, v := range m.caps {
-		out[k] = v
-	}
-	return out
-}
-
-func (m *Manager) setAgentCaps(agentName string, c model.Caps) {
-	m.mu.Lock()
-	cur := m.caps[agentName]
-	if c.Commands != nil {
-		cur.Commands = c.Commands
-	}
-	if c.Models != nil {
-		cur.Models = c.Models
-	}
-	m.caps[agentName] = cur
-	m.mu.Unlock()
-	m.saveCaps()
-	m.hub.Broadcast(map[string]any{"t": "agentcaps", "agent": agentName, "caps": cur})
-}
 
 func (m *Manager) runtime(sid string) (*Runtime, error) {
 	if _, ok := m.st.Session(sid); !ok {
@@ -673,7 +625,7 @@ func (m *Manager) hostCheck(a Actor, s model.Session) error {
 	return nil
 }
 
-var errOwnerGone = errors.New("the person who started this session no longer has access to the project, so it is read-only")
+var errOwnerGone = errors.New("the person who started this session no longer has access to the project (or their account is disabled), so it is read-only")
 
 func (m *Manager) Interrupt(a Actor, sid string) error {
 	if _, err := m.visibleSession(a.ID, sid); err != nil {
@@ -725,7 +677,12 @@ func (m *Manager) Reply(a Actor, sid, askID string, rep agent.Reply) error {
 	if d == nil {
 		return errors.New("the agent is not running anymore; send a message to resume")
 	}
-	return d.Reply(askID, rep)
+	// The request as the agent knows it (see sink).
+	id, ok := r.agentAskID(askID)
+	if !ok {
+		return errors.New("this request is no longer pending")
+	}
+	return d.Reply(id, rep)
 }
 
 type PatchSessionReq struct {

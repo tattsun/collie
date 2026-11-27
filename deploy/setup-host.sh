@@ -10,10 +10,10 @@
 #      agents, with lingering so its services keep running, and makes sure
 #      its containers can get resource limits,
 #   3. installs a firewall rule: every process of that user — including the
-#      project containers — may reach the internet but NOT your LAN, your
-#      tailnet, link-local addresses, any of this server's own addresses, or
-#      Collie's own ports (its API, and the next --preview-ports for previews).
-#      (--allow adds exceptions, e.g. --allow 192.168.1.20/32 for a NAS.)
+#      project containers — may reach the internet but NOT your LAN (private
+#      addresses, and the networks this server is attached to), your tailnet,
+#      link-local addresses, or any of this server's own addresses, Collie's
+#      ports included. (--allow adds exceptions, e.g. --allow 192.168.1.20/32.)
 #   4. with --public (for `mise run install --domain …`): lets unprivileged
 #      users bind ports 80 and up, so Collie can serve HTTPS itself, opens
 #      80/443 (and 8443 and up, for previews) in ufw or firewalld if active,
@@ -151,6 +151,14 @@ allow_elems=""
 if [[ ${#allow[@]} -gt 0 ]]; then
   allow_elems="elements = { $(IFS=,; echo "${allow[*]}") }"
 fi
+# The user's own uid, and its subordinate uids: a container on the host's
+# network (`podman run --network host`, which a host-run agent can start)
+# opens its sockets as one of those.
+subids() {
+  awk -F: -v u="$user" -v id="$uid" '($1 == u || $1 == id) && $2 ~ /^[0-9]+$/ && $3 ~ /^[0-9]+$/ && $3 > 0 {
+    printf ", %d-%d", $2, $2 + $3 - 1 }' "$1" 2>/dev/null || true
+}
+skuids="$uid$(subids /etc/subuid)"
 cat > /etc/collie/nftables.nft <<EOF
 # Managed by collie deploy/setup-host.sh — egress policy for user $user.
 table inet collie
@@ -164,13 +172,21 @@ table inet collie {
     type ipv6_addr; flags interval
     elements = { fc00::/7, fe80::/10 }
   }
+  # the networks this server is attached to, also when their addresses are
+  # public (an IPv6 LAN, say); kept up to date by collie-firewall-onlink
+  set onlink4 {
+    type ipv4_addr; flags interval; auto-merge
+  }
+  set onlink6 {
+    type ipv6_addr; flags interval; auto-merge
+  }
   set allow4 {
     type ipv4_addr; flags interval
     $allow_elems
   }
   chain output {
     type filter hook output priority filter; policy accept;
-    meta skuid != $uid accept
+    meta skuid != { $skuids } accept
     ct state established,related accept
     # name resolution may go to a local or tailnet resolver (MagicDNS)
     meta l4proto { tcp, udp } th dport 53 accept
@@ -180,18 +196,50 @@ table inet collie {
     # other loopback services stay usable (e.g. dev servers of host-mode projects)
     ip daddr 127.0.0.0/8 accept
     ip6 daddr ::1 accept
-    ip daddr @allow4 accept
-    # none of this server's own addresses (LAN, tailnet or public IP) …
+    # none of this server's own addresses (LAN, tailnet or public IP), not
+    # even within an --allow range …
     fib daddr type local reject
+    ip daddr @allow4 accept
     # … nor anything else on the LAN / tailnet / link-local
     ip daddr @lan4 reject
     ip6 daddr @lan6 reject
+    ip daddr @onlink4 reject
+    ip6 daddr @onlink6 reject
   }
 }
 EOF
 nft -c -f /etc/collie/nftables.nft
 
+# Fills the onlink sets from the routes of the networks this server is
+# directly attached to (no gateway), at start and every few minutes, as
+# addresses come and go (DHCP, IPv6 router advertisements).
 nft="$(command -v nft)"
+ip="$(command -v ip || true)"
+if [[ -z $ip ]]; then
+  echo "warning: no 'ip' (iproute2): hosts on this server's own networks with public addresses stay reachable" >&2
+fi
+cat > /etc/collie/onlink.sh <<EOF
+#!/bin/sh
+# Managed by collie deploy/setup-host.sh: puts the networks this server is
+# attached to into the collie table's onlink sets.
+set -eu
+# Routes wider than /8 (IPv4) or /16 (IPv6) are not a LAN: a VPN client may
+# send the whole internet through gateway-less routes such as 0.0.0.0/1.
+v4=\$($ip -o -4 route show table main scope link 2>/dev/null | awk '\$1 ~ /^[0-9.]+(\/[0-9]+)?\$/ { n = split(\$1, a, "/"); if (n == 1 || a[2] + 0 >= 8) print \$1 }' | sort -u | paste -sd, -)
+v6=\$($ip -o -6 route show table main 2>/dev/null | awk '\$1 ~ /^[0-9a-f:]+(\/[0-9]+)?\$/ && \$0 !~ / via / && \$0 !~ / dev lo / { n = split(\$1, a, "/"); if (n == 1 || a[2] + 0 >= 16) print \$1 }' | sort -u | paste -sd, -)
+{
+  echo "flush set inet collie onlink4"
+  echo "flush set inet collie onlink6"
+  if [ -n "\$v4" ]; then echo "add element inet collie onlink4 { \$v4 }"; fi
+  if [ -n "\$v6" ]; then echo "add element inet collie onlink6 { \$v6 }"; fi
+} | $nft -f -
+EOF
+chmod 755 /etc/collie/onlink.sh
+onlink_start=""
+if [[ -n $ip ]]; then
+  onlink_start="ExecStartPost=-/etc/collie/onlink.sh"
+fi
+
 cat > /etc/systemd/system/collie-firewall.service <<EOF
 [Unit]
 Description=Collie egress firewall for user $user (no LAN / tailnet access)
@@ -202,14 +250,41 @@ Before=network-pre.target
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=$nft -f /etc/collie/nftables.nft
+$onlink_start
 ExecStop=$nft delete table inet collie
 
 [Install]
 WantedBy=multi-user.target
 EOF
+cat > /etc/systemd/system/collie-firewall-onlink.service <<EOF
+[Unit]
+Description=Collie egress firewall: this server's own networks
+After=collie-firewall.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/etc/collie/onlink.sh
+EOF
+cat > /etc/systemd/system/collie-firewall-onlink.timer <<EOF
+[Unit]
+Description=Keep Collie's egress firewall up to date with this server's networks
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=2min
+
+[Install]
+WantedBy=timers.target
+EOF
 systemctl daemon-reload
 systemctl enable --now collie-firewall.service
 systemctl restart collie-firewall.service
+if [[ -n $ip ]]; then
+  systemctl enable --now collie-firewall-onlink.timer
+else
+  systemctl disable --now collie-firewall-onlink.timer 2>/dev/null || true
+fi
 
 cat <<EOF
 

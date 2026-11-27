@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -32,13 +33,81 @@ func runEnv(ctx context.Context, dir string, env []string, args ...string) (stri
 		if msg == "" {
 			msg = err.Error()
 		}
-		return out.String(), fmt.Errorf("git %s: %s", args[0], msg)
+		return out.String(), fmt.Errorf("git %s: %s", command(args), msg)
 	}
 	return out.String(), nil
 }
 
+// command is the git command in args, after any -c options.
+func command(args []string) string {
+	for i := 0; i < len(args); i++ {
+		if args[i] == "-c" {
+			i++
+			continue
+		}
+		return args[i]
+	}
+	return ""
+}
+
 func ctx(d time.Duration) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), d)
+}
+
+// guarded is git that only reads the working tree (status, diff) or
+// removes a worktree, kept from running what the repository's
+// configuration names: an agent can write it, and in a group project
+// another member's container runs this for the Changes tab. No fsmonitor,
+// hooks or external diff (callers add --no-ext-diff --no-textconv to
+// diffs, and keep out of submodules, whose configuration isn't looked at
+// here), and every filter driver the configuration defines is emptied: git
+// has no switch for them all. The emptied drivers go both as -c options
+// and as GIT_CONFIG_KEY_n variables, which also take names with a "=" in
+// them.
+type guarded struct {
+	args []string
+	env  []string
+}
+
+func guard(c context.Context, dir string) guarded {
+	g := guarded{args: []string{
+		"-c", "core.fsmonitor=false",
+		"-c", "core.hooksPath=/dev/null",
+		"-c", "diff.external=",
+		"-c", "submodule.recurse=false",
+		// Showing signatures runs gpg.program (or its ssh/x509 variants).
+		"-c", "log.showSignature=false",
+	}}
+	// Reading the configuration runs nothing.
+	out, _ := run(c, dir, "config", "-z", "--name-only", "--get-regexp", `^filter\.`)
+	seen := map[string]bool{}
+	n := 0
+	for _, key := range strings.Split(out, "\x00") {
+		i := strings.LastIndexByte(key, '.')
+		if i <= len("filter.") {
+			continue
+		}
+		drv := key[:i]
+		if seen[drv] {
+			continue
+		}
+		seen[drv] = true
+		for _, kv := range [][2]string{{".clean", ""}, {".smudge", ""}, {".process", ""}, {".required", "false"}} {
+			if !strings.Contains(drv, "=") {
+				g.args = append(g.args, "-c", drv+kv[0]+"="+kv[1])
+			}
+			g.env = append(g.env, fmt.Sprintf("GIT_CONFIG_KEY_%d=%s%s", n, drv, kv[0]), fmt.Sprintf("GIT_CONFIG_VALUE_%d=%s", n, kv[1]))
+			n++
+		}
+	}
+	if n > 0 {
+		g.env = append(g.env, fmt.Sprintf("GIT_CONFIG_COUNT=%d", n))
+	}
+	return g
+}
+
+func (g guarded) run(c context.Context, dir string, args ...string) (string, error) {
+	return runEnv(c, dir, g.env, append(slices.Clone(g.args), args...)...)
 }
 
 func IsRepo(dir string) bool {
@@ -61,7 +130,7 @@ func HasCommits(dir string) bool {
 func HasFiles(dir string) bool {
 	c, cancel := ctx(30 * time.Second)
 	defer cancel()
-	out, err := run(c, dir, "status", "--porcelain", "--untracked-files=normal")
+	out, err := guard(c, dir).run(c, dir, "status", "--porcelain", "--untracked-files=normal", "--ignore-submodules=dirty")
 	return err != nil || strings.TrimSpace(out) != ""
 }
 
@@ -189,17 +258,20 @@ func AddWorktree(repo, path, branch, base string) error {
 	}
 	c, cancel := ctx(2 * time.Minute)
 	defer cancel()
-	_, err := run(c, repo, "worktree", "add", "-q", "--no-track", "-b", branch, path, base)
+	// Hooks and filters run as the repository wants (Git LFS needs them):
+	// the session's own agent works there next anyway.
+	_, err := run(c, repo, "-c", "core.fsmonitor=false", "worktree", "add", "-q", "--no-track", "-b", branch, path, base)
 	return err
 }
 
 func RemoveWorktree(repo, path string) error {
 	c, cancel := ctx(time.Minute)
 	defer cancel()
-	_, err := run(c, repo, "worktree", "remove", "--force", path)
+	g := guard(c, repo)
+	_, err := g.run(c, repo, "worktree", "remove", "--force", path)
 	if err != nil {
 		_ = os.RemoveAll(path)
-		_, _ = run(c, repo, "worktree", "prune")
+		_, _ = g.run(c, repo, "worktree", "prune")
 	}
 	return err
 }
@@ -237,7 +309,8 @@ func Diff(dir, base string) (*Changes, error) {
 	c, cancel := ctx(30 * time.Second)
 	defer cancel()
 
-	status, err := run(c, dir, "status", "--porcelain=v1", "-z", "-uall")
+	g := guard(c, dir)
+	status, err := g.run(c, dir, "status", "--porcelain=v1", "-z", "-uall", "--ignore-submodules=dirty")
 	if err != nil {
 		return nil, err
 	}
@@ -248,7 +321,7 @@ func Diff(dir, base string) (*Changes, error) {
 	if base != "" && hasHead {
 		if _, err := run(c, dir, "cat-file", "-e", base+"^{commit}"); err == nil {
 			against = base
-			if out, err := run(c, dir, "diff", "--name-status", "-z", base, "HEAD"); err == nil {
+			if out, err := g.run(c, dir, "diff", "--no-ext-diff", "--no-textconv", "--name-status", "-z", base, "HEAD"); err == nil {
 				status = mergeCommitted(status, out)
 			}
 		}
@@ -276,11 +349,11 @@ func Diff(dir, base string) (*Changes, error) {
 			fc.Status = "?"
 			fc.Diff, fc.Binary = untrackedDiff(root, path)
 		} else if hasHead {
-			d, _ := run(c, dir, "diff", "--no-color", "--no-ext-diff", against, "--", path)
+			d, _ := g.run(c, dir, "diff", "--no-color", "--no-ext-diff", "--no-textconv", "--ignore-submodules=dirty", against, "--", path)
 			fc.Diff = d
 			fc.Binary = strings.Contains(d, "Binary files")
 		} else {
-			d, _ := run(c, dir, "diff", "--no-color", "--cached", "--", path)
+			d, _ := g.run(c, dir, "diff", "--no-color", "--no-ext-diff", "--no-textconv", "--ignore-submodules=dirty", "--cached", "--", path)
 			fc.Diff = d
 		}
 		if len(fc.Diff) > maxDiff {
@@ -293,7 +366,7 @@ func Diff(dir, base string) (*Changes, error) {
 	}
 	if base != "" && hasHead {
 		res.Base = base
-		if out, err := run(c, dir, "log", "--oneline", "--no-decorate", base+"..HEAD"); err == nil {
+		if out, err := g.run(c, dir, "log", "--oneline", "--no-decorate", "--no-show-signature", base+"..HEAD"); err == nil {
 			for _, l := range strings.Split(strings.TrimSpace(out), "\n") {
 				if l != "" {
 					res.Commits = append(res.Commits, l)

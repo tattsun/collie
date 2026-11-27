@@ -1,7 +1,6 @@
 package sandbox
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -38,11 +37,6 @@ func (m *Manager) HomeDir(projectID, userID string) string {
 
 // UserDir holds a user's profile, agent accounts and settings.
 func (m *Manager) UserDir(userID string) string { return filepath.Join(m.cfg.DataDir, "users", userID) }
-
-// CodexDir is the user's CODEX_HOME, shared by all of the user's containers
-// (its login, threads and memories), like several Codex processes on one
-// machine.
-func (m *Manager) CodexDir(userID string) string { return filepath.Join(m.UserDir(userID), "codex") }
 
 // UserEnvPath holds the user's own variables (e.g. CLAUDE_CODE_OAUTH_TOKEN).
 func (m *Manager) UserEnvPath(userID string) string { return filepath.Join(m.UserDir(userID), "env") }
@@ -155,11 +149,38 @@ const (
 	CollieBinPath = "/usr/local/lib/collie/collie"
 )
 
+// HoldStarts makes Ensure wait, until ReleaseStarts, before it starts
+// anything: start-up moves files that containers mount (MigrateLayout,
+// MigrateCodex) and stops what an earlier process left running.
+func (m *Manager) HoldStarts() {
+	m.mu.Lock()
+	if m.held == nil {
+		m.held = make(chan struct{})
+	}
+	m.mu.Unlock()
+}
+
+// ReleaseStarts lets Ensure start containers again.
+func (m *Manager) ReleaseStarts() {
+	m.mu.Lock()
+	if m.held != nil {
+		close(m.held)
+		m.held = nil
+	}
+	m.mu.Unlock()
+}
+
 // Ensure starts the container, creating (or re-creating, when its
 // configuration changed and recreate is allowed) it as needed.
 func (m *Manager) Ensure(sp Spec, recreate bool) error {
 	if !m.available {
 		return ErrUnavailable
+	}
+	m.mu.Lock()
+	held := m.held
+	m.mu.Unlock()
+	if held != nil {
+		<-held
 	}
 	p := sp.Project
 	l := m.lock(p.ID + "/" + sp.UserID)
@@ -286,7 +307,8 @@ func (m *Manager) runArgs(sp Spec, extra []string) []string {
 		"-e", "HOME="+Home,
 		"-e", "COLLIE_PROJECT="+p.Name,
 		"-v", home+":"+Home,
-		"-v", m.CodexDir(uid)+":"+Home+"/.codex",
+		// The Codex login only: CODEX_HOME is ~/.codex, per project (codex.go).
+		"-v", m.CodexAuthDir(uid)+":"+codexAuthMount,
 		"-v", p.Path+":"+p.Path,
 		"-v", m.WorktreeRoot(p.ID)+":"+m.WorktreeRoot(p.ID),
 		"-v", eff+":"+ProfileDir+":ro",
@@ -396,8 +418,8 @@ func currentUser() string {
 func (m *Manager) prepare(sp Spec) error {
 	p, uid := sp.Project, sp.UserID
 	home := m.HomeDir(p.ID, uid)
-	codex := m.CodexDir(uid)
-	for _, d := range []string{home, codex, m.WorktreeRoot(p.ID)} {
+	codexAuth := m.CodexAuthDir(uid)
+	for _, d := range []string{home, codexAuth, m.WorktreeRoot(p.ID)} {
 		if err := os.MkdirAll(d, 0o700); err != nil {
 			return err
 		}
@@ -416,7 +438,7 @@ func (m *Manager) prepare(sp Spec) error {
 		return fmt.Errorf("build profile: %w", err)
 	}
 	m.repairOwnership(home)
-	m.repairOwnership(codex)
+	m.repairOwnership(codexAuth)
 	// Create every mount point ourselves (podman would create them as the
 	// namespace's root, i.e. a subuid the agent cannot write as), and do it
 	// through os.Root: the agent controls these directories and may have
@@ -443,18 +465,25 @@ func (m *Manager) prepare(sp Spec) error {
 		}
 		return nil
 	}
-	homeDirs := []string{".claude", ".claude/skills", ".claude/agents", ".claude/commands", ".codex"}
+	homeDirs := []string{".claude", ".claude/skills", ".claude/agents", ".claude/commands", ".codex", ".codex/skills", ".codex-auth"}
 	if p.OwnerGroup != "" {
 		homeDirs = append(homeDirs, ".claude/projects/"+claudeKey(p.Path)+"/memory")
 	}
 	if p.Nested {
 		homeDirs = append(homeDirs, strings.TrimPrefix(nestedStorageMount, Home+"/"))
 	}
-	if err := mk(home, homeDirs, []string{".claude/CLAUDE.md", ".gitconfig"}); err != nil {
+	if err := mk(home, homeDirs, []string{".claude/CLAUDE.md", ".gitconfig", ".codex/AGENTS.md"}); err != nil {
 		return err
 	}
-	if err := mk(codex, []string{"skills"}, []string{"AGENTS.md"}); err != nil {
-		return err
+	if err := func() error {
+		root, err := os.OpenRoot(home)
+		if err != nil {
+			return err
+		}
+		defer root.Close()
+		return m.linkCodexAuth(root, uid)
+	}(); err != nil {
+		return fmt.Errorf("prepare the Codex login: %w", err)
 	}
 	hosts := fmt.Sprintf("127.0.0.1\tlocalhost\n::1\tlocalhost ip6-localhost ip6-loopback\n127.0.1.1\t%s\n", hostname(p.Name))
 	if err := os.WriteFile(m.hostsPath(p.ID), []byte(hosts), 0o644); err != nil {
@@ -504,14 +533,27 @@ func (m *Manager) repairOwnership(dir string) {
 // the project (in dir, attached to stdio), and a function that signals it.
 // id must be unique per running process.
 func (m *Manager) Exec(projectID, userID, dir, id string, tty bool, env []string, command []string) ([]string, func(sig string)) {
+	return m.exec(projectID, userID, dir, id, tty, true, env, command)
+}
+
+// ExecBare is Exec without the env files: for Collie's own work in the
+// container (git for the Changes tab, say), which needs none of the user's
+// tokens and may run what an agent planted in the repository.
+func (m *Manager) ExecBare(projectID, userID, dir, id string, command []string) ([]string, func(sig string)) {
+	return m.exec(projectID, userID, dir, id, false, false, nil, command)
+}
+
+func (m *Manager) exec(projectID, userID, dir, id string, tty, envFiles bool, env []string, command []string) ([]string, func(sig string)) {
 	argv := append([]string{m.cfg.Podman}, m.global...)
 	argv = append(argv, "exec", "-i", "-w", dir)
 	// The env files are read at every exec rather than baked into the
 	// container, so saved variables (a new Claude token, say) reach the next
 	// agent or shell even while an open terminal keeps the container from
 	// being re-created. Explicit -e values below take precedence.
-	for _, f := range m.envFiles(projectID, userID) {
-		argv = append(argv, "--env-file", f)
+	if envFiles {
+		for _, f := range m.envFiles(projectID, userID) {
+			argv = append(argv, "--env-file", f)
+		}
 	}
 	if tty {
 		argv = append(argv, "-t", "-e", "TERM=xterm-256color", "-e", "COLORTERM=truecolor")
@@ -624,10 +666,17 @@ func (m *Manager) readEnd(projectID, userID, end, path string, limit int64) ([]b
 	args := append(append([]string(nil), m.global...), "exec", Name(projectID, userID),
 		end, "-c", strconv.FormatInt(limit+1, 10), "--", path)
 	cmd := exec.CommandContext(ctx, m.cfg.Podman, args...)
-	var out, errb bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &errb
-	if err := cmd.Run(); err != nil {
+	// The container's head or tail may not be the real one (an agent with
+	// root in a nested project can swap it): never keep more than asked.
+	out := &cappedBuffer{max: int(limit + 1), full: cancel}
+	errb := &cappedBuffer{max: 16 << 10}
+	cmd.Stdout = out
+	cmd.Stderr = errb
+	err := cmd.Run()
+	if out.over {
+		return nil, fmt.Errorf("%s in the container answered with more than it was asked for", end)
+	}
+	if err != nil {
 		msg := strings.TrimSpace(errb.String())
 		if msg == "" {
 			msg = err.Error()
@@ -855,16 +904,19 @@ func (m *Manager) MigrateLayout(ownerID string) {
 				log.Printf("migrate %s: %v", dir, err)
 			}
 		}
-		// The old per-project ~/.codex was replaced by the per-user one.
+		// That version's ~/.codex predates the shared Codex login.
 		_ = os.RemoveAll(filepath.Join(dir, ownerID, ".codex"))
 	}
 	if h, err := os.UserHomeDir(); err == nil {
 		src := filepath.Join(h, ".codex", "auth.json")
-		dst := filepath.Join(m.CodexDir(ownerID), "auth.json")
-		if fileNonEmpty(src) && !fileNonEmpty(dst) {
-			if err := os.MkdirAll(m.CodexDir(ownerID), 0o700); err == nil {
-				if b, err := os.ReadFile(src); err == nil {
-					_ = os.WriteFile(dst, b, 0o600)
+		dir := m.CodexAuthDir(ownerID)
+		if fileNonEmpty(src) && !fileNonEmpty(filepath.Join(dir, "auth.json")) && !fileNonEmpty(filepath.Join(m.legacyCodexDir(ownerID), "auth.json")) {
+			if err := os.MkdirAll(dir, 0o700); err == nil {
+				if b, err := os.ReadFile(src); err == nil && len(b) <= maxCodexAuth {
+					if root, err := os.OpenRoot(dir); err == nil {
+						_ = writeBytesInto(root, "auth.json", b)
+						root.Close()
+					}
 				}
 			}
 		}

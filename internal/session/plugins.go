@@ -63,6 +63,13 @@ func (m *Manager) SetProjectPlugins(a Actor, id string, s sandbox.PluginSet) err
 	return sandbox.WritePluginSet(m.sb.ProjectPluginsPath(p.ID), s)
 }
 
+// GroupProject reports whether a sees the project and it is a group's
+// (its plugins then run in every member's container).
+func (m *Manager) GroupProject(a Actor, id string) bool {
+	p, err := m.visibleProject(a.ID, id)
+	return err == nil && p.OwnerGroup != ""
+}
+
 // EffectivePlugins is what a's agents in the project get, by plugin, with
 // the level that decided; Problems lists skipped entries and unreadable
 // files.

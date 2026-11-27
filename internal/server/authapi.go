@@ -36,6 +36,7 @@ func (s *Server) authRoutes() {
 	mx.HandleFunc("POST /api/me/signout-others", s.signoutOthers)
 	mx.HandleFunc("GET /api/me/env", s.getMyEnv)
 	mx.HandleFunc("PUT /api/me/env", s.putMyEnv)
+	s.claudeRoutes(mx)
 
 	// profiles: "global" (admins) or "me"
 	mx.HandleFunc("GET /api/profile/{scope}/files", s.profileFiles)
@@ -315,12 +316,17 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 			codex = true
 		}
 	}
-	env, _ := s.m.UserEnv(u.ID)
+	accounts := 0
+	if sb := s.m.Sandbox(); sb != nil {
+		if v, err := sb.Accounts(u.ID); err == nil {
+			accounts = len(v.Accounts)
+		}
+	}
 	writeJSON(w, map[string]any{
 		"user":     userInfo{ID: u.ID, Name: u.Name, DisplayName: u.DisplayName, Admin: u.Admin},
 		"passkeys": pks, "sessions": sessions,
-		"codexLoggedIn": codex,
-		"claudeToken":   strings.Contains(env, "CLAUDE_CODE_OAUTH_TOKEN=") && !strings.Contains(env, "CLAUDE_CODE_OAUTH_TOKEN=\n"),
+		"codexLoggedIn":  codex,
+		"claudeAccounts": accounts,
 	})
 }
 

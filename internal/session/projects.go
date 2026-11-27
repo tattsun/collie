@@ -244,6 +244,7 @@ func (m *Manager) deleteProject(id string) {
 		m.sb.Remove(id)
 		_ = os.Remove(m.sb.WorktreeRoot(id)) // only if empty
 	}
+	m.closeToolSockets(id)
 	m.st.DeleteProject(id)
 	m.pushProjectDeleted(id)
 }

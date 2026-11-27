@@ -30,9 +30,9 @@ import (
 	"github.com/tattsun/collie/internal/auth"
 	"github.com/tattsun/collie/internal/session"
 	"github.com/tattsun/collie/internal/term"
+	"github.com/tattsun/collie/internal/update"
+	"github.com/tattsun/collie/internal/version"
 )
-
-const Version = "0.2.0"
 
 type Options struct {
 	// Token is the legacy access token. It (and the Tailscale identity
@@ -48,6 +48,8 @@ type Options struct {
 	PublicURL string
 	// Owner is the first admin: the identity of legacy / --no-auth requests.
 	Owner string
+	// Updater installs new releases (nil: no updates).
+	Updater *update.Updater
 }
 
 type Server struct {
@@ -61,6 +63,7 @@ type Server struct {
 
 	agentsAvail map[string]bool
 	build       string
+	logins      claudeLogins
 }
 
 func New(m *session.Manager, terms *term.Manager, users *auth.Store, opt Options) *Server {
@@ -86,6 +89,9 @@ func New(m *session.Manager, terms *term.Manager, users *auth.Store, opt Options
 				c.Enqueue(mustJSON(map[string]any{"t": "sandbox", "sandbox": s.sandboxStatus(u.Admin)}))
 			})
 		}
+	}
+	if up := opt.Updater; up != nil {
+		up.OnChange = s.pushUpdate
 	}
 	// Users or groups changed: everyone's view may have changed.
 	users.OnChange = func() { m.Revalidate(s.stateForID) }
@@ -388,11 +394,30 @@ func (s *Server) stateFor(u auth.User, legacy bool) map[string]any {
 		"rootBase":  cfg.ProjectRoot,
 		"terms":     s.termsFor(u.ID),
 		"sandbox":   s.sandboxStatus(u.Admin),
-		"version":   Version,
+		"version":   version.Version,
 		"build":     s.build,
 		"legacy":    legacy,
 		"passkeys":  len(u.Passkeys),
+		"update":    s.updateStatus(u.Admin),
 	}
+}
+
+// updateStatus is shown to admins only.
+func (s *Server) updateStatus(admin bool) any {
+	if !admin || s.opt.Updater == nil {
+		return nil
+	}
+	return s.opt.Updater.Status()
+}
+
+func (s *Server) pushUpdate() {
+	st := s.updateStatus(true)
+	msg := mustJSON(map[string]any{"t": "update", "update": st})
+	s.m.Hub().Each(func(c *session.Client) {
+		if u, ok := s.users.User(c.UserID); ok && u.Admin {
+			c.Enqueue(msg)
+		}
+	})
 }
 
 // stateForID is used when re-sending state after users/groups changed;

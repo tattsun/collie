@@ -675,8 +675,12 @@ func (c *Codex) onItem(item map[string]any, done bool) {
 		input := mustJSON(item["arguments"])
 		status := toolStatus(str(item, "status"), nil)
 		var out string
+		var imgs []string
 		if r := obj(item, "result"); r != nil {
 			out = stringifyContent(r["content"])
+			if done {
+				imgs = toolImages(c.sink, r["content"])
+			}
 		}
 		if e := obj(item, "error"); e != nil {
 			out = str(e, "message")
@@ -686,6 +690,9 @@ func (c *Codex) onItem(item map[string]any, done bool) {
 			it.Tool.Name, it.Tool.Input, it.Tool.Status = name, input, status
 			if out != "" {
 				it.Tool.Output = clip(out)
+			}
+			if len(imgs) > 0 {
+				it.Images = imgs
 			}
 			it.Done = done
 		})
@@ -976,3 +983,4 @@ func (s *capsSink) Meta(func(*model.Session))             {}
 func (s *capsSink) Caps(c model.Caps)                     { s.caps = c }
 func (s *capsSink) Usage(model.Usage)                     {}
 func (s *capsSink) Exited(error)                          {}
+func (s *capsSink) Blob([]byte) string                    { return "" }

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"github.com/tattsun/collie/internal/auth"
 	"github.com/tattsun/collie/internal/sandbox"
 	"github.com/tattsun/collie/internal/session"
+	"github.com/tattsun/collie/internal/update"
 )
 
 func (s *Server) authRoutes() {
@@ -36,6 +38,7 @@ func (s *Server) authRoutes() {
 	mx.HandleFunc("POST /api/me/signout-others", s.signoutOthers)
 	mx.HandleFunc("GET /api/me/env", s.getMyEnv)
 	mx.HandleFunc("PUT /api/me/env", s.putMyEnv)
+	s.claudeRoutes(mx)
 
 	// profiles: "global" (admins) or "me"
 	mx.HandleFunc("GET /api/profile/{scope}/files", s.profileFiles)
@@ -60,6 +63,10 @@ func (s *Server) authRoutes() {
 	mx.HandleFunc("GET /api/shared/env", s.getSharedEnv)
 	mx.HandleFunc("PUT /api/shared/env", s.putSharedEnv)
 	mx.HandleFunc("POST /api/sandbox/build", s.buildImage)
+	mx.HandleFunc("POST /api/admin/update/check", s.updateCheck)
+	mx.HandleFunc("POST /api/admin/update/apply", s.updateApply)
+	mx.HandleFunc("POST /api/admin/update/cancel", s.updateCancel)
+	mx.HandleFunc("PATCH /api/admin/update/settings", s.updateSettings)
 }
 
 // ---- sign-in ----
@@ -315,12 +322,17 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 			codex = true
 		}
 	}
-	env, _ := s.m.UserEnv(u.ID)
+	accounts := 0
+	if sb := s.m.Sandbox(); sb != nil {
+		if v, err := sb.Accounts(u.ID); err == nil {
+			accounts = len(v.Accounts)
+		}
+	}
 	writeJSON(w, map[string]any{
 		"user":     userInfo{ID: u.ID, Name: u.Name, DisplayName: u.DisplayName, Admin: u.Admin},
 		"passkeys": pks, "sessions": sessions,
-		"codexLoggedIn": codex,
-		"claudeToken":   strings.Contains(env, "CLAUDE_CODE_OAUTH_TOKEN=") && !strings.Contains(env, "CLAUDE_CODE_OAUTH_TOKEN=\n"),
+		"codexLoggedIn":  codex,
+		"claudeAccounts": accounts,
 	})
 }
 
@@ -824,6 +836,82 @@ func (s *Server) buildImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, sb.Status())
+}
+
+// ---- updates ----
+
+func (s *Server) updater(w http.ResponseWriter, r *http.Request) *update.Updater {
+	if !requireAdmin(w, r) {
+		return nil
+	}
+	if s.opt.Updater == nil {
+		httpError(w, 400, "updates are not available")
+		return nil
+	}
+	return s.opt.Updater
+}
+
+func (s *Server) updateCheck(w http.ResponseWriter, r *http.Request) {
+	up := s.updater(w, r)
+	if up == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	if err := up.Check(ctx); err != nil {
+		httpError(w, 400, err.Error())
+		return
+	}
+	writeJSON(w, up.Status())
+}
+
+func (s *Server) updateApply(w http.ResponseWriter, r *http.Request) {
+	up := s.updater(w, r)
+	if up == nil {
+		return
+	}
+	if err := up.Apply(false); err != nil {
+		httpError(w, 400, err.Error())
+		return
+	}
+	writeJSON(w, up.Status())
+}
+
+func (s *Server) updateCancel(w http.ResponseWriter, r *http.Request) {
+	up := s.updater(w, r)
+	if up == nil {
+		return
+	}
+	up.Cancel()
+	ok(w)
+}
+
+func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
+	up := s.updater(w, r)
+	if up == nil {
+		return
+	}
+	var req struct {
+		Auto  *bool   `json:"auto"`
+		Token *string `json:"token"`
+	}
+	if err := decode(r, &req); err != nil {
+		httpError(w, 400, err.Error())
+		return
+	}
+	if req.Token != nil {
+		if err := up.SetToken(*req.Token); err != nil {
+			fail(w, err)
+			return
+		}
+	}
+	if req.Auto != nil {
+		if err := up.SetAuto(*req.Auto); err != nil {
+			fail(w, err)
+			return
+		}
+	}
+	writeJSON(w, up.Status())
 }
 
 // forbiddenOr404 hides groups from non-members.

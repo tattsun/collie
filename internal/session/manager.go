@@ -12,7 +12,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -52,9 +51,10 @@ type Manager struct {
 	ctrMu      sync.Mutex
 	ctrActive  map[string]time.Time // "project/user" containers started by this process
 
-	// Home: one per user (see home.go); homeLn are the users' tools sockets.
+	// Home: one per user (see home.go). toolLn are the agents' tools
+	// sockets (see media.go), by toolScope.key.
 	homeMu sync.Mutex
-	homeLn map[string]net.Listener
+	toolLn map[string]net.Listener
 
 	mu   sync.Mutex
 	rts  map[string]*Runtime
@@ -69,7 +69,7 @@ type Manager struct {
 func NewManager(cfg Config, st *store.Store, hub *Hub, sb *sandbox.Manager) *Manager {
 	m := &Manager{cfg: cfg, st: st, hub: hub, sb: sb, rts: map[string]*Runtime{}, caps: map[string]model.Caps{},
 		usage:     map[string]map[string]model.Usage{},
-		ctrActive: map[string]time.Time{}, hostOwner: cfg.HostOwner, homeLn: map[string]net.Listener{}}
+		ctrActive: map[string]time.Time{}, hostOwner: cfg.HostOwner, toolLn: map[string]net.Listener{}}
 	if cfg.HostOwner != "" {
 		m.AdoptOrphans(cfg.HostOwner)
 	}
@@ -128,6 +128,9 @@ func (m *Manager) ensureContainer(p model.Project, uid string, onBuild func()) e
 		if err := m.homeSpec(&sp, uid); err != nil {
 			return fmt.Errorf("prepare Home: %w", err)
 		}
+	} else if err := m.toolsSpec(&sp, toolScope{uid: uid, project: p.ID}); err != nil {
+		// The agents just go without Collie's tools.
+		log.Printf("project %s: tools socket for %s: %v", p.ID, uid, err)
 	}
 	if err := m.sb.Ensure(sp, !m.projectBusy(p.ID, uid)); err != nil {
 		return fmt.Errorf("start project container: %w", err)
@@ -476,15 +479,6 @@ func validMode(agentName, mode string) bool {
 	return agentName == "claude" && mode == "dontAsk"
 }
 
-var uploadRe = regexp.MustCompile(`^[0-9a-f]{16}([0-9a-f]{16})?\.(png|jpe?g|gif|webp)$`)
-
-func (m *Manager) UploadPath(id string) (string, bool) {
-	if !uploadRe.MatchString(id) {
-		return "", false
-	}
-	return filepath.Join(m.st.UploadsDir(), id), true
-}
-
 func (m *Manager) Send(a Actor, sid, text string, imageIDs []string) error {
 	return m.send(a, sid, text, imageIDs, "")
 }
@@ -785,6 +779,25 @@ func (m *Manager) Shutdown() {
 	}
 	wg.Wait()
 	_ = m.st.Flush()
+}
+
+// BusySessions counts the sessions a restart would interrupt: agents that
+// are starting or working, and those waiting for an answer — unless the
+// question has gone unanswered for longer than staleWaiting.
+func (m *Manager) BusySessions(staleWaiting time.Duration) int {
+	cutoff := model.NowMs() - staleWaiting.Milliseconds()
+	n := 0
+	for _, s := range m.st.Sessions() {
+		switch s.Status {
+		case model.StatusStarting, model.StatusRunning:
+			n++
+		case model.StatusWaiting:
+			if s.UpdatedAt >= cutoff {
+				n++
+			}
+		}
+	}
+	return n
 }
 
 // reaper stops idle agent processes and unloads unused timelines.

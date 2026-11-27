@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -233,16 +234,26 @@ func (r *Runtime) startDriver(flip bool) (agent.Driver, error) {
 		}
 	}
 
-	// Home: its instructions, and Collie's tools for coordinating projects.
+	// Collie's tools: show_media for every agent, and for Home the tools
+	// that coordinate the projects. A container left running with an older
+	// configuration may lack them (it is re-created once nothing uses it).
 	var toolCmd string
 	var toolArgs []string
+	allowed := mediaTools
 	if proj.Home {
 		writeHomeInstructions(proj.Path)
-		c, args, err := r.m.homeTool(proj, sess.Owner)
-		if err != nil {
+		allowed = append(slices.Clone(homeReadTools), mediaTools...)
+	}
+	if proj.Home || !isolated || !r.m.sb.Stale(proj.ID, sess.Owner) {
+		c, args, err := r.m.collieTools(proj, sess)
+		switch {
+		case err == nil:
+			toolCmd, toolArgs = c, args
+		case proj.Home:
 			return nil, setupError{fmt.Errorf("prepare Home tools: %w", err)}
+		default:
+			log.Printf("session %s: Collie's tools: %v", r.id, err)
 		}
-		toolCmd, toolArgs = c, args
 	}
 
 	r.mu.Lock()
@@ -268,8 +279,8 @@ func (r *Runtime) startDriver(flip bool) (agent.Driver, error) {
 				log.Printf("session %s: prepare codex config: %v", r.id, err)
 			}
 		}
-		if proj.Home {
-			cfg.ExtraArgs = homeCodexArgs(cfg.ExtraArgs, toolCmd, toolArgs)
+		if toolCmd != "" {
+			cfg.ExtraArgs = collieCodexArgs(cfg.ExtraArgs, toolCmd, toolArgs)
 		}
 		d = agent.NewCodex(cfg, s)
 	} else {
@@ -278,8 +289,8 @@ func (r *Runtime) startDriver(flip bool) (agent.Driver, error) {
 			cfg.Bin = "claude"
 			cfg.ExtraArgs = r.m.sb.ClaudeArgs(sess.Owner)
 		}
-		if proj.Home {
-			cfg.ExtraArgs = homeClaudeArgs(cfg.ExtraArgs, toolCmd, toolArgs)
+		if toolCmd != "" {
+			cfg.ExtraArgs = collieClaudeArgs(cfg.ExtraArgs, toolCmd, toolArgs, allowed)
 		}
 		d = agent.NewClaude(cfg, s)
 	}
@@ -471,6 +482,8 @@ func (s *sink) Usage(u model.Usage) {
 		s.r.m.reportUsage(sess.Owner, sess.Agent, u)
 	}
 }
+
+func (s *sink) Blob(data []byte) string { return s.r.m.blob(data) }
 
 func (s *sink) Exited(err error) {
 	r := s.r

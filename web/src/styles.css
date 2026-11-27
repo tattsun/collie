@@ -2637,3 +2637,246 @@ pre.out.error-box {
     display: none;
   }
 }
+
+/* ---------------------------------------------------------------- media */
+.thumb-btn {
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: zoom-in;
+  border-radius: 10px;
+}
+.shots {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 2px 8px 6px 30px;
+  scrollbar-width: none;
+}
+.shot {
+  flex: none;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg2);
+  overflow: hidden;
+  cursor: zoom-in;
+}
+.shot img {
+  display: block;
+  height: 72px;
+  max-width: 160px;
+  object-fit: cover;
+}
+.media-card {
+  margin: 8px 0;
+}
+.media-title {
+  font-size: 14px;
+  color: var(--dim);
+  margin: 0 2px 8px;
+}
+.media-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr));
+  align-items: start;
+}
+.media-grid.one {
+  grid-template-columns: 1fr;
+}
+.media-tile {
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+  overflow: hidden;
+  min-width: 0;
+}
+.media-img {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: var(--bg2);
+  cursor: zoom-in;
+}
+/* Shrunk to fit, never blown up (small icons stay crisp). */
+.media-img img {
+  display: block;
+  max-width: 100%;
+  max-height: 420px;
+  object-fit: contain;
+}
+.media-tile video {
+  display: block;
+  width: 100%;
+  max-height: 420px;
+  background: #000;
+}
+.media-grid.one .media-img img,
+.media-grid.one video {
+  max-height: 70vh;
+}
+.media-page {
+  position: relative;
+  height: 300px;
+  background: #fff;
+}
+.media-grid.one .media-page {
+  height: min(60vh, 460px);
+}
+.media-page iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: block;
+  /* The inline preview is a picture of the page; it is used full screen. */
+  pointer-events: none;
+}
+.media-page-open {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  padding: 0 0 12px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  background: linear-gradient(to bottom, transparent 60%, rgba(0, 0, 0, 0.35));
+  cursor: pointer;
+}
+.media-page-open .pill {
+  background: rgba(20, 20, 24, 0.85);
+  color: #fff;
+}
+.media-tile figcaption {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 6px 6px 10px;
+  font-size: 13px;
+  min-width: 0;
+}
+.media-cap {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+.media-cap > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.media-cap .mono {
+  font-size: 11.5px;
+}
+
+.viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  background: #0a0a0c;
+  color: #eee;
+}
+.viewer-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: max(8px, env(safe-area-inset-top)) 8px 8px 14px;
+  min-height: 50px;
+}
+.viewer-bar .icon-btn {
+  color: #ddd;
+}
+.viewer-bar .icon-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+.viewer-count {
+  font-size: 13px;
+  color: #aaa;
+  flex: none;
+}
+.viewer-name {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  font-size: 14px;
+}
+.viewer-name > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.viewer-name .mono {
+  font-size: 11.5px;
+  color: #999;
+}
+.viewer-bar .btn.small {
+  flex: none;
+  gap: 5px;
+}
+.viewer-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 0 max(8px, env(safe-area-inset-bottom));
+}
+.viewer-stage > img,
+.viewer-stage > video {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+.viewer.html .viewer-stage {
+  padding: 0;
+}
+.viewer-page {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #fff;
+}
+.viewer-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 44px;
+  height: 64px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 10px;
+  background: rgba(30, 30, 34, 0.6);
+  color: #fff;
+  cursor: pointer;
+}
+.viewer-nav.prev {
+  left: 6px;
+}
+.viewer-nav.next {
+  right: 6px;
+}
+.viewer.html .viewer-nav {
+  top: auto;
+  bottom: 12px;
+  transform: none;
+  height: 44px;
+}
+.viewer-note {
+  font-size: 12px;
+  color: #9a9a9a;
+  text-align: center;
+  padding: 6px 12px max(6px, env(safe-area-inset-bottom));
+}
+.viewer-note.on {
+  color: var(--amber);
+}

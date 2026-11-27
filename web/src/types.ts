@@ -19,6 +19,29 @@ export interface Project {
   home?: boolean
 }
 
+/** Release updates (admins only). */
+export interface UpdateStatus {
+  current: string
+  enabled: boolean
+  repo?: string
+  latest?: string
+  notes?: string
+  url?: string
+  published?: number
+  available: boolean
+  canApply: boolean
+  why?: string
+  devBuild?: boolean
+  auto: boolean
+  tokenSet: boolean
+  checkedAt?: number
+  checkError?: string
+  phase?: '' | 'downloading' | 'preparing' | 'waiting' | 'restarting'
+  error?: string
+  busy: number
+  last?: { from: string; to: string; ok: boolean; error?: string; at: number }
+}
+
 export interface SandboxStatus {
   available: boolean
   limits?: boolean
@@ -126,7 +149,15 @@ export interface Result {
   status?: string
 }
 
-export type Kind = 'user' | 'text' | 'thinking' | 'tool' | 'approval' | 'question' | 'plan' | 'notice' | 'error' | 'result'
+export type Kind = 'user' | 'text' | 'thinking' | 'tool' | 'approval' | 'question' | 'plan' | 'notice' | 'error' | 'result' | 'media'
+
+/** A file the agent showed the user (show_media), stored as an upload. */
+export interface Media {
+  id: string
+  mime: string
+  caption?: string
+  name?: string
+}
 
 export interface Item {
   id: string
@@ -139,7 +170,9 @@ export interface Item {
   ask?: Ask
   plan?: PlanStep[]
   result?: Result
+  /** upload names: attached to a user message, or images in a tool's result */
   images?: string[]
+  media?: Media[]
   by?: string
   via?: 'home'
 }

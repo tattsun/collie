@@ -593,10 +593,14 @@ func (c *Claude) onAssistant(msg map[string]any, parent string) {
 			if strings.HasSuffix(typ, "_tool_result") {
 				id := str(b, "tool_use_id")
 				out := clip(stringifyContent(b["content"]))
+				imgs := toolImages(c.sink, b["content"])
 				c.sink.Update(id, func(it *model.Item) {
 					it.Tool.Output = out
 					it.Tool.Status = "ok"
 					it.Done = true
+					if len(imgs) > 0 {
+						it.Images = imgs
+					}
 				})
 			}
 		}
@@ -630,6 +634,8 @@ func (c *Claude) onUser(msg map[string]any, parent string) {
 		}
 		id := str(b, "tool_use_id")
 		out := clip(stringifyContent(b["content"]))
+		// Screenshots and images the agent read: show them to the user too.
+		imgs := toolImages(c.sink, b["content"])
 		isErr, _ := b["is_error"].(bool)
 		status := "ok"
 		if isErr {
@@ -642,9 +648,12 @@ func (c *Claude) onUser(msg map[string]any, parent string) {
 			it.Tool.Output = out
 			it.Tool.Status = status
 			it.Done = true
+			if len(imgs) > 0 {
+				it.Images = imgs
+			}
 		}) {
 			c.sink.Put(&model.Item{ID: id, Kind: model.KindTool, TS: model.NowMs(), Parent: parent, Done: true,
-				Tool: &model.Tool{Name: "Tool", Output: out, Status: status}})
+				Tool: &model.Tool{Name: "Tool", Output: out, Status: status}, Images: imgs})
 		}
 	}
 }
@@ -843,9 +852,9 @@ func orDefault(s, d string) string {
 func authNotice(result string) string {
 	switch {
 	case strings.Contains(result, "Not logged in"):
-		return "Claude Code is not logged in for you. Run `claude setup-token` in a project terminal and paste the token under Account → Agent accounts."
+		return "Claude Code has no usable account for you. Add one under Account → Agent accounts (Sign in with Claude, Bedrock or an API key); if you already did, check which account this project uses in Project → Settings."
 	case strings.Contains(result, "OAuth access token is invalid"):
-		return "Your Claude token was rejected — it may have been copied incompletely or revoked. Run `claude setup-token` in a project terminal again and save the new token (in the terminal: Select → Save as my Claude token)."
+		return "Your Claude token was rejected — it may have been copied incompletely or revoked. Use Sign in again on the account under Account → Agent accounts."
 	}
 	return ""
 }

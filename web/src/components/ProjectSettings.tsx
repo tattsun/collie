@@ -2,6 +2,7 @@ import { useEffect, useState } from 'preact/hooks'
 import type { ContainerInfo, Project } from '../types'
 import { api } from '../api'
 import { groupById, me, sandbox, sessions, toast, toastError } from '../store'
+import { ProjectClaudeAccount } from './ClaudeAccounts'
 import { EnvEditor } from './Editors'
 import { EffectivePlugins, PluginsEditor } from './Plugins'
 import { cls } from '../util'
@@ -205,6 +206,8 @@ export function ProjectSettings({ p }: { p: Project }) {
           <p class="dim small">{t('Containers also stop by themselves when nothing has used them for a while.')}</p>
         </section>
       )}
+
+      {isolated && <ProjectClaudeAccount projectId={p.id} />}
 
       {isolated && manager && (
         <section class="card">

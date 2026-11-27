@@ -8,6 +8,7 @@ import { LinkBox } from './Account'
 import { EnvEditor, ProfileEditor } from './Editors'
 import { PluginsEditor } from './Plugins'
 import { ImageLog } from './ProjectSettings'
+import { UpdatesPanel } from './Updates'
 import { IBack, IPlus, IRefresh, ITrash, Spinner } from './icons'
 
 interface Overview {
@@ -64,13 +65,14 @@ export function AdminPage() {
           ['profile', t('Global skills & MCP')],
           ['plugins', t('Global plugins')],
           ['env', t('Global environment')],
+          ['updates', t('Updates')],
         ].map(([k, label]) => (
           <a key={k} href={`#/admin/${k}`} class={cls('tab', tab === k && 'on')}>
             {label}
           </a>
         ))}
       </nav>
-      {!d && tab !== 'profile' && tab !== 'plugins' && tab !== 'env' && <Spinner />}
+      {!d && tab !== 'profile' && tab !== 'plugins' && tab !== 'env' && tab !== 'updates' && <Spinner />}
 
       {d && tab === 'users' && (
         <div class="col gap-l">
@@ -204,6 +206,7 @@ export function AdminPage() {
           <EnvEditor url="/api/shared/env" note={t('Saved — applies to agents and shells started from now on')} />
         </section>
       )}
+      {tab === 'updates' && <UpdatesPanel />}
       {showImage && <ImageLog onClose={() => setShowImage(false)} />}
     </div>
   )

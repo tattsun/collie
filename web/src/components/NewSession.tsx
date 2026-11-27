@@ -3,9 +3,9 @@ import type { Agent, Project, Session } from '../types'
 import { api } from '../api'
 import { agentsAvail, go, groupById, homeProject, modes, projectById, projects, route, sessionPrefs, toast, toastError } from '../store'
 import { cls, home, isTouch } from '../util'
-import { IBack, IBranch, IHome, IImage, IPlus, ISend, Spinner } from './icons'
+import { IBack, IBranch, IClip, IHome, IPlus, ISend, Spinner } from './icons'
 import { Segmented, Toggle } from './ui'
-import { Thumbs, pastedImages, useAttachments } from './attach'
+import { Thumbs, attachBody, pastedFiles, useAttachments } from './attach'
 import { ModelEffortFields, patchSessionPrefs } from './SessionPrefs'
 import { t, ts } from '../i18n'
 
@@ -38,7 +38,7 @@ export function NewSession() {
   const [shared, setShared] = useState(true)
   const [prompt, setPrompt] = useState(() => sessionStorage.getItem('collie.newprompt') || '')
   const [busy, setBusy] = useState(false)
-  const { atts, add, remove, uploading, ids } = useAttachments()
+  const { atts, add, remove, uploading } = useAttachments()
   const ta = useRef<HTMLTextAreaElement>(null)
   const file = useRef<HTMLInputElement>(null)
 
@@ -89,7 +89,7 @@ export function NewSession() {
         model,
         effort,
         prompt,
-        images: ids(),
+        ...attachBody(atts),
         worktree: worktree && !!project?.git,
         shared: project?.ownerGroup ? shared : undefined,
       })
@@ -148,7 +148,7 @@ export function NewSession() {
             placeholder={t('Describe a task for {agent}…', { agent: agent === 'claude' ? 'Claude Code' : 'Codex' })}
             onInput={(e) => setPrompt((e.target as HTMLTextAreaElement).value)}
             onPaste={(e) => {
-              const f = pastedImages(e)
+              const f = pastedFiles(e)
               if (f.length) {
                 e.preventDefault()
                 add(f)
@@ -162,10 +162,10 @@ export function NewSession() {
             }}
           />
           <div class="composer-bar">
-            <button class="icon-btn" onClick={() => file.current?.click()} aria-label={t('Attach image')}>
-              <IImage size={18} />
+            <button class="icon-btn" onClick={() => file.current?.click()} aria-label={t('Attach files')} title={t('Attach files')}>
+              <IClip size={18} />
             </button>
-            <input ref={file} type="file" accept="image/*" multiple hidden onChange={(e) => {
+            <input ref={file} type="file" multiple hidden onChange={(e) => {
               const input = e.target as HTMLInputElement
               if (input.files) add(input.files)
               input.value = ''

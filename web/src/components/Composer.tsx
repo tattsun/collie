@@ -4,9 +4,9 @@ import { api } from '../api'
 import { modes, toastError } from '../store'
 import { cls, isTouch, shortMode } from '../util'
 import { t, ts } from '../i18n'
-import { IImage, ISend, IStop, IShield, Spinner } from './icons'
+import { IClip, ISend, IStop, IShield, Spinner } from './icons'
 import { Menu } from './ui'
-import { Thumbs, pastedImages, useAttachments } from './attach'
+import { Thumbs, attachBody, pastedFiles, useAttachments } from './attach'
 import { SessionMeter } from './Usage'
 
 const draftKey = (sid: string) => `collie.draft.${sid}`
@@ -51,7 +51,7 @@ export function Composer({ session, caps }: { session: Session; caps: Caps }) {
 
   const submit = async () => {
     if (!canSend) return
-    const body = { text, images: atts.map((a) => a.id!) }
+    const body = { text, ...attachBody(atts) }
     const prev = { text, atts }
     setText('')
     setAtts([])
@@ -137,7 +137,7 @@ export function Composer({ session, caps }: { session: Session; caps: Caps }) {
           }}
           onKeyDown={onKey}
           onPaste={(e) => {
-            const files = pastedImages(e)
+            const files = pastedFiles(e)
             if (files.length) {
               e.preventDefault()
               addFiles(files)
@@ -145,10 +145,10 @@ export function Composer({ session, caps }: { session: Session; caps: Caps }) {
           }}
         />
         <div class="composer-bar">
-          <button class="icon-btn" onClick={() => file.current?.click()} aria-label={t('Attach image')} title={t('Attach image')}>
-            <IImage size={18} />
+          <button class="icon-btn" onClick={() => file.current?.click()} aria-label={t('Attach files')} title={t('Attach files')}>
+            <IClip size={18} />
           </button>
-          <input ref={file} type="file" accept="image/*" multiple hidden onChange={(e) => {
+          <input ref={file} type="file" multiple hidden onChange={(e) => {
             const t = e.target as HTMLInputElement
             if (t.files) addFiles(t.files)
             t.value = ''

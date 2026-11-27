@@ -716,6 +716,13 @@ func formatItem(it *model.Item) string {
 		if len(it.Images) > 0 {
 			text += fmt.Sprintf(" [%d image(s)]", len(it.Images))
 		}
+		if len(it.Files) > 0 {
+			var names []string
+			for _, f := range it.Files {
+				names = append(names, clip(f.Name, 100))
+			}
+			text += " [attached: " + strings.Join(names, ", ") + "]"
+		}
 		return "### " + who + "\n" + text + "\n"
 	case model.KindText:
 		if strings.TrimSpace(it.Text) == "" {
@@ -830,7 +837,7 @@ func (m *Manager) toolSendMessage(a Actor, sid, text string) (string, error) {
 		return "", errHomeHostRun
 	}
 	waiting := s.Status == model.StatusWaiting
-	if err := m.send(a, s.ID, text, nil, "home"); err != nil {
+	if err := m.send(a, s.ID, text, nil, nil, "home"); err != nil {
 		return "", err
 	}
 	msg := fmt.Sprintf("Sent to %q in %s.", s.Title, p.Name)

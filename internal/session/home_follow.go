@@ -291,7 +291,7 @@ func (m *Manager) deliverNotes(h model.Session, notes []model.Note) error {
 	r.put(it)
 	r.mu.Unlock()
 	m.updateSession(h.ID, func(s *model.Session) { s.UpdatedAt = model.NowMs() })
-	r.enqueue(agent.Input{ItemID: it.ID, Text: text})
+	r.enqueue(agent.Input{ItemID: it.ID, Text: text}, nil)
 	return nil
 }
 

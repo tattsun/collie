@@ -92,11 +92,17 @@ func TestHostWritesStayInsideHome(t *testing.T) {
 	os.Symlink(outside, filepath.Join(home, ".collie-uploads"))
 	img := filepath.Join(t.TempDir(), "0123456789abcdef.png")
 	os.WriteFile(img, []byte("png"), 0o600)
-	if _, err := m.StageUpload("p1", "u1", img); err == nil {
+	if _, err := m.StageUpload("p1", "u1", img, ".collie-uploads/0123456789abcdef.png"); err == nil {
 		t.Fatal("expected StageUpload to refuse a symlinked uploads dir")
 	}
-	if _, err := os.Stat(filepath.Join(outside, "0123456789abcdef.png")); err == nil {
-		t.Fatal("upload was written outside the home")
+	if _, err := m.StageUpload("p1", "u1", img, ".collie-uploads/0123/brief.docx"); err == nil {
+		t.Fatal("expected StageUpload to refuse a symlinked uploads dir for a file")
+	}
+	if _, err := m.StageDir("p1", "u1", ".collie-uploads/0123"); err == nil {
+		t.Fatal("expected StageDir to refuse a symlinked uploads dir")
+	}
+	if ents, _ := os.ReadDir(outside); len(ents) != 1 { // just the victim
+		t.Fatalf("upload was written outside the home: %v", ents)
 	}
 }
 

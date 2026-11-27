@@ -33,6 +33,13 @@ Agents in every session can show you files right in the chat. Try asking "make t
 - Playwright records video as WebM. If a video won't play on your iPhone, ask for MP4.
 - HTML pages open in a sandbox without network access, so they have to be a single file with styles and images embedded. The agent is told this. Scripts run only after you press **Run scripts**.
 
+## Attaching files
+
+Besides images, you can attach any file to a message, such as a Word brief, a spreadsheet or a PDF: with the paperclip, by pasting, or by dropping it on the message box. Each file can be up to 25 MB.
+
+- The agent gets a copy to read, outside the project, and the message tells it where. If the file belongs in the project, ask the agent to put it there.
+- Everyone who can see the session can download its attachments, and they stay on the server when the session is deleted.
+
 ## Notifications
 
 Turn them on in Account → **Notifications** on each device you want them on, then press **Send a test notification**. You hear when a session you started needs your approval or an answer, finishes, or stops with an error, also while Collie is closed.

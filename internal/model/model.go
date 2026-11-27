@@ -206,9 +206,12 @@ type Item struct {
 	// Images are upload names: attached to a user message, or seen by the
 	// agent in a tool's result (screenshots, images it read).
 	Images []string `json:"images,omitempty"`
-	Media  []Media  `json:"media,omitempty"`
-	By     string   `json:"by,omitempty"`  // user who sent a user message
-	Via    string   `json:"via,omitempty"` // "home": sent for the user by their Home agent, "schedule": by a schedule, "collie": Collie's notification to a Home agent
+	// Files are other files attached to a user message (documents,
+	// spreadsheets…), which the agent gets as copies it can read.
+	Files []File  `json:"files,omitempty"`
+	Media []Media `json:"media,omitempty"`
+	By    string  `json:"by,omitempty"`  // user who sent a user message
+	Via   string  `json:"via,omitempty"` // "home": sent for the user by their Home agent, "schedule": by a schedule, "collie": Collie's notification to a Home agent
 	// Notes are what a Collie notification (Via "collie") reports.
 	Notes []Note `json:"notes,omitempty"`
 }
@@ -232,6 +235,13 @@ type Media struct {
 	Mime    string `json:"mime"`
 	Caption string `json:"caption,omitempty"`
 	Name    string `json:"name,omitempty"` // file name it was shown from
+}
+
+// File is a file the user attached to a message (/api/files/<id>).
+type File struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Size int64  `json:"size"`
 }
 
 type Tool struct {

@@ -53,3 +53,7 @@ mise run dev            # API on 127.0.0.1:7878, no auth
 cd web && npm run dev   # UI on http://localhost:5173 (proxies /api)
 mise tasks              # everything else: test, cross, install, …
 ```
+
+## License
+
+[MIT](LICENSE)

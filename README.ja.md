@@ -53,3 +53,7 @@ mise run dev            # API（127.0.0.1:7878、認証なし）
 cd web && npm run dev   # UI（http://localhost:5173、/api をプロキシ）
 mise tasks              # その他のタスク: test・cross・install など
 ```
+
+## ライセンス
+
+[MIT](LICENSE)

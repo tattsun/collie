@@ -513,7 +513,7 @@ func (s *sink) Usage(u model.Usage) {
 	}
 }
 
-func (s *sink) Blob(data []byte) string { return s.r.m.blob(data) }
+func (s *sink) Blob(data []byte) string { return s.r.m.blob(s.r.id, data) }
 
 func (s *sink) Exited(err error) {
 	r := s.r

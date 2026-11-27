@@ -404,7 +404,7 @@ func (m *Manager) toolShowMedia(tc *toolConn, raw json.RawMessage) (string, erro
 		if ext == "" {
 			return "", fmt.Errorf("%s: Collie shows PNG, JPEG, GIF, WebP, SVG, MP4, WebM (100 MB at most) and HTML (25 MB at most) files only", f.Path)
 		}
-		name, err := m.saveUpload(data, ext)
+		name, err := m.saveSessionUpload(s.ID, data, ext)
 		if err != nil {
 			return "", err
 		}
@@ -450,13 +450,13 @@ func (m *Manager) readAgentFile(p model.Project, s model.Session, path string, l
 	return data, nil
 }
 
-// blob keeps an image an agent saw in a tool result.
-func (m *Manager) blob(data []byte) string {
+// blob keeps an image a session's agent saw in a tool result.
+func (m *Manager) blob(sid string, data []byte) string {
 	ext := sniffUpload("", data, false)
 	if ext == "" {
 		return ""
 	}
-	name, err := m.saveUpload(data, ext)
+	name, err := m.saveSessionUpload(sid, data, ext)
 	if err != nil {
 		log.Printf("keep tool image: %v", err)
 		return ""

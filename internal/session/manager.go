@@ -117,6 +117,7 @@ func NewManager(cfg Config, st *store.Store, hub *Hub, sb *sandbox.Manager) *Man
 		st.UpdateProject(p.ID, func(x *model.Project) { x.Git = git })
 	}
 	m.loadCaps()
+	m.claimExisting()
 	go m.reaper()
 	go m.probeCaps()
 	go func() {
@@ -644,7 +645,7 @@ func (m *Manager) send(a Actor, sid, text string, imageIDs, fileIDs []string, vi
 	if text == "" && len(imgs) == 0 && len(files) == 0 {
 		return errors.New("empty message")
 	}
-	if err := m.claimFiles(sid, files); err != nil {
+	if err := m.claimSent(sid, imageIDs, files); err != nil {
 		return err
 	}
 	it := &model.Item{ID: "u-" + model.NewID(), Kind: model.KindUser, Text: text, Images: imageIDs, Files: files, Done: true, By: a.ID, Via: via}
@@ -833,10 +834,10 @@ func (m *Manager) deleteSession(sid string, removeWorktree bool) error {
 	if !ok {
 		return errSessionGone
 	}
-	var files []model.File
+	var rf refs
 	if r, err := m.runtime(sid); err == nil {
 		r.stop()
-		files = r.attachedFiles()
+		rf = r.refs()
 	}
 	if s.Worktree && removeWorktree {
 		if p, ok := m.st.Project(s.ProjectID); ok {
@@ -846,7 +847,7 @@ func (m *Manager) deleteSession(sid string, removeWorktree bool) error {
 	m.mu.Lock()
 	delete(m.rts, sid)
 	m.mu.Unlock()
-	m.deleteFiles(s, files)
+	m.deleteAttachments(s, rf)
 	m.st.DeleteSession(sid)
 	m.pushSessionDeleted(sid)
 	return nil
@@ -949,7 +950,7 @@ func (m *Manager) reaper() {
 	var swept time.Time
 	for range t.C {
 		if time.Since(swept) > time.Hour {
-			m.sweepFiles()
+			m.sweepAttachments()
 			swept = time.Now()
 		}
 		m.mu.Lock()

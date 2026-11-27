@@ -15,6 +15,7 @@ const ja: Record<string, string> = {
   'at most 20 files per message': '1 つのメッセージに添付できるファイルは 20 個までです',
   'an attached file is no longer on the server; attach it again': '添付したファイルがサーバーにありません。もう一度添付してください',
   'an attached file was already sent in another session; attach it again': '添付したファイルは別のセッションで送信済みです。もう一度添付してください',
+  'an attached image was already sent in another session; attach it again': '添付した画像は別のセッションで送信済みです。もう一度添付してください',
   '⋯ {n} unchanged lines': '⋯ 変更のない {n} 行',
   '⋯ 1 unchanged line': '⋯ 変更のない 1 行',
   'Windows PC': 'Windows PC',

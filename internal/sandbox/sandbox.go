@@ -139,8 +139,9 @@ func (m *Manager) changed() {
 	}
 }
 
-// imageHash identifies the image definition, so a changed Containerfile
-// (i.e. a Collie upgrade) results in a new image tag.
+// imageHash identifies the image definition and the base it is built on,
+// so a changed Containerfile or a new pinned base (i.e. a Collie upgrade)
+// results in a new image tag.
 func imageHash() string {
 	h := sha256.New()
 	_ = fs.WalkDir(imageFS, "image", func(p string, d fs.DirEntry, err error) error {
@@ -151,6 +152,7 @@ func imageHash() string {
 		}
 		return nil
 	})
+	h.Write([]byte(BaseImage))
 	return hex.EncodeToString(h.Sum(nil))[:12]
 }
 
@@ -225,33 +227,42 @@ func (m *Manager) build(refresh bool, w io.Writer) error {
 		return err
 	}
 	defer os.RemoveAll(dir)
-	err = fs.WalkDir(imageFS, "image", func(p string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
+	if err := extractImage(dir); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Hour)
+	defer cancel()
+	base, err := m.prepareBase(ctx, dir, w)
+	if err != nil {
+		return err
+	}
+	args := []string{"build", "-t", m.tag, "-t", latestTag, "-f", "Containerfile", "--build-arg", "BASE=" + base}
+	if refresh {
+		args = append(args, "--build-arg", "AGENTS_REV="+strconv.FormatInt(time.Now().Unix(), 10))
+	}
+	if err := m.stream(ctx, dir, w, append(args, ".")...); err != nil {
+		return fmt.Errorf("image build failed: %w", err)
+	}
+	return nil
+}
+
+// extractImage writes the embedded image definition into dir, keeping its
+// layout (Containerfile and scripts at the top, base/ below).
+func extractImage(dir string) error {
+	return fs.WalkDir(imageFS, "image", func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
 			return err
+		}
+		dst := filepath.Join(dir, strings.TrimPrefix(strings.TrimPrefix(p, "image"), "/"))
+		if d.IsDir() {
+			return os.MkdirAll(dst, 0o755)
 		}
 		b, err := imageFS.ReadFile(p)
 		if err != nil {
 			return err
 		}
-		return os.WriteFile(filepath.Join(dir, filepath.Base(p)), b, 0o755)
+		return os.WriteFile(dst, b, 0o755)
 	})
-	if err != nil {
-		return err
-	}
-	args := append(append([]string(nil), m.global...), "build", "-t", m.tag, "-t", latestTag, "-f", "Containerfile")
-	if refresh {
-		args = append(args, "--build-arg", "AGENTS_REV="+strconv.FormatInt(time.Now().Unix(), 10))
-	}
-	args = append(args, ".")
-	ctx, cancel := context.WithTimeout(context.Background(), time.Hour)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, m.cfg.Podman, args...)
-	cmd.Dir = dir
-	cmd.Stdout, cmd.Stderr = w, w
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("image build failed: %w", err)
-	}
-	return nil
 }
 
 // BuildSync builds the image in the foreground, streaming the log to w,
@@ -344,6 +355,7 @@ func (m *Manager) PruneImages() {
 		}
 	}
 	_, _ = m.podman(ctx, "image", "prune", "-f", "--filter", "label=io.collie.agent=1")
+	m.pruneBases(ctx)
 }
 
 // WaitImage makes sure the image exists, building it if needed, and waits

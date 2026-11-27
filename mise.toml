@@ -16,11 +16,12 @@ run = [
   "touch dist/.keep",
 ]
 
-# Every build is stamped with its version (tools/version.sh).
+# Every build is stamped with its version, and release builds with their
+# agent base image (tools/ldflags.sh).
 [tasks.build]
 description = "Build bin/collie (web UI embedded)"
 depends = ["web"]
-run = 'go build -trimpath -ldflags "-s -w -X github.com/tattsun/collie/internal/version.Version=$(./tools/version.sh)" -o bin/collie .'
+run = 'go build -trimpath -ldflags "$(./tools/ldflags.sh)" -o bin/collie .'
 
 [tasks.cross]
 description = "Cross-compile for another architecture or OS, e.g. `mise run cross arm64` (Linux) or `mise run cross darwin/arm64`"
@@ -30,7 +31,7 @@ run = """
 set -e
 os=linux arch="${usage_arch}"
 case "$arch" in */*) os="${arch%/*}" arch="${arch#*/}" ;; esac
-GOOS=$os GOARCH=$arch go build -trimpath -ldflags "-s -w -X github.com/tattsun/collie/internal/version.Version=$(./tools/version.sh)" -o bin/collie-$os-$arch .
+GOOS=$os GOARCH=$arch go build -trimpath -ldflags "$(./tools/ldflags.sh)" -o bin/collie-$os-$arch .
 echo "built bin/collie-$os-$arch"
 """
 
@@ -40,9 +41,10 @@ depends = ["web"]
 run = """
 set -e
 v="$(./tools/version.sh)"
+flags="$(./tools/ldflags.sh)"
 rm -rf dist && mkdir dist
 for arch in amd64 arm64; do
-  GOOS=linux GOARCH=$arch go build -trimpath -ldflags "-s -w -X github.com/tattsun/collie/internal/version.Version=$v" -o dist/collie-linux-$arch .
+  GOOS=linux GOARCH=$arch go build -trimpath -ldflags "$flags" -o dist/collie-linux-$arch .
 done
 cd dist && sha256sum collie-linux-* > SHA256SUMS
 echo "built $v into dist/"

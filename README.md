@@ -19,6 +19,7 @@ Put it on a Linux server (or your Mac), then start agents, approve their actions
 - **Parallel sessions**, each in its own git worktree so they don't collide
 - **Approve from your phone**: permission requests, questions and plans wait for you under *Needs you*
 - **Agents can show you things**: screenshots, screen recordings and HTML pages appear right in the chat
+- **Try what they built**: the dev servers agents start open in your browser, on an address of their own ([Setup](docs/setup.md#previews))
 - **A sandbox per project**: a rootless Podman container that sees only that project and can't reach your LAN
 - **Multi-user**: passkey sign-in, invite links and shared group projects. Everyone's agents run on their own Claude / Codex account
 - **Home**: an agent that knows all your projects and can start or steer sessions for you

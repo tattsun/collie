@@ -9,6 +9,8 @@
 #   mise run install --proxy URL        # on 127.0.0.1:7878 behind your own reverse proxy serving URL
 #   mise run install --serve            # on 127.0.0.1, published on your tailnet with `tailscale serve`
 #   mise run install --funnel           # like --serve, and on the internet with Tailscale Funnel
+#   … --preview-url URL                 # where previews of the agents' servers open: :PORT, or https://*.preview.example.com
+#   … --preview-ports N                 # how many previews a browser can have open at once (default 4)
 #
 # (or ./deploy/install.sh with the same options)
 # Env overrides: PREFIX (default ~/.local/bin), COLLIE_PORT (7878), COLLIE_ROOT, COLLIE_DATA
@@ -25,18 +27,26 @@ serve=0
 funnel=0
 domain=""
 proxy=""
+preview_url=""
+preview_ports=4
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --serve) serve=1; shift ;;
     --funnel) serve=1; funnel=1; shift ;;
     --domain) domain="${2:?--domain needs a name, e.g. collie.example.com}"; shift 2 ;;
     --proxy) proxy="${2:?--proxy needs the URL users open, e.g. https://collie.example.com}"; shift 2 ;;
-    -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
+    --preview-url) preview_url="${2:?--preview-url needs :PORT or a URL, e.g. https://*.preview.example.com}"; shift 2 ;;
+    --preview-ports) preview_ports="${2:?--preview-ports needs a number}"; shift 2 ;;
+    -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
 if (( serve + (${#domain} > 0) + (${#proxy} > 0) > 1 )); then
   echo "choose one of --serve / --funnel, --domain and --proxy" >&2
+  exit 2
+fi
+if ! [[ "$preview_ports" =~ ^[0-9]+$ ]] || (( preview_ports < 1 || preview_ports > 16 )); then
+  echo "--preview-ports: give 1 to 16" >&2
   exit 2
 fi
 if [[ -n "$proxy" && "$proxy" != https://* ]]; then
@@ -105,6 +115,21 @@ fi
 
 addr=":$port"
 [[ $serve == 1 || -n "$proxy" ]] && addr="127.0.0.1:$port"
+# Previews of the agents' servers are served on the next ports, each an
+# origin of its own (docs/setup.md). Over Tailscale they get ports 8443 and
+# up of the machine's name; Funnel allows only 8443 and 10000 next to 443.
+pport=$((port + 1))
+ts_ports=()
+ts_auto=0 # 1: this script maps the preview ports on Tailscale
+if [[ $serve == 1 && -z "$preview_url" ]]; then
+  ts_auto=1
+  if [[ $funnel == 1 ]]; then
+    ts_ports=(8443 10000)
+  else
+    for ((i = 0; i < preview_ports; i++)); do ts_ports+=($((8443 + i))); done
+  fi
+  preview_url=":$(IFS=,; echo "${ts_ports[*]}")"
+fi
 
 # PATH for the service: if mise is in use, put its shims first so tools it
 # manages (and per-project versions in each project's mise.toml) resolve the
@@ -121,6 +146,8 @@ data=()
 listen=("--addr" "$addr")
 [[ -n "$domain" ]] && listen=("--domain" "$domain")      # :443 (and :80 for the redirect)
 [[ -n "$proxy" ]] && listen+=("--public-url" "$proxy")
+[[ -n "$preview_url" ]] && listen+=("--preview-url" "$preview_url")
+listen+=("--preview-ports" "$preview_ports")
 # (${data[@]+…}: bash 3.2 calls an empty array unbound)
 cmd=("$prefix/collie" "${listen[@]}" ${data[@]+"${data[@]}"})
 started=1
@@ -233,6 +260,36 @@ if [[ $serve == 1 ]]; then
       "$tailscale" serve --bg "$port" 2>/dev/null || { [[ "$os" == Linux ]] && sudo "$tailscale" serve --bg "$port"; } || \
         echo "warning: 'tailscale serve' failed. Try: sudo tailscale set --operator=$USER && tailscale serve --bg $port"
     fi
+    if [[ $ts_auto == 1 ]]; then
+      # Take down the preview mappings of an earlier install that aren't
+      # wanted now (fewer ports, or serve instead of funnel): whatever came
+      # to listen on their local ports would be served on this name.
+      wanted=" ${ts_ports[*]} "
+      for ((p = 8443; p < 8443 + 16; p++)); do
+        case "$wanted" in *" $p "*) [[ $funnel == 1 ]] || "$tailscale" funnel --https="$p" off >/dev/null 2>&1 || true; continue ;; esac
+        "$tailscale" funnel --https="$p" off >/dev/null 2>&1 || true
+        "$tailscale" serve --https="$p" off >/dev/null 2>&1 || true
+      done
+      case "$wanted" in
+        *" 10000 "*) ;;
+        *) "$tailscale" funnel --https=10000 off >/dev/null 2>&1 || true
+           "$tailscale" serve --https=10000 off >/dev/null 2>&1 || true ;;
+      esac
+    else
+      echo "note: with your own --preview-url, map the preview ports on Tailscale yourself (see docs/setup.md)."
+    fi
+    i=0
+    for p in ${ts_ports[@]+"${ts_ports[@]}"}; do
+      target="http://127.0.0.1:$((pport + i))"
+      if [[ $funnel == 1 ]]; then
+        "$tailscale" funnel --bg --https="$p" "$target" || \
+          echo "warning: 'tailscale funnel' for previews failed. Try: tailscale funnel --bg --https=$p $target"
+      else
+        "$tailscale" serve --bg --https="$p" "$target" || \
+          echo "warning: 'tailscale serve' for previews failed. Try: tailscale serve --bg --https=$p $target"
+      fi
+      i=$((i + 1))
+    done
     "$tailscale" serve status 2>/dev/null || true
   else
     echo "warning: tailscale CLI not found; install Tailscale and run 'tailscale serve --bg $port'."
@@ -258,10 +315,14 @@ if [[ $serve == 1 ]]; then
 elif [[ -n "$domain" ]]; then
   url="https://$domain"
   echo "The certificate is fetched on the first visit: $domain must already point at this server,"
-  echo "and ports 443 and 80 must be open to the internet."
+  echo "and ports 443 and 80 must be open to the internet (and 8443-$((8443 + preview_ports - 1)), for previews of the agents' servers)."
 elif [[ -n "$proxy" ]]; then
   url="${proxy%/}"
   echo "Point your reverse proxy at http://127.0.0.1:$port (see docs/setup.md)."
+  if [[ -z "$preview_url" ]]; then
+    echo "To open the agents' dev servers from a session (Ports), also serve http://127.0.0.1:$pport-$((pport + preview_ports - 1))"
+    echo "on other ports of this name (or $pport on wildcard names), and run this again with --preview-url (see docs/setup.md)."
+  fi
 fi
 if [[ -n "$url" ]]; then
   echo "First setup — open this, then create your passkey (the link stops working once one exists):"

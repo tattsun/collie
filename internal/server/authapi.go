@@ -204,7 +204,9 @@ func (s *Server) verifyFinish(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
-	if c, err := r.Cookie(sessionCookie); err == nil {
+	// Every cookie of the name: one a preview page planted for a narrower
+	// path comes first, and the real one must not stay valid behind it.
+	for _, c := range r.CookiesNamed(sessionCookie) {
 		if _, x, ok := s.users.SessionUser(c.Value, ""); ok {
 			s.users.DeleteSession(x.Hash)
 			s.m.Hub().KillSession("", x.Hash)

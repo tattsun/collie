@@ -238,7 +238,9 @@ func toolText(text string, isErr bool) map[string]any {
 const (
 	homeServerInstructions  = "Collie: see the user's projects and sessions, start or instruct sessions in their projects, schedule recurring sessions, and show the user files with show_media."
 	mediaServerInstructions = "Collie is the app the user follows this session in, often on a phone. show_media puts files in front of them: screenshots, design options, " +
-		"screen recordings (e.g. Playwright's recordVideo), HTML reports. Use it when seeing the result helps them review your work."
+		"screen recordings (e.g. Playwright's recordVideo), HTML reports. Use it when seeing the result helps them review your work. " +
+		"They can also open a web server you start (a dev server such as `npm run dev`) in their own browser, from the session's Ports tab: " +
+		"keep it running in the background, listening on localhost or all addresses, and tell them its port."
 )
 
 func (m *Manager) handleRPC(tc *toolConn, line []byte) (resp any) {

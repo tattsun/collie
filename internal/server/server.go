@@ -28,6 +28,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/tattsun/collie/internal/auth"
+	"github.com/tattsun/collie/internal/preview"
 	"github.com/tattsun/collie/internal/push"
 	"github.com/tattsun/collie/internal/session"
 	"github.com/tattsun/collie/internal/term"
@@ -52,6 +53,21 @@ type Options struct {
 	Updater *update.Updater
 	// Push sends Web Push notifications (nil: none).
 	Push *push.Service
+	// Previews of the agents' servers (see preview.go). PreviewURL is
+	// where browsers reach them: "" for the preview ports on the host name
+	// a browser reached Collie by directly, ":" for that host name on the
+	// PreviewPublic ports, a URL on Collie's own name (its port being the
+	// first of PreviewPublic), a wildcard URL for names of their own, or
+	// "off".
+	PreviewURL string
+	// PreviewPorts are the ports Collie serves previews on, one per slot
+	// (none: no listeners of their own); PreviewPublic the ports browsers
+	// use for them (nil: the same).
+	PreviewPorts  []int
+	PreviewPublic []int
+	// OwnPorts are Collie's own listening ports, never opened as a
+	// host-run session's server.
+	OwnPorts []int
 }
 
 type Server struct {
@@ -67,6 +83,9 @@ type Server struct {
 	build       string
 	logins      claudeLogins
 	limit       *limiter // public sign-in endpoints, per client address
+	pv          *preview.Proxy
+	upstreams   preview.Upstreams
+	hostFilter  preview.Filter // which servers on this machine host-run previews reach
 }
 
 func New(m *session.Manager, terms *term.Manager, users *auth.Store, opt Options) *Server {
@@ -83,6 +102,7 @@ func New(m *session.Manager, terms *term.Manager, users *auth.Store, opt Options
 			s.build = hex.EncodeToString(sum[:6])
 		}
 	}
+	s.pv = s.newPreview()
 	terms.OnChange = s.pushTerms
 	m.TermsInUse = terms.InUse
 	m.UserActive = func(uid string) bool {
@@ -139,7 +159,10 @@ func (s *Server) identify(r *http.Request) (u auth.User, sess auth.Session, lega
 		u, ok = s.users.User(s.opt.Owner)
 		return u, auth.Session{}, true, ok
 	}
-	if c, err := r.Cookie(sessionCookie); err == nil {
+	// Every cookie of the name counts: a page on another port of this host
+	// name (a preview) can set one for a narrower path, which the browser
+	// sends first.
+	for _, c := range r.CookiesNamed(sessionCookie) {
 		if u, sess, ok := s.users.SessionUser(c.Value, clientIP(r)); ok {
 			return u, sess, false, true
 		}
@@ -148,9 +171,10 @@ func (s *Server) identify(r *http.Request) (u auth.User, sess auth.Session, lega
 		return auth.User{}, auth.Session{}, false, false
 	}
 	legacyOK := false
-	if c, err := r.Cookie(legacyCookie); err == nil && s.tokenOK(c.Value) {
-		legacyOK = true
-	} else if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") && s.tokenOK(strings.TrimPrefix(h, "Bearer ")) {
+	for _, c := range r.CookiesNamed(legacyCookie) {
+		legacyOK = legacyOK || s.tokenOK(c.Value)
+	}
+	if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") && s.tokenOK(strings.TrimPrefix(h, "Bearer ")) {
 		legacyOK = true
 	}
 	if !legacyOK {
@@ -286,9 +310,11 @@ func normHost(h string) string {
 	return strings.TrimSuffix(strings.TrimSuffix(h, ":443"), ":80")
 }
 
-// sameOrigin rejects cross-site browser requests (CSRF and cross-site
+// sameOrigin rejects cross-origin browser requests (CSRF and cross-site
 // WebSocket hijacking). Browsers always send Origin on WebSocket handshakes
 // and cross-origin requests; non-browser clients (curl) send neither header.
+// Same-site isn't enough: previews of agents' pages live on another port
+// of the same host name, which is the same site.
 func (s *Server) sameOrigin(r *http.Request) bool {
 	if o := r.Header.Get("Origin"); o != "" {
 		u, err := url.Parse(o)
@@ -302,7 +328,11 @@ func (s *Server) sameOrigin(r *http.Request) bool {
 		}
 		return false
 	}
-	return r.Header.Get("Sec-Fetch-Site") != "cross-site"
+	switch r.Header.Get("Sec-Fetch-Site") {
+	case "cross-site", "same-site":
+		return false
+	}
+	return true
 }
 
 // isHTTPS reports whether the browser reached Collie over HTTPS (directly,
@@ -666,6 +696,7 @@ func (s *Server) routes() {
 	s.scheduleRoutes()
 	s.pluginRoutes()
 	s.pushRoutes()
+	s.previewRoutes()
 	mx.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { httpError(w, 404, "not found") })
 	mx.HandleFunc("/", s.static)
 }

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # One-time host preparation for Collie. Run on the server with sudo:
 #
-#   sudo ./deploy/setup-host.sh [--user collie] [--port 7878] [--allow CIDR]... [--public]
+#   sudo ./deploy/setup-host.sh [--user collie] [--port 7878] [--preview-ports 4] [--allow CIDR]... [--public]
 #
 # It works on systemd-based distributions with apt, dnf, zypper or pacman
 # (Debian, Ubuntu, Fedora, RHEL and its rebuilds, openSUSE, Arch …). It
@@ -12,23 +12,26 @@
 #   3. installs a firewall rule: every process of that user — including the
 #      project containers — may reach the internet but NOT your LAN, your
 #      tailnet, link-local addresses, any of this server's own addresses, or
-#      Collie's own port.
+#      Collie's own ports (its API, and the next --preview-ports for previews).
 #      (--allow adds exceptions, e.g. --allow 192.168.1.20/32 for a NAS.)
 #   4. with --public (for `mise run install --domain …`): lets unprivileged
 #      users bind ports 80 and up, so Collie can serve HTTPS itself, opens
-#      80/443 in ufw or firewalld if active, and keeps agents off those ports.
+#      80/443 (and 8443 and up, for previews) in ufw or firewalld if active,
+#      and keeps agents off those ports.
 #
 # Then switch to that user and install Collie itself (see docs/setup.md).
 set -euo pipefail
 
 user=collie
 port=7878
+preview_ports=4
 allow=()
 public=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --user) user="$2"; shift 2 ;;
     --port) port="$2"; shift 2 ;;
+    --preview-ports) preview_ports="$2"; shift 2 ;;
     --allow) allow+=("$2"); shift 2 ;;
     --public) public=1; shift ;;
     -h|--help) sed -n '2,21p' "$0"; exit 0 ;;
@@ -115,10 +118,18 @@ if command -v tailscale >/dev/null 2>&1; then
   tailscale set --operator="$user" || true
 fi
 
-# Collie's own ports, which agents must never reach.
-ports="$port"
+# Collie's own ports, which agents must never reach: its API and the
+# previews of the agents' servers (the next ports; 8443 and up with --domain).
+if ! [[ "$preview_ports" =~ ^[0-9]+$ ]] || (( preview_ports < 1 || preview_ports > 16 )); then
+  echo "--preview-ports: give 1 to 16" >&2
+  exit 2
+fi
+last=$((preview_ports - 1))
+# A range of one port is written as the port: older nft and ufw refuse it.
+span() { if (( $2 == 0 )); then echo "$1"; else echo "$1$3$(($1 + $2))"; fi; }
+ports="$port, $(span $((port + 1)) $last -)"
 if [[ $public == 1 ]]; then
-  ports="$port, 80, 443"
+  ports="$ports, 80, 443, $(span 8443 $last -)"
   echo "== public HTTPS"
   # Ports below 1024 are root-only by default; Collie runs as $user.
   echo "net.ipv4.ip_unprivileged_port_start = 80" > /etc/sysctl.d/60-collie.conf
@@ -126,9 +137,10 @@ if [[ $public == 1 ]]; then
   if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
     ufw allow 80/tcp
     ufw allow 443/tcp
+    ufw allow "$(span 8443 $last :)/tcp"
   fi
   if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
-    firewall-cmd --permanent --add-service=http --add-service=https
+    firewall-cmd --permanent --add-service=http --add-service=https "--add-port=$(span 8443 $last -)/tcp"
     firewall-cmd --reload
   fi
 fi

@@ -43,6 +43,10 @@
 - サーバから各ブラウザのプッシュ通知サービスに HTTPS で接続できる必要があります: `fcm.googleapis.com`（Chrome・Android）、`push.services.mozilla.com`（Firefox）、`web.push.apple.com`（Safari・iPhone）、`notify.windows.com`（Edge）。
 - Tailscale 経由で使っている場合、通知はスマホが tailnet につながっていなくても届きますが、タップして開くには Tailscale の接続が必要です。
 
+## 開発サーバ
+
+エージェントにアプリを起動してもらい（`npm run dev` など）、セッションの **Ports**（ポート）タブを開きます。プロジェクトのコンテナで待ち受けているものが、このセッションのものを先頭に並び、タップすると新しいタブで開きます。ホットリロードも動き、いくつか同時に開けます。自分のセッションのサーバを開けるのは自分だけです（共有したセッションでも同じ）。プレビューの配信先はサーバ側で設定します（[セットアップ](setup.ja.md#プレビュー)）。
+
 ## 隔離
 
 新しいプロジェクトは、既定で **Isolated container** で動きます。Project → Settings で変更できます。

@@ -6,7 +6,7 @@ import { ProjectClaudeAccount } from './ClaudeAccounts'
 import { EnvEditor } from './Editors'
 import { cls } from '../util'
 import { IAlert, IBox, IRefresh, Spinner } from './icons'
-import { Modal, Segmented, rich, ContainerUsage } from './ui'
+import { Modal, Segmented, Toggle, rich, ContainerUsage } from './ui'
 import { t, ts } from '../i18n'
 
 /** Substitute JSX parts for {key} placeholders in an already-translated string. */
@@ -57,6 +57,7 @@ export function ProjectSettings({ p }: { p: Project }) {
   const [memory, setMemory] = useState(p.memory || '')
   const [cpus, setCpus] = useState(p.cpus || '')
   const [pids, setPids] = useState(p.pids ? String(p.pids) : '')
+  const [nested, setNested] = useState(!!p.nested)
   const [ctrs, setCtrs] = useState<(ContainerInfo & { userName?: string; mine?: boolean })[] | null>(null)
   const [busy, setBusy] = useState('')
   const [showLog, setShowLog] = useState(false)
@@ -71,13 +72,13 @@ export function ProjectSettings({ p }: { p: Project }) {
     return () => clearInterval(timer)
   }, [p.id, isolated])
 
-  const changed = runtime !== (isolated ? 'container' : 'host') || memory !== (p.memory || '') || cpus !== (p.cpus || '') || pids !== (p.pids ? String(p.pids) : '')
+  const changed = runtime !== (isolated ? 'container' : 'host') || memory !== (p.memory || '') || cpus !== (p.cpus || '') || pids !== (p.pids ? String(p.pids) : '') || nested !== !!p.nested
 
   const save = async () => {
     if (active && !confirm(t('Agents in this project are working. Saving restarts them in the new environment. Continue?'))) return
     setBusy('save')
     try {
-      await api('PATCH', `/api/projects/${p.id}`, { runtime, memory, cpus, pids: pids ? Number(pids) : 0 })
+      await api('PATCH', `/api/projects/${p.id}`, { runtime, memory, cpus, pids: pids ? Number(pids) : 0, nested: runtime === 'container' && nested })
       toast(t('Saved — agents use the new settings on their next message'))
     } catch (e) {
       toastError(e)
@@ -142,6 +143,14 @@ export function ProjectSettings({ p }: { p: Project }) {
                 </label>
               </div>
             )}
+            {runtime === 'container' && !p.home && (
+              <Toggle
+                checked={nested}
+                onChange={setNested}
+                label={t('Allow containers inside (Podman)')}
+                hint={t('For developing container tooling such as Collie itself. The containers keep running as the server user’s ids, but get setuid helpers and more of the kernel (FUSE, tun devices, their own /proc). Only for projects you trust.')}
+              />
+            )}
             <div class="modal-actions">
               <button class="btn primary" disabled={!changed || !!busy} onClick={save}>
                 {busy === 'save' && <Spinner size={12} />} {t('Save')}
@@ -153,6 +162,7 @@ export function ProjectSettings({ p }: { p: Project }) {
             {isolated
               ? t('Isolated: your agents run in your own container for this project (limits {memory} memory, {cpus} CPUs).', { memory: p.memory || sb.memory || '—', cpus: p.cpus || sb.cpus || '—' })
               : t('Runs directly on the server.')}{' '}
+            {isolated && p.nested && t('Podman works inside the containers.') + ' '}
             {t('Admins manage this setting.')}
           </p>
         )}

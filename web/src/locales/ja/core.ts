@@ -143,6 +143,7 @@ const ja: Record<string, string> = {
   'the agent is not running anymore; send a message to resume': 'エージェントはもう動いていません。メッセージを送ると再開します',
   // containers
   'isolation is not available': '隔離実行は使えません',
+  'containers inside are only for isolated projects': 'コンテナの中のコンテナは、隔離実行のプロジェクトでだけ使えます',
   'podman is not installed on the server': 'サーバに podman がインストールされていません',
   'isolated projects need podman on the server': '隔離プロジェクトにはサーバの podman が必要です',
   'this project runs isolated, but podman is not installed on the server': 'このプロジェクトは隔離コンテナで動きますが、サーバに podman がインストールされていません',
@@ -201,6 +202,7 @@ export const patterns: [RegExp, string][] = [
   [/^git clone: ([\s\S]*)$/, 'git clone に失敗しました: $1'],
   [/^(?:agent )?image build failed: ([\s\S]*)$/, 'エージェント用イメージの作成に失敗しました: $1'],
   [/^start project container: ([\s\S]*)$/, 'プロジェクトのコンテナを起動できません: $1'],
+  [/^nested containers need subordinate ids for (.+) in \/etc\/subuid and \/etc\/subgid$/, 'コンテナの中でコンテナを動かすには、/etc/subuid と /etc/subgid に $1 のサブ ID が必要です'],
   // agent notices / errors
   [/^API retry: ([\s\S]*)$/, 'API を再試行中: $1'],
   [/^Retrying: ([\s\S]*)$/, '再試行中: $1'],

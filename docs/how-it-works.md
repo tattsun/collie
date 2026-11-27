@@ -26,6 +26,7 @@ New projects run in an **Isolated container** by default. You can change this in
 - Memory, CPU and process limits apply. The defaults are 4 GB, half the cores and 4096 processes, and admins can change them per project.
 - If an agent runs away, **Kill now** stops the whole container. The conversation resumes on the next message.
 - Since the agent is boxed in, letting it run without approvals (Claude's **Bypass**, Codex's **Full access**) is easier to justify. You can switch the mode at any time from the chip in the message box.
+- An admin can turn on **Allow containers inside (Podman)** for a project, for example to develop Collie itself there. Agents can then use `podman` in that project's containers. Each user's images are kept per project and count against the server's disk. Changes apply when the containers restart, and the first start after updating Collie rebuilds the agent image.
 
 ## Users and groups
 

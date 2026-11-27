@@ -12,6 +12,8 @@ export interface Project {
   memory?: string
   cpus?: string
   pids?: number
+  /** the containers may run Podman inside (admins decide) */
+  nested?: boolean
   git: boolean
   status?: '' | 'cloning' | 'error'
   error?: string

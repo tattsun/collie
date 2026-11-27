@@ -535,13 +535,40 @@ func (m *Manager) Stale(projectID, userID string) bool {
 // the project, with the agents' permissions. It fails for files larger
 // than limit bytes.
 func (m *Manager) ReadFile(projectID, userID, path string, limit int64) ([]byte, error) {
+	out, err := m.readEnd(projectID, userID, "head", path, limit)
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(out)) > limit {
+		return nil, fmt.Errorf("%s is larger than %d MB", path, limit>>20)
+	}
+	return out, nil
+}
+
+// TailFile reads the last limit bytes of a file as the user's agents see
+// it in their container for the project; more reports that the file holds
+// more before them.
+func (m *Manager) TailFile(projectID, userID, path string, limit int64) (data []byte, more bool, err error) {
+	out, err := m.readEnd(projectID, userID, "tail", path, limit)
+	if err != nil {
+		return nil, false, err
+	}
+	if int64(len(out)) > limit {
+		return out[1:], true, nil
+	}
+	return out, false, nil
+}
+
+// readEnd runs head or tail in the container for up to limit+1 bytes of
+// one end of a file, so the caller can tell whether there is more.
+func (m *Manager) readEnd(projectID, userID, end, path string, limit int64) ([]byte, error) {
 	if !filepath.IsAbs(path) {
 		return nil, errors.New("path must be absolute")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	args := append(append([]string(nil), m.global...), "exec", Name(projectID, userID),
-		"head", "-c", strconv.FormatInt(limit+1, 10), "--", path)
+		end, "-c", strconv.FormatInt(limit+1, 10), "--", path)
 	cmd := exec.CommandContext(ctx, m.cfg.Podman, args...)
 	var out, errb bytes.Buffer
 	cmd.Stdout = &out
@@ -551,10 +578,7 @@ func (m *Manager) ReadFile(projectID, userID, path string, limit int64) ([]byte,
 		if msg == "" {
 			msg = err.Error()
 		}
-		return nil, errors.New(strings.TrimPrefix(msg, "head: "))
-	}
-	if int64(out.Len()) > limit {
-		return nil, fmt.Errorf("%s is larger than %d MB", path, limit>>20)
+		return nil, errors.New(strings.TrimPrefix(msg, end+": "))
 	}
 	return out.Bytes(), nil
 }

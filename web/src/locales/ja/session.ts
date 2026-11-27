@@ -22,6 +22,11 @@ const ja: Record<string, string> = {
   Task: 'タスク',
   'Show where it started': '開始した場所を表示',
   'Stop task': 'タスクを停止',
+  'Show output': '出力を表示',
+  'Loading…': '読み込み中…',
+  'No output yet': 'まだ出力はありません',
+  'Only the last 64 KB': '末尾 64 KB のみ表示',
+  "this task's output cannot be shown": 'このタスクの出力は表示できません',
   'Stop “{title}”?': '「{title}」を停止しますか？',
   '{n} in background': '裏で {n} 件実行中',
   // ---- SessionView

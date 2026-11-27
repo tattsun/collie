@@ -19,7 +19,10 @@ func TestIntegrationMemberCloneRunsInContainer(t *testing.T) {
 		t.Skip("set COLLIE_INTEGRATION=1 (needs podman and the agent image)")
 	}
 	data, root := t.TempDir(), t.TempDir()
-	sb := sandbox.New(sandbox.Config{Podman: "podman", DataDir: data})
+	sb := sandbox.New(sandbox.Config{Podman: testPodman(), DataDir: data})
+	for i := 0; !sb.Status().Ready && sb.Remote() && i < 120; i++ {
+		time.Sleep(time.Second) // a remote Podman connects in the background
+	}
 	if !sb.Available() || !sb.Status().Ready {
 		t.Skip("podman or the agent image is not available")
 	}

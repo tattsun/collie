@@ -7,8 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
-	"net"
 	"os"
 	"path/filepath"
 	"slices"
@@ -185,7 +185,7 @@ type rpcMsg struct {
 	Params  json.RawMessage `json:"params,omitempty"`
 }
 
-func (m *Manager) serveTools(tc *toolConn, c net.Conn) {
+func (m *Manager) serveTools(tc *toolConn, c io.ReadWriteCloser) {
 	defer c.Close()
 	r := bufio.NewReaderSize(c, 64<<10)
 	enc := json.NewEncoder(c)

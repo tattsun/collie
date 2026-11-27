@@ -209,6 +209,7 @@ func (m *Manager) closeToolSockets(projectID string) {
 		}
 	}
 	m.homeMu.Unlock()
+	m.stopRelays(projectID)
 	_ = os.RemoveAll(m.toolDir(toolScope{project: projectID}))
 }
 
@@ -232,6 +233,9 @@ func (m *Manager) toolSessionOK(sc toolScope, sid string) bool {
 // toolsSpec mounts the scope's tools socket and Collie's binary (the MCP
 // bridge) into the container.
 func (m *Manager) toolsSpec(sp *sandbox.Spec, sc toolScope) error {
+	if m.sb.Remote() {
+		return nil // relayed instead (see relay.go)
+	}
 	dir, err := m.toolSocket(sc)
 	if err != nil {
 		return err
@@ -251,6 +255,9 @@ func (m *Manager) collieTools(p model.Project, s model.Session) (string, []strin
 	sc := toolScope{uid: s.Owner}
 	if !p.Home {
 		sc.project = p.ID
+	}
+	if p.Isolated() && m.sb != nil && m.sb.Remote() {
+		return "python3", []string{relayBridge, relaySock, s.ID}, nil
 	}
 	dir, err := m.toolSocket(sc)
 	if err != nil {

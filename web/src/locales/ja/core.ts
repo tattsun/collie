@@ -151,6 +151,9 @@ const ja: Record<string, string> = {
   'isolation is not available': '隔離実行は使えません',
   'the agent image is not built yet': 'エージェント用イメージがまだ作成されていません',
   'containers inside are only for isolated projects': 'コンテナの中のコンテナは、隔離実行のプロジェクトでだけ使えます',
+  'containers inside containers need Podman on Linux': 'コンテナの中のコンテナには、Linux の Podman が必要です',
+  'containers inside containers need Podman on Linux; turn off "Allow containers inside" for this project':
+    'コンテナの中のコンテナには、Linux の Podman が必要です。このプロジェクトの「コンテナの中でコンテナを動かせるようにする」をオフにしてください',
   'a network allowlist is only for isolated projects': 'ネットワークの許可リストは、隔離実行のプロジェクトでだけ使えます',
   'too many allowlist entries (at most 500)': '許可リストの項目が多すぎます（最大 500 件）',
   'podman is not installed on the server': 'サーバに podman がインストールされていません',

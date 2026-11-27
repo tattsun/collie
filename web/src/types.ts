@@ -68,6 +68,10 @@ export interface SandboxStatus {
   netAgents?: string[]
   /** a starting list for a new allowlist */
   netSuggested?: string[]
+  /** Podman machine (a Mac): no containers inside containers */
+  remote?: boolean
+  /** Podman machine's VM lacks the firewall from deploy/setup-mac.sh */
+  noFirewall?: boolean
 }
 
 /** A destination a project's containers asked for recently. */

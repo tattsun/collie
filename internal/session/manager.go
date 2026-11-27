@@ -56,6 +56,9 @@ type Manager struct {
 	// sockets (see media.go), by toolScope.key.
 	homeMu sync.Mutex
 	toolLn map[string]net.Listener
+	// With a remote Podman, the tools relays (see relay.go), by toolScope.key.
+	relayMu sync.Mutex
+	relays  map[string]*toolRelay
 
 	mu   sync.Mutex
 	rts  map[string]*Runtime
@@ -70,7 +73,8 @@ type Manager struct {
 func NewManager(cfg Config, st *store.Store, hub *Hub, sb *sandbox.Manager) *Manager {
 	m := &Manager{cfg: cfg, st: st, hub: hub, sb: sb, rts: map[string]*Runtime{}, caps: map[string]model.Caps{},
 		usage:     map[string]map[string]model.Usage{},
-		ctrActive: map[string]time.Time{}, hostOwner: cfg.HostOwner, toolLn: map[string]net.Listener{}}
+		ctrActive: map[string]time.Time{}, hostOwner: cfg.HostOwner, toolLn: map[string]net.Listener{},
+		relays: map[string]*toolRelay{}}
 	if sb != nil {
 		sb.SetNetRules(st.Project)
 	}
@@ -159,6 +163,14 @@ func (m *Manager) ensureContainer(p model.Project, uid string, notify func(strin
 	}
 	if err := m.sb.Ensure(sp, !m.projectBusy(p.ID, uid)); err != nil {
 		return fmt.Errorf("start project container: %w", err)
+	}
+	if m.sb.Remote() {
+		if err := m.ensureRelay(p, uid); err != nil {
+			if p.Home {
+				return fmt.Errorf("start Home's tools: %w", err)
+			}
+			log.Printf("project %s: tools relay for %s: %v", p.ID, uid, err)
+		}
 	}
 	m.ctrMu.Lock()
 	m.ctrActive[p.ID+"/"+uid] = time.Now()

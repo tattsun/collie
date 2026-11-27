@@ -138,17 +138,24 @@ The service keeps the `PATH` it had at install time, with mise shims first. If y
 
 ## On a Mac
 
-On a Mac, Collie runs as a LaunchAgent of your own user, and the agents run directly on the Mac with your own `claude` / `codex` logins. There are no isolated containers there yet, and only admins can run agents outside a container, so a Mac is for you alone: people you invite can sign in but can't start anything.
+On a Mac, Collie runs as a LaunchAgent of your own user. With Podman, projects are isolated as on Linux: their containers run in the Linux VM of Podman machine. Without Podman, agents run directly on the Mac with your own `claude` / `codex` logins. Only admins can run agents outside a container, so people you invite can sign in to such a Mac but can't start anything.
 
 ```bash
 xcode-select --install               # git, unless you have it already
-curl https://mise.run | sh           # then enable mise in ~/.zshrc
+brew install podman                  # or the installer from podman.io
 git clone <this repo> && cd collie
+./deploy/setup-mac.sh                # Podman machine's VM, with a firewall
+curl https://mise.run | sh           # then enable mise in ~/.zshrc
 mise trust && mise install
 mise run install --serve             # or --domain / --proxy / --funnel, as above
 ```
 
-Install and sign in to the CLIs as in [Host-run projects](#host-run-projects-optional), then become the first admin as in step 3.
+Then become the first admin as in step 3. For agents that run on the Mac itself (host-run projects, or a Mac without Podman), install and sign in to the CLIs as in [Host-run projects](#host-run-projects-optional).
+
+- `setup-mac.sh` gives the VM half the Mac's CPUs and memory (at most 8 GB). Each container's limits apply inside the VM. It also installs a firewall in the VM, so containers can reach the internet but not your LAN, your tailnet or the Mac. Run it again if you re-create the VM (`podman machine rm`, then `init`). While the firewall is missing, the project's network settings show a warning.
+- The VM sees only your home folder, so keep Collie's data and your projects in it (the defaults are).
+- Collie starts the VM when Collie starts, if the VM isn't running.
+- **Allow containers inside (Podman)** isn't available on a Mac.
 
 - Collie starts when you log in to the Mac and runs while you stay logged in. For a Mac that runs unattended, turn on automatic login, and keep it from sleeping (System Settings → Energy: prevent automatic sleeping).
 - Keep projects outside Desktop, Documents and Downloads. macOS blocks background processes from those folders unless you give them Full Disk Access.

@@ -55,23 +55,27 @@ func (m *Manager) networkArgs(p model.Project, uid string) []string {
 	}
 	proxy := "http://" + ProxyAddr
 	noProxy := "localhost,127.0.0.1,::1"
-	return []string{
-		"--network", "none",
-		"--label", "collie.network=" + model.NetAllowlist,
-		"-v", m.netDir(p.ID, uid) + ":" + NetRunDir + ":ro",
-		"-e", "HTTP_PROXY=" + proxy, "-e", "HTTPS_PROXY=" + proxy,
-		"-e", "http_proxy=" + proxy, "-e", "https_proxy=" + proxy,
-		"-e", "NO_PROXY=" + noProxy, "-e", "no_proxy=" + noProxy,
+	args := []string{"--network", "none", "--label", "collie.network=" + model.NetAllowlist}
+	if !m.remote {
+		// (A remote Podman's containers get to the proxy through Collie's
+		// relay, which listens on ProxyAddr itself; see session/relay.go.)
+		args = append(args, "-v", m.netDir(p.ID, uid)+":"+NetRunDir+":ro")
+	}
+	return append(args,
+		"-e", "HTTP_PROXY="+proxy, "-e", "HTTPS_PROXY="+proxy,
+		"-e", "http_proxy="+proxy, "-e", "https_proxy="+proxy,
+		"-e", "NO_PROXY="+noProxy, "-e", "no_proxy="+noProxy,
 		// Node's own fetch and http honor the variables only when asked.
 		"-e", "NODE_USE_ENV_PROXY=1",
-		"-e", "COLLIE_NETWORK=" + model.NetAllowlist,
-	}
+		"-e", "COLLIE_NETWORK="+model.NetAllowlist,
+	)
 }
 
 // mainCommand is what the container runs: on an allowlist the bridge to
-// the proxy, otherwise nothing but a placeholder.
-func mainCommand(p model.Project) []string {
-	if p.Allowlisted() {
+// the proxy (unless Collie's relay is that), otherwise nothing but a
+// placeholder.
+func (m *Manager) mainCommand(p model.Project) []string {
+	if p.Allowlisted() && !m.remote {
 		return []string{CollieBinPath, "net-bridge", NetRunDir + "/" + proxySock, ProxyAddr}
 	}
 	return []string{"sleep", "infinity"}
@@ -83,14 +87,20 @@ func (m *Manager) prepareNetwork(sp *Spec) error {
 	if !sp.Project.Allowlisted() {
 		return nil
 	}
-	if sp.CollieBin == "" {
+	if sp.CollieBin == "" && !m.remote {
 		exe, err := os.Executable()
 		if err != nil {
 			return err
 		}
 		sp.CollieBin = exe
 	}
-	return m.egress.Listen(filepath.Join(m.netDir(sp.Project.ID, sp.UserID), proxySock), sp.Project.ID, sp.UserID)
+	return m.egress.Listen(m.ProxySocket(sp.Project.ID, sp.UserID), sp.Project.ID, sp.UserID)
+}
+
+// ProxySocket is where the proxy for the user's container of a project
+// listens on the host.
+func (m *Manager) ProxySocket(projectID, userID string) string {
+	return filepath.Join(m.netDir(projectID, userID), proxySock)
 }
 
 // SetNetRules tells the proxy where to find a project's allowlist (looked

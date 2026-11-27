@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/tattsun/collie/internal/egress"
@@ -63,6 +64,10 @@ type Status struct {
 	// Allowlists: the hosts always allowed and a suggested starting list.
 	NetAgents    []string `json:"netAgents"`
 	NetSuggested []string `json:"netSuggested"`
+	// Podman machine (a Mac): no containers inside containers; and
+	// whether its VM lacks the firewall from deploy/setup-mac.sh.
+	Remote     bool `json:"remote,omitempty"`
+	NoFirewall bool `json:"noFirewall,omitempty"`
 }
 
 type Manager struct {
@@ -82,6 +87,15 @@ type Manager struct {
 	imgIDs   map[string]imageIDAt // IDs of image tags, cached briefly
 	stale    map[string]bool      // containers left running with an older configuration
 	egress   *egress.Proxy        // for containers on an allowlist (network.go)
+
+	// Podman machine (see remote.go): whether Podman is remote, can apply
+	// resource limits, runs containers as which user, and lacks Collie's
+	// firewall; up is closed once it is connected.
+	remote     bool
+	limits     atomic.Bool
+	remoteUser string
+	noFirewall atomic.Bool
+	up         chan struct{}
 
 	// Custom images (images.go).
 	defs      imageDefs
@@ -111,24 +125,33 @@ func New(cfg Config) *Manager {
 	m.available = err == nil && Supported()
 	m.tag = "localhost/collie-agent:" + imageHash()
 	m.global = []string{"--log-level=error"}
+	m.up = make(chan struct{})
+	m.loadImageDefs()
+	if !m.available {
+		close(m.up)
+		return m
+	}
+	m.remote = runtime.GOOS != "linux" || m.serviceIsRemote()
+	if m.remote {
+		m.limits.Store(true) // until the VM says otherwise
+		go m.connect()
+		return m
+	}
 	if !userBusAvailable() {
 		// No systemd user session (e.g. WSL, or lingering not enabled):
 		// the systemd cgroup manager cannot work, so use cgroupfs.
 		m.global = append(m.global, "--cgroup-manager=cgroupfs")
 	}
-	m.loadImageDefs()
-	if m.available {
-		m.selinux = selinuxEnabled()
-		m.ready = m.imageExists()
-		m.refreshCustoms()
-	}
+	m.selinux = selinuxEnabled()
+	m.ready = m.imageExists()
+	m.refreshCustoms()
+	close(m.up)
 	return m
 }
 
-// Supported reports whether this OS can run isolated projects. Podman on
-// macOS runs containers in a VM, which the containers' mounts and tools
-// socket don't work through yet.
-func Supported() bool { return runtime.GOOS == "linux" }
+// Supported reports whether this OS can run isolated projects: Linux with
+// Podman, or macOS with Podman machine.
+func Supported() bool { return runtime.GOOS == "linux" || runtime.GOOS == "darwin" }
 
 // selinuxEnabled reports whether SELinux is on (Fedora, RHEL and the
 // like), in which case Podman labels containers so that they cannot read
@@ -145,8 +168,14 @@ func (m *Manager) Podman() string { return m.cfg.Podman }
 
 // LimitsSupported reports whether rootless containers can get resource
 // limits here: that needs the systemd cgroup manager with a user session
-// (on a server: `loginctl enable-linger <user>`).
-func (m *Manager) LimitsSupported() bool { return userBusAvailable() }
+// (on a server: `loginctl enable-linger <user>`), or a remote Podman that
+// has one.
+func (m *Manager) LimitsSupported() bool {
+	if m.remote {
+		return m.limits.Load()
+	}
+	return userBusAvailable()
+}
 func (m *Manager) SharedPath() string {
 	return filepath.Join(m.cfg.DataDir, "shared")
 }
@@ -157,7 +186,7 @@ func (m *Manager) Status() Status {
 	st := Status{Available: m.available, Limits: m.available && m.LimitsSupported(), Image: m.tag, Ready: m.ready,
 		Building: m.building, Error: m.buildErr, Shared: m.SharedPath(), Memory: m.cfg.Memory, CPUs: m.cfg.CPUs, Pids: m.cfg.Pids,
 		NetAgents: egress.AgentHosts, NetSuggested: egress.Suggested,
-		Images: m.imageStatusesLocked(), DefaultImage: m.defs.Default}
+		Images: m.imageStatusesLocked(), DefaultImage: m.defs.Default, Remote: m.remote, NoFirewall: m.noFirewall.Load()}
 	if m.building || m.buildErr != "" {
 		st.Log = m.buildLog.String()
 	}
@@ -270,6 +299,7 @@ func (m *Manager) background(fn func()) {
 func (m *Manager) Wait() { m.bg.Wait() }
 
 func (m *Manager) build(refresh bool, w io.Writer) error {
+	m.waitUp()
 	dir, err := os.MkdirTemp("", "collie-image-")
 	if err != nil {
 		return err
@@ -334,6 +364,7 @@ func (m *Manager) BuildIfMissing(w io.Writer) error {
 	if !m.available {
 		return ErrUnavailable
 	}
+	m.waitUp()
 	if m.imageExists() {
 		fmt.Fprintf(w, "agent image %s is up to date\n", m.tag)
 	} else if err := m.build(false, w); err != nil {

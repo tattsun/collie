@@ -93,12 +93,13 @@ chmod 755 "$prefix/.collie.new"
 mv -f "$prefix/.collie.new" "$prefix/collie"
 echo "installed $prefix/collie"
 
-if [[ "$os" != Linux ]]; then
-  echo "note: isolated containers need Linux for now — agents run directly on this machine as $USER."
-elif command -v podman >/dev/null 2>&1; then
+# (On a Mac, containers need Podman machine's VM: deploy/setup-mac.sh.)
+if command -v podman >/dev/null 2>&1 && { [[ "$os" == Linux ]] || podman machine inspect >/dev/null 2>&1; }; then
   echo "building the agent container image (first time takes a few minutes)…"
   "$prefix/collie" --build-image ${COLLIE_DATA:+--data "$COLLIE_DATA"} || \
     echo "warning: image build failed; Collie retries when an isolated project first runs."
+elif [[ "$os" == Darwin ]]; then
+  echo "note: no Podman machine — agents run directly on this Mac as $USER (run deploy/setup-mac.sh to isolate them)."
 else
   echo "note: podman not found — projects will run agents directly on this host (see deploy/setup-host.sh)."
 fi

@@ -108,7 +108,7 @@ func TestExtraMountsForLegacyWorktrees(t *testing.T) {
 	for _, d := range []string{legacy, current} {
 		os.MkdirAll(d, 0o700)
 	}
-	got := m.extraMounts(p, []string{p.Path, filepath.Join(p.Path, "sub"), current, legacy, legacy, "/does/not/exist"})
+	got := m.extraMounts(p, []string{p.Path, filepath.Join(p.Path, "sub"), current, legacy, legacy, "/does/not/exist", "", "."})
 	if !slices.Equal(got, []string{legacy}) {
 		t.Fatalf("extra mounts = %v, want [%s]", got, legacy)
 	}

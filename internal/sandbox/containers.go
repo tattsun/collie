@@ -162,6 +162,11 @@ func (m *Manager) Ensure(sp Spec, recreate bool) error {
 		return ErrUnavailable
 	}
 	p := sp.Project
+	if p.Nested && m.remote {
+		return errNestedRemote
+	}
+	m.waitUp()
+	m.recheckFirewall()
 	l := m.lock(p.ID + "/" + sp.UserID)
 	l.Lock()
 	defer l.Unlock()
@@ -220,8 +225,11 @@ func (m *Manager) extraMounts(p model.Project, sessionDirs []string) []string {
 	var out []string
 	seen := map[string]bool{}
 	for _, d := range sessionDirs {
+		if !filepath.IsAbs(d) {
+			continue // ("" would become ".", the server's working directory)
+		}
 		d = filepath.Clean(d)
-		if d == "" || seen[d] || within(d, p.Path) || within(d, m.WorktreeRoot(p.ID)) {
+		if seen[d] || within(d, p.Path) || within(d, m.WorktreeRoot(p.ID)) {
 			continue
 		}
 		if fi, err := os.Stat(d); err != nil || !fi.IsDir() {
@@ -293,11 +301,17 @@ func (m *Manager) runArgs(sp Spec, extra []string) []string {
 	for _, d := range sp.ReadOnly {
 		args = append(args, "-v", d+":"+d+":ro")
 	}
-	if sp.CollieRun != "" {
-		args = append(args, "-v", sp.CollieRun+":"+CollieRunDir)
-	}
-	if sp.CollieBin != "" {
-		args = append(args, "-v", sp.CollieBin+":"+CollieBinPath+":ro")
+	if m.remote {
+		// A host socket can't be reached from Podman machine's VM: Collie
+		// relays its tools to a socket in here instead (see remote.go).
+		args = append(args, "--tmpfs", CollieRunDir)
+	} else {
+		if sp.CollieRun != "" {
+			args = append(args, "-v", sp.CollieRun+":"+CollieRunDir)
+		}
+		if sp.CollieBin != "" {
+			args = append(args, "-v", sp.CollieBin+":"+CollieBinPath+":ro")
+		}
 	}
 	// The merged (global + personal) profile where the agents look for it.
 	ro := func(src, dst string) { args = append(args, "-v", src+":"+dst+":ro") }
@@ -324,11 +338,11 @@ func (m *Manager) runArgs(sp Spec, extra []string) []string {
 	if tag := m.imageTag(sp); tag != m.tag {
 		// A custom image runs like the standard one: as the server user
 		// (keep-id alone would honor the image's USER) and Collie's command.
-		args = append(args, "--user", userSpec(), "--entrypoint", "")
+		args = append(args, "--user", m.userSpec(), "--entrypoint", "")
 	}
 	// No env files here: Exec passes them to every process instead.
 	args = append(args, m.imageTag(sp))
-	return append(args, mainCommand(p)...)
+	return append(args, m.mainCommand(p)...)
 }
 
 // envFiles lists the env files for the user's container for the project.
@@ -468,6 +482,11 @@ func (m *Manager) prepare(sp Spec) error {
 // container's root (owned by a subuid): inside `podman unshare`, uid 0 is
 // the server user.
 func (m *Manager) repairOwnership(dir string) {
+	if m.remote {
+		// No `podman unshare` there; and on a Mac, files the VM creates
+		// belong to the Mac's user anyway.
+		return
+	}
 	uid := os.Getuid()
 	bad := false
 	_ = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {

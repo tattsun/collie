@@ -141,15 +141,15 @@ func main() {
 		Podman: *podmanBin, DataDir: *dataDir, Memory: *ctrMemory, CPUs: *ctrCPUs, Pids: *ctrPids,
 	})
 	if !sandbox.Supported() {
-		log.Printf("note: isolated projects need Linux for now — agents run directly on this machine (%s)", runtime.GOOS)
+		log.Printf("note: isolated projects need Linux or macOS — agents run directly on this machine (%s)", runtime.GOOS)
 	} else if !sb.Available() {
 		log.Printf("note: podman not found — new projects will run agents directly on this host")
-	} else if !sb.LimitsSupported() {
+	} else if !sb.Remote() && !sb.LimitsSupported() {
 		log.Printf("warning: no systemd user session — memory/CPU/process limits for isolated projects are NOT enforced (run `loginctl enable-linger %s` and start collie as a user service)", os.Getenv("USER"))
 	}
 	if *buildImage || *prepareImage {
 		if !sandbox.Supported() {
-			log.Fatalf("isolated projects need Linux for now (this is %s)", runtime.GOOS)
+			log.Fatalf("isolated projects need Linux or macOS (this is %s)", runtime.GOOS)
 		}
 		if !sb.Available() {
 			log.Fatal("podman is not installed")

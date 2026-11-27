@@ -357,6 +357,9 @@ func (m *Manager) PatchProject(a Actor, id string, req PatchProjectReq) (model.P
 	if nested && runtime != "container" {
 		return p, errors.New("containers inside are only for isolated projects")
 	}
+	if nested && !p.Nested && m.sb != nil && m.sb.Remote() {
+		return p, errors.New("containers inside containers need Podman on Linux")
+	}
 	network, netAllow := p.Network, p.NetAllow
 	if req.Network != nil {
 		network = *req.Network

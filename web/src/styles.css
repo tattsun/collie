@@ -880,9 +880,6 @@ button.chip {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.sub-item.ctx.warn {
-  color: var(--amber);
-}
 .tabs {
   display: flex;
   gap: 2px;
@@ -2416,5 +2413,164 @@ pre.out.error-box {
   }
   .pe-text {
     min-height: 300px;
+  }
+}
+
+/* ---------------------------------------------------------------- usage */
+/* plan usage in the sidebar: agent · window · bar · % · reset */
+.usage-panel {
+  display: grid;
+  grid-template-columns: auto auto minmax(36px, 1fr) auto auto;
+  align-items: center;
+  gap: 4px 8px;
+  padding: 8px 14px;
+  border-top: 1px solid var(--border);
+  font-size: 11.5px;
+  color: var(--dim);
+}
+.u-label {
+  max-width: 96px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.u-pct,
+.mp-pct {
+  min-width: 3.2ch;
+  text-align: right;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.u-reset {
+  color: var(--faint);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.ubar {
+  display: block;
+  height: 5px;
+  min-width: 30px;
+  border-radius: 3px;
+  background: var(--border);
+  overflow: hidden;
+}
+.ubar > i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--green);
+}
+.ubar.mid > i {
+  background: var(--amber);
+}
+.ubar.hi > i {
+  background: var(--red);
+}
+.u-pct.mid,
+.mp-pct.mid,
+.m-ctx.mid,
+.m-plan.mid {
+  color: var(--amber);
+}
+.u-pct.hi,
+.mp-pct.hi,
+.m-ctx.hi,
+.m-plan.hi {
+  color: var(--red);
+}
+
+/* session meter: context ring + tightest plan window */
+.meter {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--dim);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.m-ctx,
+.m-plan {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.ring {
+  flex: none;
+}
+.ring-bg,
+.ring-fg {
+  fill: none;
+  stroke-width: 2.2;
+}
+.ring-bg {
+  stroke: var(--border2);
+}
+.ring-fg {
+  stroke: currentColor;
+  stroke-linecap: round;
+}
+.menu.pop {
+  min-width: min(270px, calc(100vw - 16px));
+  max-width: calc(100vw - 16px);
+  padding: 12px 14px;
+}
+.meter-pop {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--dim);
+}
+.meter-pop .ubar {
+  background: var(--border2);
+}
+.mp-grid {
+  display: grid;
+  grid-template-columns: auto minmax(40px, 1fr) auto auto;
+  align-items: center;
+  gap: 6px 10px;
+}
+.mp-l {
+  color: var(--text);
+  white-space: nowrap;
+}
+.mp-r {
+  color: var(--faint);
+  font-size: 11.5px;
+  text-align: right;
+  white-space: nowrap;
+}
+.mp-h {
+  grid-column: 1 / -1;
+  margin-top: 6px;
+  font-size: 11px;
+  font-weight: 650;
+  color: var(--dim);
+}
+.mp-note {
+  color: var(--faint);
+  font-size: 11.5px;
+}
+.mp-cost {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border2);
+}
+.mp-cost > :last-child {
+  color: var(--text);
+}
+/* phones: make room for the meter next to the session tabs */
+@media (max-width: 440px) {
+  .tabs:has(.meter) {
+    padding: 0 4px;
+  }
+  .tabs:has(.meter) .tab {
+    padding: 8px 8px;
+  }
+  .tabs:has(.meter) .tab svg {
+    display: none;
   }
 }

@@ -60,10 +60,15 @@ type Manager struct {
 	rts  map[string]*Runtime
 	caps map[string]model.Caps
 	bmu  sync.Mutex // serializes session update+broadcast so clients never see stale order
+
+	// Plan usage by user, then agent (see usage.go).
+	umu   sync.Mutex
+	usage map[string]map[string]model.Usage
 }
 
 func NewManager(cfg Config, st *store.Store, hub *Hub, sb *sandbox.Manager) *Manager {
 	m := &Manager{cfg: cfg, st: st, hub: hub, sb: sb, rts: map[string]*Runtime{}, caps: map[string]model.Caps{},
+		usage:     map[string]map[string]model.Usage{},
 		ctrActive: map[string]time.Time{}, hostOwner: cfg.HostOwner, homeLn: map[string]net.Listener{}}
 	if cfg.HostOwner != "" {
 		m.AdoptOrphans(cfg.HostOwner)

@@ -1,7 +1,7 @@
 import { Fragment } from 'preact'
 import type { ComponentChildren, JSX } from 'preact'
 import { t } from '../i18n'
-import { useEffect, useRef, useState } from 'preact/hooks'
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks'
 import { toasts } from '../store'
 import type { Agent, Status } from '../types'
 import { cls } from '../util'
@@ -16,7 +16,8 @@ export interface MenuItem {
   hint?: string
 }
 
-export function Menu({ trigger, items, up, align = 'left', label }: { trigger: ComponentChildren; items: MenuItem[]; up?: boolean; align?: 'left' | 'right'; label?: string }) {
+/** Open state of a dropdown that closes on an outside tap or Escape. */
+function useDropdown() {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -32,6 +33,11 @@ export function Menu({ trigger, items, up, align = 'left', label }: { trigger: C
       document.removeEventListener('keydown', esc)
     }
   }, [open])
+  return { open, setOpen, ref }
+}
+
+export function Menu({ trigger, items, up, align = 'left', label }: { trigger: ComponentChildren; items: MenuItem[]; up?: boolean; align?: 'left' | 'right'; label?: string }) {
+  const { open, setOpen, ref } = useDropdown()
   return (
     <div class="menu-wrap" ref={ref}>
       <button class="menu-trigger" onClick={() => setOpen(!open)} aria-haspopup="menu" aria-expanded={open} aria-label={label}>
@@ -54,6 +60,33 @@ export function Menu({ trigger, items, up, align = 'left', label }: { trigger: C
               {it.hint && <span class="mi-hint">{it.hint}</span>}
             </button>
           ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** A button that opens a panel of arbitrary content (like Menu, not a list). */
+export function Popover({ trigger, children, up, align = 'left', label, title }: { trigger: ComponentChildren; children: ComponentChildren; up?: boolean; align?: 'left' | 'right'; label?: string; title?: string }) {
+  const { open, setOpen, ref } = useDropdown()
+  const panel = useRef<HTMLDivElement>(null)
+  // Keep the panel on screen (a phone is narrower than it may be wide).
+  useLayoutEffect(() => {
+    const el = panel.current
+    if (!open || !el) return
+    el.style.transform = ''
+    const r = el.getBoundingClientRect()
+    const dx = r.left < 8 ? 8 - r.left : r.right > innerWidth - 8 ? innerWidth - 8 - r.right : 0
+    if (dx) el.style.transform = `translateX(${dx}px)`
+  }, [open])
+  return (
+    <div class="menu-wrap" ref={ref}>
+      <button class="menu-trigger" onClick={() => setOpen(!open)} aria-haspopup="dialog" aria-expanded={open} aria-label={label} title={title}>
+        {trigger}
+      </button>
+      {open && (
+        <div ref={panel} class={cls('menu pop', up && 'up', align)} role="dialog" aria-label={label}>
+          {children}
         </div>
       )}
     </div>

@@ -454,6 +454,18 @@ func (s *sink) Caps(c model.Caps) {
 	}
 }
 
+func (s *sink) Usage(u model.Usage) {
+	s.r.mu.Lock()
+	ok := s.r.gen == s.gen
+	s.r.mu.Unlock()
+	if !ok {
+		return
+	}
+	if sess, found := s.r.m.st.Session(s.r.id); found {
+		s.r.m.reportUsage(sess.Owner, sess.Agent, u)
+	}
+}
+
 func (s *sink) Exited(err error) {
 	r := s.r
 	r.mu.Lock()

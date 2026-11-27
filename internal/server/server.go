@@ -381,6 +381,7 @@ func (s *Server) stateFor(u auth.User, legacy bool) map[string]any {
 		"groups":    s.groupsFor(u),
 		"users":     s.directory(),
 		"agentCaps": s.m.AgentCaps(),
+		"usage":     s.m.UsageFor(u.ID),
 		"modes":     agentModes(),
 		"agents":    s.agentsAvail,
 		"root":      s.m.OwnerRoot(a, ""),

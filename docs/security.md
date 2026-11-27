@@ -75,7 +75,7 @@ This assumes the configuration from the [setup guide](setup.md): a dedicated `co
 ## Updates
 
 - Collie installs only releases whose signature checks out against a key built into Collie. Swapping files on the release page, or passing an old release off as a new one, gets nothing installed.
-- A signed release can be made only by someone who can run the release workflow by hand, because pushing a tag doesn't start it. Keep the **Actions**, **Workflows** and **Secrets** permissions off GitHub tokens that agents use, such as a `GH_TOKEN` in Collie's environment. With them an agent could publish a release, read the signing key or replace it.
+- A signed release can be made only by someone who can run the release workflow by hand, because pushing a tag doesn't start it. Keep the **Actions**, **Workflows** and **Secrets** permissions off GitHub tokens that agents use, such as a `GH_TOKEN` in Collie's environment. With them an agent could publish a release, read the signing key or replace it. Give agents fine-grained tokens only: a classic token with the `repo` scope can run workflows, and one with `write:packages` can replace the agent image's base before the next release pins it.
 - Each release also pins the base of the agent image (Ubuntu packages, Podman, mise) by digest, so the image registry can't hand servers a different one. The agents on top (Claude Code, Codex, the Playwright MCP server) are installed from npm when the image is built on the server.
 - Only admins can install updates. Home agents can't.
 

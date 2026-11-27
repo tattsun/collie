@@ -57,7 +57,8 @@ This assumes the configuration from the [setup guide](setup.md): a dedicated `co
 - An agent in a container can read every file in its project and can reach the internet. Don't keep secrets in a project that you wouldn't want sent out.
 - An allowlist narrows where data can go, but allowed hosts can still carry it further. Claude's and Codex's own services are always allowed and accept uploads from any account. Hosts that serve many sites, such as CDNs or GitHub, can pass traffic on to them.
 - A host-run agent has all the access of the `collie` user.
-- On a Mac there are no containers and no firewall. Agents run as you, with everything your account can reach: your files, your LAN, and Collie's own data.
+- On a Mac, the containers run in Podman machine's VM, and the firewall from `setup-mac.sh` is in that VM. Without it, containers on the internet setting can reach your LAN and the services on the Mac, including Collie's (Collie warns about it). On an allowlist they reach only Collie's proxy either way.
+- Agents that run on the Mac itself (host-run projects, or all of them on a Mac without Podman) run as you, with no firewall. They reach everything your account can: your files, your LAN, and Collie's own data.
 - In a project with **Allow containers inside**, the container keeps running as the `collie` user's own ids, with the same files and network. But its processes can switch between the container's own ids and reach more of the kernel (FUSE, tun devices, nested namespaces that mount their own `/proc` or set their own hostname), so a kernel bug is easier to reach from there. Turn it on only for projects whose agents you trust.
 - An agent image an admin adds runs whatever its definition installs, in every project that uses it, and its build steps run as root in a build container that can reach the internet. Agents still run as the `collie` user, with the same files, network and limits. Only admins can add or change images.
 

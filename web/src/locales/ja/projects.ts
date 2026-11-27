@@ -229,5 +229,7 @@ const ja: Record<string, string> = {
   Notifications: '通知',
   'Notifications on': '通知オン',
   'Notifications off': '通知オフ',
+  'This Mac’s Podman machine has no firewall from Collie, so containers on the internet can reach your LAN and this Mac. Run deploy/setup-mac.sh, or use an allowlist.':
+    'この Mac の Podman machine には Collie のファイアウォールがないため、インターネットに出るコンテナから LAN やこの Mac に届いてしまいます。deploy/setup-mac.sh を実行するか、許可リストを使ってください。',
 }
 export default ja

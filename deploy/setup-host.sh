@@ -135,48 +135,7 @@ fi
 
 echo "== firewall (uid $uid)"
 mkdir -p /etc/collie
-allow_elems=""
-if [[ ${#allow[@]} -gt 0 ]]; then
-  allow_elems="elements = { $(IFS=,; echo "${allow[*]}") }"
-fi
-cat > /etc/collie/nftables.nft <<EOF
-# Managed by collie deploy/setup-host.sh — egress policy for user $user.
-table inet collie
-delete table inet collie
-table inet collie {
-  set lan4 {
-    type ipv4_addr; flags interval
-    elements = { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 169.254.0.0/16 }
-  }
-  set lan6 {
-    type ipv6_addr; flags interval
-    elements = { fc00::/7, fe80::/10 }
-  }
-  set allow4 {
-    type ipv4_addr; flags interval
-    $allow_elems
-  }
-  chain output {
-    type filter hook output priority filter; policy accept;
-    meta skuid != $uid accept
-    ct state established,related accept
-    # name resolution may go to a local or tailnet resolver (MagicDNS)
-    meta l4proto { tcp, udp } th dport 53 accept
-    # agents must never talk to Collie's own API
-    ip daddr 127.0.0.0/8 tcp dport { $ports } reject
-    ip6 daddr ::1 tcp dport { $ports } reject
-    # other loopback services stay usable (e.g. dev servers of host-mode projects)
-    ip daddr 127.0.0.0/8 accept
-    ip6 daddr ::1 accept
-    ip daddr @allow4 accept
-    # none of this server's own addresses (LAN, tailnet or public IP) …
-    fib daddr type local reject
-    # … nor anything else on the LAN / tailnet / link-local
-    ip daddr @lan4 reject
-    ip6 daddr @lan6 reject
-  }
-}
-EOF
+"$(dirname "$0")/egress-rules.sh" "$uid" "$ports" ${allow[@]+"${allow[@]}"} > /etc/collie/nftables.nft
 nft -c -f /etc/collie/nftables.nft
 
 nft="$(command -v nft)"

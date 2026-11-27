@@ -3,7 +3,7 @@ import type { NetEntry, Project } from '../types'
 import { api } from '../api'
 import { sandbox, toast, toastError } from '../store'
 import { ago, cls } from '../util'
-import { ICheck, IGlobe, IX, Spinner } from './icons'
+import { IAlert, ICheck, IGlobe, IX, Spinner } from './icons'
 import { Segmented, rich } from './ui'
 import { t } from '../i18n'
 
@@ -14,6 +14,12 @@ const lines = (s: string) =>
     .split('\n')
     .map((l) => l.trim())
     .filter(Boolean)
+
+const NoFirewall = () => (
+  <p class="warn small">
+    <IAlert size={12} /> t('This Mac’s Podman machine has no firewall from Collie, so containers on the internet can reach your LAN and this Mac. Run deploy/setup-mac.sh, or use an allowlist.')
+  </p>
+)
 
 /** What an isolated project's containers can connect to: the internet, or only an allowlist. */
 export function NetworkSettings({ p, manager, active }: { p: Project; manager: boolean; active: boolean }) {
@@ -55,6 +61,7 @@ export function NetworkSettings({ p, manager, active }: { p: Project; manager: b
             : t('The internet, but not your LAN, tailnet or this server.')}{' '}
           {t('The project’s owner manages this setting.')}
         </p>
+        {!listed && sb.noFirewall && <NoFirewall />}
       </section>
     )
   }
@@ -105,6 +112,7 @@ export function NetworkSettings({ p, manager, active }: { p: Project; manager: b
           ? t('Agents and terminals reach only the hosts below and the agents’ own services, through Collie’s proxy. Tools that use the HTTPS_PROXY variable work (curl, git over https, npm, pip, Go, browsers); SSH and other direct connections can’t get out.')
           : t('Agents and terminals can reach any host on the internet, but not your LAN, tailnet or this server.')}
       </p>
+      {mode !== 'allowlist' && sb.noFirewall && <NoFirewall />}
       {mode === 'allowlist' && (
         <>
           <textarea

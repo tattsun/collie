@@ -436,7 +436,7 @@ func TestCustomImageRunArgs(t *testing.T) {
 		t.Error("the standard image's containers changed")
 	}
 	i := slices.Index(custom, "--user")
-	if i < 0 || custom[i+1] != userSpec() {
+	if i < 0 || custom[i+1] != m.userSpec() {
 		t.Errorf("a custom image may run as its own USER: %q", custom)
 	}
 	if i := slices.Index(custom, "--entrypoint"); i < 0 || custom[i+1] != "" {

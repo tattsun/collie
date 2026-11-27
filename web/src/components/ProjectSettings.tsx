@@ -109,7 +109,7 @@ export function ProjectSettings({ p }: { p: Project }) {
                 </label>
               </div>
             )}
-            {runtime === 'container' && !p.home && (
+            {runtime === 'container' && !p.home && !sb.remote && (
               <Toggle
                 checked={nested}
                 onChange={setNested}

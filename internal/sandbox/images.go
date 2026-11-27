@@ -545,7 +545,7 @@ var imageNeeds = []string{"bash", "sleep", "claude", "codex", "collie-exec", "co
 // checkImage makes sure a custom build can still run Collie's agents.
 func (m *Manager) checkImage(ctx context.Context, tag string) error {
 	script := `for c in "$@"; do command -v "$c" >/dev/null || { echo "$c"; exit 3; }; done`
-	args := []string{"run", "--rm", "--network", "none", "--userns=keep-id", "--user", userSpec(), "--entrypoint", "", tag, "/bin/sh", "-c", script, "sh"}
+	args := []string{"run", "--rm", "--network", "none", "--userns=keep-id", "--user", m.userSpec(), "--entrypoint", "", tag, "/bin/sh", "-c", script, "sh"}
 	out, err := m.podman(ctx, append(args, imageNeeds...)...)
 	if err == nil {
 		return nil
@@ -556,7 +556,14 @@ func (m *Manager) checkImage(ctx context.Context, tag string) error {
 	return fmt.Errorf("the image does not run: %v", err)
 }
 
-func userSpec() string { return strconv.Itoa(os.Getuid()) + ":" + strconv.Itoa(os.Getgid()) }
+// userSpec is the uid:gid podman runs containers as: the server user, or
+// on a remote Podman the user in its VM.
+func (m *Manager) userSpec() string {
+	if m.remote && m.remoteUser != "" {
+		return m.remoteUser
+	}
+	return strconv.Itoa(os.Getuid()) + ":" + strconv.Itoa(os.Getgid())
+}
 
 // buildImagesSync builds the custom images in the foreground (CLI): all
 // of them, or only what is missing. Failures are reported, not fatal:
@@ -594,6 +601,7 @@ func (m *Manager) buildImagesSync(w io.Writer, onlyMissing bool, budget time.Dur
 // waitBase makes sure the standard image exists, building it if needed,
 // and waits for that (with timeout 0, it fails instead).
 func (m *Manager) waitBase(timeout time.Duration, notify func()) error {
+	m.waitUp()
 	m.mu.Lock()
 	ready, building := m.ready, m.building
 	m.mu.Unlock()

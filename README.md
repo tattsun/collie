@@ -6,6 +6,15 @@ A self-hosted web UI for running many Claude Code and Codex sessions at once, fr
 
 Put it on an Ubuntu server, then start agents, approve their actions and review their diffs from anywhere.
 
+<p align="center">
+  <img src="docs/images/demo-dark.gif" width="320" alt="On a phone: start a task, watch the agent work, approve a command, look at the screenshots it shows and review the diff">
+</p>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/desktop-dark.png">
+  <img src="docs/images/desktop-light.png" alt="Collie on a desktop: sessions waiting for you, running and done on the left; the conversation and a permission request on the right">
+</picture>
+
 - **One binary** (about 13 MB, UI included), with HTTPS certificates from Let's Encrypt built in
 - **Parallel sessions**, each in its own git worktree so they don't collide
 - **Approve from your phone**: permission requests, questions and plans wait for you under *Needs you*

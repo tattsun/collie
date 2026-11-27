@@ -4,6 +4,11 @@
 
 ## Projects and sessions
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="images/mobile-dark.png">
+  <img src="images/mobile-light.png" alt="On a phone: the session list with Needs you, a permission request in the chat, and the Changes tab">
+</picture>
+
 A **project** is a folder on the server. You can create a new one, clone a repository, or, as an admin, register an existing folder. A **session** is one conversation with one agent (Claude Code or Codex) in a project.
 
 - With **Isolated worktree**, a session gets its own `collie/<id>` branch and checkout, so several sessions can work on the same repository at once.

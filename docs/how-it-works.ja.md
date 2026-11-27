@@ -4,6 +4,11 @@
 
 ## プロジェクトとセッション
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="images/mobile-dark.png">
+  <img src="images/mobile-light.png" alt="スマホでの表示。Needs you のあるセッション一覧、チャット内の承認、Changes タブ">
+</picture>
+
 **プロジェクト**はサーバ上のフォルダです。新規作成するか、リポジトリを clone します。管理者は既存のフォルダも登録できます。**セッション**は、プロジェクトの中でエージェント（Claude Code または Codex）とする 1 本の会話です。
 
 - **Isolated worktree** を選ぶと、セッションごとに `collie/<id>` ブランチと専用のチェックアウトが作られます。同じリポジトリで複数のセッションが同時に作業できます。

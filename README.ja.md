@@ -6,6 +6,15 @@ Claude Code / Codex を複数同時に動かすための、セルフホスト型
 
 Ubuntu サーバに置いておけば、どこからでもエージェントを走らせて、承認して、差分を確認できます。
 
+<p align="center">
+  <img src="docs/images/demo-dark.gif" width="320" alt="スマホからタスクを頼み、エージェントの作業を見て、コマンドの実行を承認し、見せてくれたスクショと差分を確認する">
+</p>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/desktop-dark.png">
+  <img src="docs/images/desktop-light.png" alt="PC での表示。左に承認待ち・実行中・完了したセッションの一覧、右に会話とコマンド実行の承認">
+</picture>
+
 - **単一バイナリ**（約 13MB、UI 込み）。Let's Encrypt の証明書取得も内蔵
 - **並列セッション**: セッションごとに git worktree を切るので、同じリポジトリでも衝突しない
 - **スマホで承認**: 権限の確認・質問・計画の承認は *Needs you* に集まる

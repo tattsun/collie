@@ -276,7 +276,7 @@ export function NewSession() {
   )
 }
 
-function projectGroups(list: Project[]): [string, Project[]][] {
+export function projectGroups(list: Project[]): [string, Project[]][] {
   const mine = list.filter((p) => !p.ownerGroup)
   const out: [string, Project[]][] = []
   if (mine.length) out.push([t('Personal'), mine])

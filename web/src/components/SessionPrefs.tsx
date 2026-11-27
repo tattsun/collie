@@ -11,7 +11,7 @@ export async function patchSessionPrefs(patch: { agents?: Partial<Record<Agent, 
 }
 
 /** The models offered for an agent, keeping `current` even when it is not listed. */
-function modelOptions(agent: Agent, current: string) {
+export function modelOptions(agent: Agent, current: string) {
   const listed = agentCaps.value[agent]?.models?.length
     ? agentCaps.value[agent]!.models!
     : agent === 'claude'

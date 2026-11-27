@@ -266,6 +266,7 @@ func (m *Manager) deleteProject(id string) {
 		_ = os.Remove(m.sb.WorktreeRoot(id)) // only if empty
 	}
 	m.closeToolSockets(id)
+	m.deleteSchedulesWhere(func(sc model.Schedule) bool { return sc.ProjectID == id })
 	m.st.DeleteProject(id)
 	m.pushProjectDeleted(id)
 }
@@ -594,6 +595,7 @@ func (m *Manager) PurgeUser(uid string) {
 			_ = m.deleteSession(s.ID, true)
 		}
 	}
+	m.deleteSchedulesWhere(func(sc model.Schedule) bool { return sc.Owner == uid })
 	if m.sb != nil {
 		m.sb.RemoveUser(uid)
 	}

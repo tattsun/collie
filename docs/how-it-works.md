@@ -15,6 +15,17 @@ A **project** is a folder on the server. You can create a new one, clone a repos
 - An agent process stops after 30 idle minutes. Your next message resumes the conversation, and that works after a server restart too.
 - Messages you send while the agent is running reach it as extra instructions. A message typed while an approval is waiting denies the request and passes your text along with the denial.
 
+## Schedules
+
+**Schedules** (in the sidebar) start a session with the same instructions at set times: every day, on weekdays, on chosen days of the week, monthly, hourly, or any cron expression, in the time zone you pick. "Run now" starts one right away.
+
+- Each run is a new session, marked with a clock in the session list. It runs with your agent accounts and your instructions for all sessions, and only you see or change the schedule.
+- A model or effort left at "Your default" uses your defaults for new sessions as they are at each run.
+- Runs never overlap. A planned time is skipped (and noted in the history) while the previous run is still working, waiting for you, or has background work left.
+- If Collie is not running at a planned time (stopped, restarting for an update), it runs once when it starts again, however many times were missed.
+- Runs start while you may be away. With a permission mode that asks first, a run stops at the first approval and waits in **Needs you**, and the next planned times are skipped until it ends.
+- A schedule runs at most every 5 minutes. Times that a daylight-saving change skips don't run that day; times it repeats run once.
+
 ## Screenshots, videos and HTML
 
 Agents in every session can show you files right in the chat. Try asking "make three design options and show me screenshots", "record the sign-in flow and show me" or "write it up as an HTML page and show me".
@@ -96,5 +107,6 @@ Project → Settings shows which plugins your agents get there and which level d
 
 - "What did I do this week?" or "How does auth work in sample2?" It reads your projects, session history and code to answer.
 - "Start a session in sample2 to fix the tests." It can start sessions and send instructions to existing ones.
+- "Every Friday at 18:00, sum up what was merged this week." It can create, list and delete your schedules.
 
 Home can't edit projects itself. The sessions it starts do the editing, and their approvals still come to **Needs you**. It sees only what you can see.

@@ -2,14 +2,14 @@ import { lazy, Suspense } from 'preact/compat'
 import { useEffect, useState } from 'preact/hooks'
 import type { Session } from '../types'
 import { api } from '../api'
-import { go, groupById, markSeen, me, projectById, route, sessionById, subscribe, timeline, toastError, agentCaps, userName } from '../store'
+import { go, groupById, markSeen, me, projectById, route, scheduleById, sessionById, subscribe, timeline, toastError, agentCaps, userName } from '../store'
 import { Timeline } from './Timeline'
 import { Composer } from './Composer'
 import { TasksBar } from './Tasks'
 import { ChangesView } from './Changes'
 import { AgentBadge, Menu, Modal, StatusPill } from './ui'
 import { SessionMeter } from './Usage'
-import { IBack, IBox, IBranch, IChat, IDiff, IMore, ITerminal, IUsers, Spinner } from './icons'
+import { IBack, IBox, IBranch, IChat, IClock, IDiff, IMore, ITerminal, IUsers, Spinner } from './icons'
 import { cls, home, money, shortMode } from '../util'
 import { t } from '../i18n'
 
@@ -162,6 +162,16 @@ export function SessionView({ id }: { id: string }) {
                 {project.name}
               </a>
             )}
+            {s.schedule &&
+              (scheduleById.value.has(s.schedule) ? (
+                <a class="sub-link sched" href={`#/schedules/${s.schedule}`} title={t('Started by a schedule')}>
+                  <IClock size={11} /> {t('Scheduled')}
+                </a>
+              ) : (
+                <span class="sub-item" title={t('Started by a schedule')}>
+                  <IClock size={11} />
+                </span>
+              ))}
             {s.branch && (
               <span class="sub-item mono">
                 <IBranch size={11} />

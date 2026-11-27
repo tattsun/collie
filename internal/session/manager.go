@@ -3,6 +3,7 @@
 package session
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -49,6 +50,9 @@ type Manager struct {
 	// TermsInUse reports whether a user has terminals open in a project
 	// (set by the server, which owns terminals).
 	TermsInUse func(projectID, userID string) bool
+	// UserActive reports whether a user may still use Collie (set by the
+	// server); schedules of those who may not are skipped.
+	UserActive func(userID string) bool
 	ctrMu      sync.Mutex
 	ctrActive  map[string]time.Time // "project/user" containers started by this process
 
@@ -65,6 +69,11 @@ type Manager struct {
 	// Plan usage by user, then agent (see usage.go).
 	umu   sync.Mutex
 	usage map[string]map[string]model.Usage
+
+	// Schedules (see schedules.go): schedMu serializes starting runs and
+	// changing schedules; clock stands in for time.Now in tests.
+	schedMu sync.Mutex
+	clock   func() time.Time
 }
 
 func NewManager(cfg Config, st *store.Store, hub *Hub, sb *sandbox.Manager) *Manager {
@@ -88,6 +97,7 @@ func NewManager(cfg Config, st *store.Store, hub *Hub, sb *sandbox.Manager) *Man
 			})
 		}
 	}
+	m.settleAll()
 	for _, p := range st.Projects() {
 		git := gitutil.IsRepo(p.Path)
 		st.UpdateProject(p.ID, func(x *model.Project) { x.Git = git })
@@ -95,7 +105,12 @@ func NewManager(cfg Config, st *store.Store, hub *Hub, sb *sandbox.Manager) *Man
 	m.loadCaps()
 	go m.reaper()
 	go m.probeCaps()
-	go m.stopStaleContainers()
+	go func() {
+		m.stopStaleContainers()
+		// After that, so that it does not stop the containers of runs that
+		// make up for missed times.
+		m.runSchedules()
+	}()
 	return m
 }
 
@@ -373,6 +388,7 @@ func (m *Manager) updateSession(sid string, fn func(*model.Session)) (model.Sess
 	s, ok := m.st.UpdateSession(sid, fn)
 	if ok && !reflect.DeepEqual(s, before) {
 		m.pushSession(s)
+		m.trackRun(before, s)
 	}
 	return s, ok
 }
@@ -405,13 +421,16 @@ type CreateSessionReq struct {
 	Prompt    string   `json:"prompt"`
 	Images    []string `json:"images"`
 	Worktree  bool     `json:"worktree"`
+	// Set by schedules: the new session's id, and the schedule starting it.
+	id, schedule string
 }
 
 func (m *Manager) CreateSession(a Actor, req CreateSessionReq) (model.Session, error) {
 	return m.createSession(a, req, "")
 }
 
-// createSession: via marks the first message as sent by the Home agent.
+// createSession: via marks the first message as sent by the Home agent
+// ("home") or a schedule ("schedule").
 func (m *Manager) createSession(a Actor, req CreateSessionReq, via string) (model.Session, error) {
 	p, err := m.visibleProject(a.ID, req.ProjectID)
 	if err != nil {
@@ -436,13 +455,13 @@ func (m *Manager) createSession(a Actor, req CreateSessionReq, via string) (mode
 	if err := checkEffort(req.Agent, req.Effort); err != nil {
 		return model.Session{}, err
 	}
-	sid := model.NewID()
+	sid := cmp.Or(req.id, model.NewID())
 	now := model.NowMs()
 	s := model.Session{
 		ID: sid, ProjectID: p.ID, Agent: req.Agent, Mode: req.Mode,
 		Model: strings.TrimSpace(req.Model), Effort: req.Effort,
 		Cwd: p.Path, Status: model.StatusStopped, CreatedAt: now, UpdatedAt: now,
-		Title: strings.TrimSpace(req.Title), Owner: a.ID,
+		Title: strings.TrimSpace(req.Title), Owner: a.ID, Schedule: req.schedule,
 	}
 	if p.OwnerGroup != "" {
 		s.Shared = req.Shared == nil || *req.Shared

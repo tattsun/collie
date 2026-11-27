@@ -2,15 +2,16 @@ import { signal } from '@preact/signals'
 import { memo } from 'preact/compat'
 import { useMemo } from 'preact/hooks'
 import type { Session } from '../types'
-import { attention, conn, go, groupById, homeProject, me, notifyEnabled, projectById, projects, route, sessionById, sessions, setNotify, userName, version } from '../store'
+import { attention, conn, go, groupById, homeProject, me, notifyEnabled, projectById, projects, route, schedules, sessionById, sessions, setNotify, userName, version } from '../store'
 import { ago, cls, home } from '../util'
-import { IBell, IBox, IFolder, IHome, IPlus, IBranch, IUsers, Spinner } from './icons'
+import { IBell, IBox, IClock, IFolder, IHome, IPlus, IBranch, IUsers, Spinner } from './icons'
 import { AgentBadge, Menu, StatusDot } from './ui'
 import { signOut } from '../authflow'
 import { ImageIndicator } from './Images'
 import { VersionBadge } from './Updates'
 import { UsagePanel } from './Usage'
 import { t, ts } from '../i18n'
+import { fmtWhen } from '../schedule'
 
 export const listTab = signal<'sessions' | 'projects'>((localStorage.getItem('collie.tab') as any) || 'sessions')
 export const projectFilter = signal<string>(localStorage.getItem('collie.filter') || '')
@@ -31,6 +32,11 @@ const SessionRow = memo(function SessionRow({ s, active, project }: { s: Session
         </div>
         <div class="srow-meta">
           <AgentBadge agent={s.agent} small />
+          {s.schedule && (
+            <span class="srow-sched" title={t('Started by a schedule')}>
+              <IClock size={11} />
+            </span>
+          )}
           {project && <span class="srow-proj">{project}</span>}
           {s.owner && s.owner !== me.value?.id && (
             <span class="srow-by">
@@ -205,6 +211,22 @@ function HomeRow() {
   )
 }
 
+// Schedules: runs at set times (one line; a page of their own).
+function SchedulesRow() {
+  const r = route.value
+  const on = schedules.value.filter((s) => !s.paused && s.nextAt)
+  const next = on.reduce<(typeof on)[number] | null>((a, s) => (!a || s.nextAt! < a.nextAt! ? s : a), null)
+  const running = schedules.value.some((s) => s.runs?.[0]?.status === 'running')
+  return (
+    <a href="#/schedules" class={cls('prow sched-row', r.name === 'schedules' && 'active')}>
+      <IClock size={15} />
+      <span class="srow-title">{t('Schedules')}</span>
+      {running && <Spinner size={11} />}
+      <span class="srow-time">{next ? t('next {when}', { when: fmtWhen(next.nextAt!) }) : schedules.value.length ? '' : t('Run at set times')}</span>
+    </a>
+  )
+}
+
 export function Sidebar() {
   const tab = listTab.value
   const setTab = (t: 'sessions' | 'projects') => {
@@ -235,6 +257,7 @@ export function Sidebar() {
       </div>
       <div class="side-scroll">
         <HomeRow />
+        <SchedulesRow />
         {tab === 'sessions' ? <SessionList /> : <ProjectList />}
       </div>
       <UsagePanel />

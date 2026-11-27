@@ -82,6 +82,10 @@ func New(m *session.Manager, terms *term.Manager, users *auth.Store, opt Options
 	}
 	terms.OnChange = s.pushTerms
 	m.TermsInUse = terms.InUse
+	m.UserActive = func(uid string) bool {
+		u, ok := users.User(uid)
+		return ok && !u.Disabled
+	}
 	if sb := m.Sandbox(); sb != nil {
 		sb.OnChange = func() {
 			m.Hub().Each(func(c *session.Client) {
@@ -454,6 +458,7 @@ func (s *Server) stateFor(u auth.User, legacy bool) map[string]any {
 		"me":        userInfo{ID: u.ID, Name: u.Name, DisplayName: u.DisplayName, Admin: u.Admin},
 		"projects":  s.m.VisibleProjects(u.ID),
 		"sessions":  s.m.VisibleSessions(u.ID),
+		"schedules": s.m.Schedules(u.ID),
 		"groups":    s.groupsFor(u),
 		"users":     s.directory(),
 		"agentCaps": s.m.AgentCaps(),
@@ -644,6 +649,7 @@ func (s *Server) routes() {
 	mx.HandleFunc("GET /api/ws", s.ws)
 	s.authRoutes()
 	s.apiRoutes()
+	s.scheduleRoutes()
 	s.pluginRoutes()
 	mx.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { httpError(w, 404, "not found") })
 	mx.HandleFunc("/", s.static)

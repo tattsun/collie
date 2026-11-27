@@ -83,6 +83,8 @@ function UserMsg({ item }: { item: Item }) {
     <div class="msg-user">
       {item.via === 'home' ? (
         <div class="msg-by">{other ? t('{name} · via Home', { name: userName(item.by) }) : t('Sent by your Home agent')}</div>
+      ) : item.via === 'schedule' ? (
+        <div class="msg-by">{other ? t('{name} · on a schedule', { name: userName(item.by) }) : t('Sent on your schedule')}</div>
       ) : (
         other && <div class="msg-by">{userName(item.by)}</div>
       )}

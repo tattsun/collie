@@ -102,6 +102,63 @@ type Session struct {
 	// sub-agents...), which goes on after its turn has ended. It lives only
 	// as long as the agent process.
 	Tasks []Task `json:"tasks,omitempty"`
+	// Schedule is the schedule that started the session, if one did.
+	Schedule string `json:"schedule,omitempty"`
+}
+
+// Schedule starts a session with the same instructions at set times. It
+// belongs to the user who made it: only they see it, and its sessions run
+// with their agent accounts.
+type Schedule struct {
+	ID        string `json:"id"`
+	Owner     string `json:"owner"`
+	ProjectID string `json:"projectId"`
+	Title     string `json:"title,omitempty"`
+	Prompt    string `json:"prompt"`
+	Agent     string `json:"agent"`
+	Model     string `json:"model,omitempty"`  // "" = the default
+	Effort    string `json:"effort,omitempty"` // "" = the default
+	Mode      string `json:"mode"`
+	Worktree  bool   `json:"worktree,omitempty"`
+	Shared    bool   `json:"shared,omitempty"` // group projects: its sessions are visible to the group
+	Cron      string `json:"cron"`             // five fields, see package cron
+	TZ        string `json:"tz"`               // IANA time zone the expression is read in
+	Paused    bool   `json:"paused,omitempty"`
+	NextAt    int64  `json:"nextAt,omitempty"` // next planned run (unix ms); 0 = none
+	CreatedAt int64  `json:"createdAt"`
+	UpdatedAt int64  `json:"updatedAt"`
+	// Runs are the latest runs, newest first.
+	Runs []ScheduleRun `json:"runs,omitempty"`
+}
+
+// Schedule run triggers and states.
+const (
+	RunScheduled = "schedule" // at its planned time
+	RunCatchUp   = "catchup"  // late: Collie was not running at the planned time
+	RunManual    = "manual"   // "run now"
+
+	RunRunning = "running"
+	RunOK      = "ok"
+	RunError   = "error"
+	RunSkipped = "skipped"
+)
+
+type ScheduleRun struct {
+	ID      string `json:"id"`
+	Trigger string `json:"trigger"`
+	At      int64  `json:"at"`                // when it started (or was skipped)
+	Planned int64  `json:"planned,omitempty"` // the planned time it stands for
+	// Missed counts planned times that passed while Collie was not running
+	// (a catch-up run stands for all of them).
+	Missed    int    `json:"missed,omitempty"`
+	Count     int    `json:"count,omitempty"` // repeated skips folded into one entry
+	SessionID string `json:"sessionId,omitempty"`
+	Status    string `json:"status"`
+	Error     string `json:"error,omitempty"`
+	// Result is how the session's first turn ended ("ok" / "error"), noted
+	// when it ends; the run is over once nothing is left running.
+	Result  string `json:"result,omitempty"`
+	EndedAt int64  `json:"endedAt,omitempty"`
 }
 
 // Task is one piece of background work. Drivers replace Session.Tasks as a

@@ -113,6 +113,9 @@ func (r *Runtime) put(it *model.Item) {
 		}
 	}
 	r.publishItem(it)
+	if it.Kind == model.KindResult || it.Kind == model.KindError {
+		r.m.noteRunItem(r.id, it)
+	}
 }
 
 func (r *Runtime) snapshot(limit int) map[string]any {

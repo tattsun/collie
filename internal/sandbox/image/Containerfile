@@ -1,41 +1,9 @@
-# Collie agent image: the toolbox every isolated project runs in.
-# Built by `collie --build-image` (or from the UI); rebuild to update the agents.
-FROM docker.io/library/ubuntu:26.04
-# Marks every layer as Collie's, so leftovers of rebuilds can be pruned.
-LABEL io.collie.agent=1
-
-ENV DEBIAN_FRONTEND=noninteractive \
-    LANG=C.UTF-8 \
-    LC_ALL=C.UTF-8 \
-    PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
-    DISABLE_AUTOUPDATER=1 \
-    MISE_YES=1
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates curl wget gnupg git git-lfs openssh-client gh \
-      build-essential pkg-config python3 python3-pip python3-venv python-is-python3 \
-      nodejs npm \
-      ripgrep fd-find jq less nano vim-tiny unzip zip xz-utils file tree \
-      procps psmisc lsof iproute2 sqlite3 bash-completion tzdata util-linux \
-    && ln -sf /usr/bin/fdfind /usr/local/bin/fd \
-    && rm -rf /var/lib/apt/lists/*
-
-# mise, so each project can pin its own toolchains in its mise.toml.
-RUN curl -fsSL https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh
-
-# Podman, for projects an admin lets run containers inside (Project →
-# Settings; see internal/sandbox/nested.go). Elsewhere it has no
-# privileges to work with.
-# newuidmap/newgidmap must not be setuid: as root without
-# CAP_DAC_OVERRIDE they could not open another process's uid_map. The
-# container's CAP_SETUID/CAP_SETGID (ambient there) or these file
-# capabilities do the job instead.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      podman uidmap fuse-overlayfs passt catatonit libcap2-bin \
-    && chmod u-s /usr/bin/newuidmap /usr/bin/newgidmap \
-    && setcap cap_setuid=ep /usr/bin/newuidmap \
-    && setcap cap_setgid=ep /usr/bin/newgidmap \
-    && rm -rf /var/lib/apt/lists/*
+# Collie agent image: the toolbox every isolated project runs in. Built by
+# `collie --build-image` (or from the UI) on top of the base image
+# (base/Containerfile, usually pulled from GHCR); rebuild to update the
+# agents.
+ARG BASE
+FROM ${BASE}
 
 # The agents and the Playwright MCP server (with Chromium). AGENTS_REV is
 # bumped by "rebuild" to pull the latest versions without a full rebuild.

@@ -25,10 +25,11 @@ Builds without the public key can't verify releases. Install a build made after 
 
 2. Run the workflow yourself: Actions → **Release** → **Run workflow**, with the tag `v0.4.0`. This works from a phone browser too, or from a PC with `gh workflow run release.yml -f tag=v0.4.0`.
 
-The workflow checks that the tag is on main, builds for amd64 and arm64, runs the tests, signs and publishes the release. A tag with a suffix such as `v0.4.0-rc.1` becomes a pre-release, which servers don't update to.
+The workflow checks that the tag is on main, builds for amd64 and arm64, runs the tests, signs and publishes the release. It also publishes the agent image's base to GHCR (`ghcr.io/<owner>/collie-agent-base`) when `internal/sandbox/image/base/Containerfile` has changed, and pins it in the release. To pick up Ubuntu updates without changing that file, tick **Rebuild the agent base image** when you run it. A tag with a suffix such as `v0.4.0-rc.1` becomes a pre-release, which servers don't update to.
 
 Step 2 is manual on purpose. If pushing a tag started the workflow, anyone or any agent with push access could publish a release that every server installs. See [Security](security.md#updates) for the token permissions this relies on.
 
 ## Gotchas
 
+- GHCR may create the `collie-agent-base` package as private the first time. Servers can't pull it then: in the package's settings, change its visibility to public.
 - To replace the key, add the new public key to `internal/update/release.pub` and publish one release signed with the old key. Then replace the secret.

@@ -25,10 +25,11 @@ git add internal/update/release.pub && git commit -m "Add the release signing ke
 
 2. ワークフローは自分で実行します。Actions → **Release** → **Run workflow** で、タグに `v0.4.0` を入れて実行します。スマホのブラウザからでもでき、PC なら `gh workflow run release.yml -f tag=v0.4.0` でも実行できます。
 
-ワークフローは、タグが main 上にあるかを確かめてから、amd64 と arm64 のビルド、テスト、署名、リリースの公開まで行います。`v0.4.0-rc.1` のような接尾辞つきのタグはプレリリースになり、サーバはそこへは更新しません。
+ワークフローは、タグが main 上にあるかを確かめてから、amd64 と arm64 のビルド、テスト、署名、リリースの公開まで行います。`internal/sandbox/image/base/Containerfile` が変わっていれば、エージェント用イメージの土台を GHCR（`ghcr.io/<owner>/collie-agent-base`）に公開し、リリースに固定します。このファイルを変えずに Ubuntu の更新を取り込みたいときは、実行時に **Rebuild the agent base image** にチェックを入れます。`v0.4.0-rc.1` のような接尾辞つきのタグはプレリリースになり、サーバはそこへは更新しません。
 
 2 をわざと手動にしています。タグの push でワークフローが動く作りにすると、push できる人やエージェントなら誰でも、全サーバに入るリリースを出せてしまいます。これが前提にしているトークンの権限については、[セキュリティ](security.ja.md#アップデート)を見てください。
 
 ## 注意点
 
+- GHCR は、`collie-agent-base` パッケージを初回に非公開で作ることがあります。その状態ではサーバが pull できないので、パッケージの設定で公開に変えてください。
 - 鍵を替えるときは、新しい公開鍵を `internal/update/release.pub` に追記し、古い鍵で署名したリリースを 1 回出してから、secret を差し替えます。

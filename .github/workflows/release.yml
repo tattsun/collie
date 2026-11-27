@@ -10,6 +10,13 @@
 # someone allowed to run workflows can, so keep "Actions", "Workflows" and
 # "Secrets" permissions off the tokens agents use. The signing key is the
 # repository secret COLLIE_SIGNING_KEY (`mise run release-key`).
+#
+# The agent image's base (internal/sandbox/image/base/Containerfile) is
+# published to GHCR as ghcr.io/<owner>/collie-agent-base:<hash of that
+# file>. It is built only when that tag is missing, or when "rebuild_base"
+# is ticked (to pick up Ubuntu updates). The release pins it by digest, so
+# servers run exactly the base it was made with, whatever the tag points to
+# later.
 name: Release
 
 on:
@@ -19,16 +26,21 @@ on:
         description: Version tag to release (e.g. v0.3.0); it must be on main
         required: true
         type: string
+      rebuild_base:
+        description: Rebuild the agent base image even if one exists for this definition (picks up Ubuntu updates)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 env:
   TAG: ${{ inputs.tag }}
+  REBUILD_BASE: ${{ inputs.rebuild_base }}
+  BASE_FILE: internal/sandbox/image/base/Containerfile
 
 jobs:
-  # npm packages, tests and the build run here, without the signing key.
-  build:
+  check:
     runs-on: ubuntu-latest
     steps:
       - name: Check the tag name
@@ -44,6 +56,84 @@ jobs:
       - name: Check the tag is on main
         run: git merge-base --is-ancestor HEAD origin/main || { echo "$TAG is not on main"; exit 1; }
 
+  # The agent base image, natively on each architecture.
+  base:
+    needs: check
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+
+      - name: Build and push the base image (${{ matrix.arch }})
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/collie-agent-base:$(sha256sum "$BASE_FILE" | cut -c1-12)"
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          if [ "$REBUILD_BASE" != true ] && docker buildx imagetools inspect "$image" >/dev/null 2>&1; then
+            echo "$image is already published"
+            exit 0
+          fi
+          docker build --pull -f "$BASE_FILE" -t "$image-$ARCH" \
+            --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+            "$(dirname "$BASE_FILE")"
+          docker push "$image-$ARCH"
+
+  # Joins the architectures under one tag and hands its digest to the build.
+  base-index:
+    needs: base
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.index.outputs.image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+
+      - id: index
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          repo="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/collie-agent-base"
+          image="$repo:$(sha256sum "$BASE_FILE" | cut -c1-12)"
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          if [ "$REBUILD_BASE" = true ] || ! docker buildx imagetools inspect "$image" >/dev/null 2>&1; then
+            docker buildx imagetools create -t "$image" "$image-amd64" "$image-arm64"
+          fi
+          manifest="$(docker buildx imagetools inspect "$image" --format '{{json .Manifest}}')"
+          platforms="$(jq -r '[.manifests[].platform | select(.os != "unknown") | "\(.os)/\(.architecture)"] | sort | join(" ")' <<<"$manifest")"
+          [ "$platforms" = "linux/amd64 linux/arm64" ] || { echo "$image has platforms: $platforms"; exit 1; }
+          digest="$(jq -r .digest <<<"$manifest")"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "no digest for $image: $digest"; exit 1; }
+          echo "$image is $repo@$digest"
+          echo "image=$repo@$digest" >> "$GITHUB_OUTPUT"
+
+  # npm packages, tests and the build run here, without the signing key.
+  build:
+    needs: base-index
+    runs-on: ubuntu-latest
+    env:
+      COLLIE_BASE_IMAGE: ${{ needs.base-index.outputs.image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+
       - uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
 
       - name: Build
@@ -52,10 +142,13 @@ jobs:
       - name: Test
         run: mise run test
 
-      - name: Check the version
+      - name: Check the version and the base image
         run: |
           got="$(./dist/collie-linux-amd64 --version)"
           [ "v$got" = "$TAG" ] || { echo "binary says $got, tag is $TAG"; exit 1; }
+          for f in dist/collie-linux-*; do
+            grep -qaF "$COLLIE_BASE_IMAGE" "$f" || { echo "$f does not pin $COLLIE_BASE_IMAGE"; exit 1; }
+          done
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

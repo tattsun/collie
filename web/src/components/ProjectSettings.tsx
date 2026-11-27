@@ -3,6 +3,7 @@ import type { ContainerInfo, Project } from '../types'
 import { api } from '../api'
 import { groupById, me, sandbox, sessions, toast, toastError } from '../store'
 import { ProjectClaudeAccount } from './ClaudeAccounts'
+import { NetworkSettings } from './NetworkSettings'
 import { EnvEditor } from './Editors'
 import { cls } from '../util'
 import { IAlert, IBox, IRefresh, Spinner } from './icons'
@@ -167,6 +168,8 @@ export function ProjectSettings({ p }: { p: Project }) {
           </p>
         )}
       </section>
+
+      {isolated && <NetworkSettings p={p} manager={manager} active={active} />}
 
       {isolated && (
         <section class="card">

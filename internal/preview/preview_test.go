@@ -141,7 +141,7 @@ func TestCleanSetCookie(t *testing.T) {
 func TestFilterCookies(t *testing.T) {
 	h := http.Header{}
 	h.Add("Cookie", "a=1; collie_sess=s; b=x=y")
-	h.Add("Cookie", "collie_preview=p;collie_auth=t; c=")
+	h.Add("Cookie", "collie_preview=p;collie_auth=t; c=; _oauth2_proxy_0=x; _oauth2_proxy_csrf=y; _pomerium=z; CF_Authorization=w")
 	filterCookies(h)
 	if got := h.Values("Cookie"); len(got) != 1 || got[0] != "a=1; b=x=y; c=" {
 		t.Errorf("cookies: %q", got)

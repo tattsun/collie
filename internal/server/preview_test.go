@@ -433,6 +433,16 @@ func TestPreviewRefusesOtherOrigins(t *testing.T) {
 	if w := f.onPreview("POST", "/x", ck, header("Origin", previewOrigin)); w.Code != http.StatusOK {
 		t.Errorf("POST from the preview itself: %d", w.Code)
 	}
+	// Fetches by another site's pages (Collie's other ports, other
+	// projects' preview names are the same site) carry the cookie too.
+	for _, site := range []string{"same-site", "cross-site"} {
+		if w := f.onPreview("GET", "/x", ck, header("Sec-Fetch-Site", site), header("Sec-Fetch-Mode", "cors")); w.Code != http.StatusForbidden {
+			t.Errorf("%s fetch: %d", site, w.Code)
+		}
+		if w := f.onPreview("GET", "/x", ck, header("Sec-Fetch-Site", site), header("Sec-Fetch-Mode", "navigate")); w.Code != http.StatusOK {
+			t.Errorf("%s navigation: %d", site, w.Code)
+		}
+	}
 	// Service workers would outlive the preview and answer for the next one.
 	if w := f.onPreview("GET", "/sw.js", ck, header("Service-Worker", "script")); w.Code != http.StatusForbidden {
 		t.Errorf("service worker script: %d", w.Code)
@@ -626,5 +636,19 @@ func TestPreviewOriginPerContainer(t *testing.T) {
 	// Certificates only for the names of containers in use.
 	if !f.PreviewHost(own) || f.PreviewHost(other) || f.PreviewHost("collie.example.com") || f.PreviewHost("x.preview.example.com") {
 		t.Error("PreviewHost")
+	}
+}
+
+// Signing out must end the real sign-in even when a preview page planted a
+// cookie of the same name in front of it (and so the previews made from it).
+func TestSignOutEndsTheRealSignIn(t *testing.T) {
+	f := newPreviewFixture(t)
+	w := f.do("POST", "/api/auth/logout", "", cookie(sessionCookie, "planted"), cookie(sessionCookie, f.ownerSess),
+		header("Origin", "https://collie.example.com"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("logout: %d", w.Code)
+	}
+	if _, _, ok := f.users.SessionUser(f.ownerSess, ""); ok {
+		t.Error("the real sign-in survived signing out")
 	}
 }

@@ -261,9 +261,11 @@ func (b *Bridge) init() *Bridge {
 		IdleConnTimeout: 3 * time.Minute,
 		HTTP2: &http.HTTP2Config{
 			// Notice a bridge that went away (its container stopped).
-			SendPingTimeout:               30 * time.Second,
-			PingTimeout:                   15 * time.Second,
-			MaxReceiveBufferPerConnection: connWindow,
+			SendPingTimeout: 30 * time.Second,
+			PingTimeout:     15 * time.Second,
+			// (The receive window keeps Go's default, which is larger than
+			// connWindow: responses the browser stops reading must not hold
+			// up the others either.)
 		},
 	}
 	return b

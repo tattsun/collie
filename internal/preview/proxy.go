@@ -108,9 +108,24 @@ const (
 // sign-in cookie along; it stops here.)
 var reserved = map[string]bool{"collie_sess": true, "collie_auth": true, CookieName: true}
 
-// frontDoor are the cookies of sign-in proxies that may sit in front of
-// Collie and its previews (oauth2-proxy, Authelia, Cloudflare Access).
-var frontDoor = map[string]bool{"_oauth2_proxy": true, "authelia_session": true, "CF_Authorization": true, "_forward_auth": true}
+// frontDoor are the cookie names (or their beginnings) of sign-in proxies
+// that may sit in front of Collie and its previews: oauth2-proxy (split
+// into _0, _1 …, and its _csrf), Pomerium, Authelia, Cloudflare Access.
+var frontDoor = []string{"_oauth2_proxy", "_pomerium", "authelia_session", "CF_Authorization", "_forward_auth"}
+
+// collieOrDoor reports whether a cookie is Collie's own or a sign-in
+// proxy's: never passed to a preview's server, nor set by one.
+func collieOrDoor(name string) bool {
+	if reserved[name] {
+		return true
+	}
+	for _, p := range frontDoor {
+		if strings.HasPrefix(name, p) {
+			return true
+		}
+	}
+	return false
+}
 
 // Proxy serves the preview origin.
 type Proxy struct {
@@ -394,7 +409,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		p.page(w, r, http.StatusForbidden, msgGone, nil)
 		return
 	}
-	if !sameOrigin(r, origin) {
+	if !sameOrigin(r, origin) || !ownRequest(r) {
 		http.Error(w, "cross-origin request to a preview refused", http.StatusForbidden)
 		return
 	}
@@ -433,6 +448,18 @@ func sameOrigin(r *http.Request, origin string) bool {
 		return !isUpgrade(r)
 	}
 	return false
+}
+
+// ownRequest refuses what another site's pages make the browser fetch with
+// the preview's cookie: other projects' preview names and Collie's other
+// ports are the same site, so the cookie (SameSite=Lax) goes along. Only
+// navigations, the user's own moves, may come from elsewhere.
+func ownRequest(r *http.Request) bool {
+	switch r.Header.Get("Sec-Fetch-Site") {
+	case "same-site", "cross-site":
+		return r.Header.Get("Sec-Fetch-Mode") == "navigate"
+	}
+	return true
 }
 
 func isUpgrade(r *http.Request) bool {
@@ -694,7 +721,7 @@ func filterCookies(h http.Header) {
 		for _, part := range strings.Split(line, ";") {
 			part = strings.TrimSpace(part)
 			name, _, _ := strings.Cut(part, "=")
-			if name = strings.TrimSpace(name); part == "" || reserved[name] || frontDoor[name] {
+			if part == "" || collieOrDoor(strings.TrimSpace(name)) {
 				continue
 			}
 			keep = append(keep, part)
@@ -738,7 +765,7 @@ func cleanResponse(h http.Header, origin string, port int, allow []string) {
 func cleanSetCookie(c string) string {
 	parts := strings.Split(c, ";")
 	name, _, _ := strings.Cut(parts[0], "=")
-	if name = strings.TrimSpace(name); reserved[name] || frontDoor[name] {
+	if collieOrDoor(strings.TrimSpace(name)) {
 		return ""
 	}
 	out := parts[:1]

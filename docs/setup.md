@@ -103,11 +103,11 @@ Previews are served on an origin of their own, so a page an agent wrote can't re
 
 A port is the default because it works the same on your own domain, over Tailscale and on a LAN, with the certificate Collie already has and nothing to add to DNS. Tailscale's certificates cover only the machine's own name, so there a port is the only option. But all previews then share one origin in your browser, and a port doesn't separate cookies:
 
-- A browser has one preview open at a time. Opening another replaces it, and what the last project's pages stored in the browser is cleared. A page from one project that you still have open, though, can read the preview of the next project you open.
+- A browser has one preview open at a time. Opening another replaces it, and over HTTPS what the last project's pages stored in the browser, apart from cookies, is cleared. A page from one project that you still have open, though, can read the preview of the next project you open.
 - The browser sends the preview every cookie it has for Collie's host name, including those of other web apps on other ports of that name. Collie removes only its own.
 - A page there can overwrite or pile up cookies for Collie's host name. That can sign you out of Collie, or keep Collie from loading in that browser until you clear its site data.
 
-**Names per project** avoid all of this, and are the better choice on your own domain: every project's container gets a host name, and so an origin, of its own. Point a wildcard DNS record (`*.preview.example.com`) at the server and add `--preview-url 'https://*.preview.example.com'`:
+**Names per project** avoid most of this, and are the better choice on your own domain: every project's container gets a host name, and so an origin, of its own. One project's pages can't read another's previews, nor Collie's cookies; they can still set cookies for all preview names, which are one site. Point a wildcard DNS record (`*.preview.example.com`) at the server and add `--preview-url 'https://*.preview.example.com'`:
 
 - With `--domain`, Collie serves them on port 443 and gets a certificate for each project's name the first time it is opened, which takes a few seconds. Let's Encrypt issues up to 50 new names a week per domain.
 - Behind your reverse proxy, it needs a wildcard certificate (Caddy gets one with a DNS provider plugin) and forwards those names to `http://127.0.0.1:7879`.

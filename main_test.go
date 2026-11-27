@@ -39,7 +39,9 @@ func TestPreviewSetup(t *testing.T) {
 		// One other name for all previews: a shared origin where the
 		// browser wouldn't send Collie's cookie to bind links to it.
 		"https://preview.example.com", "https://preview.collie.example.com",
-		"https://*.com", "https://a.*.example.com", "https://*x.example.com"}
+		"https://*.com", "https://a.*.example.com", "https://*x.example.com",
+		// Names that include Collie's own, or its parent.
+		"https://*.example.com", "https://*.collie.example.com"}
 	for _, v := range bad {
 		if _, err := previewSetup(":443", "collie.example.com", "", "", v, false); err == nil {
 			t.Errorf("--preview-url %q accepted", v)

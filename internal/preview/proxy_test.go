@@ -239,3 +239,54 @@ func TestBridgeStalledUploadDoesNotBlockOthers(t *testing.T) {
 		c.Close()
 	}
 }
+
+// Responses the browser stops reading must not hold up the others either.
+func TestBridgeUnreadDownloadsDoNotBlockOthers(t *testing.T) {
+	flood, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer flood.Close()
+	go func() {
+		for {
+			c, err := flood.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer c.Close()
+				_, _ = c.Write(make([]byte, 16<<20))
+			}()
+		}
+	}()
+	port := echoServer(t)
+	b, _ := pipeBridge(t, Filter{UID: -1})
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	for range 24 {
+		c, err := b.Dial(ctx, flood.Addr().(*net.TCPAddr).Port)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.Close() // never read
+	}
+	time.Sleep(500 * time.Millisecond)
+	ch := make(chan error, 1)
+	go func() {
+		c, err := b.Dial(ctx, port)
+		if err == nil {
+			defer c.Close()
+			fmt.Fprintln(c, "hi")
+			_, err = bufio.NewReader(c).ReadString('\n')
+		}
+		ch <- err
+	}()
+	select {
+	case err := <-ch:
+		if err != nil {
+			t.Error(err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Error("unread downloads held up another connection through the bridge")
+	}
+}

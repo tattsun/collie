@@ -411,9 +411,17 @@ func previewSetup(addr, domain, publicURL, pAddr, pURL string, noAuth bool) (pre
 		}
 		c.url = u.Scheme + "://" + strings.ToLower(u.Host)
 		name := strings.ToLower(u.Hostname())
+		own := domain
+		if pu, err := url.Parse(publicURL); own == "" && err == nil {
+			own = strings.ToLower(pu.Hostname())
+		}
 		if suffix, ok := strings.CutPrefix(name, "*"); ok {
 			if !strings.HasPrefix(suffix, ".") || strings.Contains(suffix[1:], "*") || strings.Count(suffix, ".") < 2 {
 				return c, bad
+			}
+			if own != "" && (strings.HasSuffix(own, suffix) || own == suffix[1:]) {
+				// Collie's own name would be one of the previews', or their parent.
+				return c, fmt.Errorf("--preview-url %q: the preview names must not include Collie's own (%s); use names under another domain", pURL, own)
 			}
 			if domain != "" && u.Scheme == "https" && (u.Port() == "" || u.Port() == "443") {
 				// On Collie's own HTTPS port, by name: no listener of their
@@ -423,14 +431,8 @@ func previewSetup(addr, domain, publicURL, pAddr, pURL string, noAuth bool) (pre
 					return c, nil
 				}
 			}
-		} else {
-			own := domain
-			if pu, err := url.Parse(publicURL); own == "" && err == nil {
-				own = pu.Hostname()
-			}
-			if !strings.EqualFold(name, own) {
-				return c, bad
-			}
+		} else if !strings.EqualFold(name, own) {
+			return c, bad
 		}
 	}
 	if c.addr == "" {

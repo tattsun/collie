@@ -77,38 +77,43 @@ func CurrentBranch(dir string) string {
 	return strings.TrimSpace(out)
 }
 
-// FreshBase returns the commit a new worktree should start from. It fetches
-// the current branch's upstream (best effort: offline, no remote or no
-// credentials just fall back) and returns the upstream tip when local HEAD is
-// strictly behind it, so agents don't start from a stale local branch. Local
-// commits not on the upstream are kept (HEAD wins), and neither the local
-// branch nor its checkout is ever modified.
+// FreshBase returns the commit a new worktree should start from: local HEAD,
+// unless HEAD is strictly behind the current branch's upstream or, failing
+// that, the remote's default branch (e.g. the project sits on an old feature
+// branch with no usable upstream). In that case the newer tip is used so
+// agents don't start from stale code. It fetches first, best effort: offline,
+// no credentials or no remote just fall back to the refs already known.
+// Unpushed or diverged local commits keep HEAD, and neither the local branch
+// nor its checkout is ever modified.
 func FreshBase(repo string) string {
 	head := HeadCommit(repo)
 	c, cancel := ctx(20 * time.Second)
 	defer cancel()
-	up, err := run(c, repo, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}")
-	if err != nil {
-		return head
+	var refs []string
+	if up, err := run(c, repo, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"); err == nil {
+		refs = append(refs, strings.TrimSpace(up))
 	}
-	up = strings.TrimSpace(up)
-	remote, _, ok := strings.Cut(up, "/")
-	if !ok || remote == "" {
-		return head
+	if def, err := run(c, repo, "symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"); err == nil {
+		refs = append(refs, strings.TrimSpace(def))
 	}
-	// A failed fetch still leaves whatever upstream we already know about.
-	_, _ = run(c, repo, "fetch", "-q", remote)
-	tip, err := run(c, repo, "rev-parse", "--verify", "-q", up+"^{commit}")
-	if err != nil {
-		return head
-	}
-	tip = strings.TrimSpace(tip)
-	if tip == head {
-		return head
-	}
-	// Upstream strictly ahead of HEAD: head is an ancestor of tip.
-	if _, err := run(c, repo, "merge-base", "--is-ancestor", head, tip); err == nil {
-		return tip
+	fetched := map[string]bool{}
+	for _, ref := range refs {
+		if remote, _, ok := strings.Cut(ref, "/"); ok && remote != "" && !fetched[remote] {
+			fetched[remote] = true
+			_, _ = run(c, repo, "fetch", "-q", remote)
+		}
+		tip, err := run(c, repo, "rev-parse", "--verify", "-q", ref+"^{commit}")
+		if err != nil {
+			continue
+		}
+		tip = strings.TrimSpace(tip)
+		if tip == head {
+			return head
+		}
+		// Strictly ahead of HEAD: head is an ancestor of tip.
+		if _, err := run(c, repo, "merge-base", "--is-ancestor", head, tip); err == nil {
+			return tip
+		}
 	}
 	return head
 }

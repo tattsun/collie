@@ -82,6 +82,37 @@ body {
 #app {
   height: 100%;
 }
+/* iOS 26 and later blur the top of a Home Screen app, from under the status
+   bar to a few tens of points below it, which smudges the first row of every
+   header. No meta tag or CSS property turns it off. WebKit leaves the blur out and
+   fills the status bar with a solid color instead when the element 4px below
+   the middle of the top edge has a position: fixed or sticky ancestor that is
+   at least 90% of the page wide, with a background color on a box over 10px
+   tall and no backdrop-filter (LocalFrameView::fixedContainerEdges). Collie's
+   headers are plain flex children, so this strip stands in for them on every
+   screen. It takes no taps, and its background is clipped to text it doesn't
+   have, so it paints nothing. Only in the iOS Home Screen app: in a Safari
+   tab it could change how Safari colors its own bars. */
+.top-edge {
+  display: none;
+}
+@supports (-webkit-touch-callout: none) {
+  @media (display-mode: standalone) {
+    .top-edge {
+      display: block;
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 12px;
+      z-index: 2147483647;
+      pointer-events: none;
+      background-color: var(--bg);
+      -webkit-background-clip: text;
+      background-clip: text;
+    }
+  }
+}
 a {
   color: var(--accent);
 }

@@ -52,7 +52,7 @@ This assumes the configuration from the [setup guide](setup.md): a dedicated `co
 
 - An agent in a container can read every file in its project and can reach the internet. Don't keep secrets in a project that you wouldn't want sent out.
 - A host-run agent has all the access of the `collie` user.
-- In a project with **Allow containers inside**, the container keeps running as the `collie` user's own ids, with the same files and network. But it can use setuid helpers and more of the kernel (FUSE, tun devices, mounting its own `/proc`), so a kernel bug is easier to reach from there. Turn it on only for projects whose agents you trust.
+- In a project with **Allow containers inside**, the container keeps running as the `collie` user's own ids, with the same files and network. But its processes can switch between the container's own ids and reach more of the kernel (FUSE, tun devices, nested namespaces that mount their own `/proc` or set their own hostname), so a kernel bug is easier to reach from there. Turn it on only for projects whose agents you trust.
 
 ## Updates
 

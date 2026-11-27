@@ -148,7 +148,7 @@ export function ProjectSettings({ p }: { p: Project }) {
                 checked={nested}
                 onChange={setNested}
                 label={t('Allow containers inside (Podman)')}
-                hint={t('For developing container tooling such as Collie itself. The containers keep running as the server user’s ids, but get setuid helpers and more of the kernel (FUSE, tun devices, their own /proc). Only for projects you trust.')}
+                hint={t('For developing container tooling such as Collie itself. The containers keep running as the server user’s ids, but can switch between their own ids and reach more of the kernel (FUSE, tun devices, nested namespaces with their own /proc). Only for projects you trust.')}
               />
             )}
             <div class="modal-actions">

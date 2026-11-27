@@ -333,7 +333,8 @@ func (s *Server) previewTarget(uid, sid string) (preview.Target, error) {
 		f := s.hostFilter
 		if f.Allow == nil { // (tests may say otherwise)
 			f.Allow = func(dirs []string) bool {
-				fo, ok := preview.Where(dirs, s.hostFolders())
+				fs, _ := s.hostFolders()
+				fo, ok := preview.Where(dirs, fs)
 				return ok && slices.Contains(fo.Sessions, sid)
 			}
 		}
@@ -347,15 +348,13 @@ func (s *Server) previewTarget(uid, sid string) (preview.Target, error) {
 
 // folders are where sessions work, for telling which session a server
 // belongs to: their own worktrees, and the project's folder, which the
-// sessions without a worktree share (and which may have none).
+// sessions without a worktree share (and which may have none). Each is
+// there as stored and, if that goes through a symlink, as the real path
+// that processes on the host report (containers see the stored paths).
 func folders(projects []model.Project, sessions []model.Session) (out []preview.Folder, project map[string]bool) {
 	project = map[string]bool{}
 	at := map[string]int{}
-	add := func(path, sid string) {
-		if path == "" {
-			return
-		}
-		path = filepath.Clean(path)
+	add1 := func(path, sid string) {
 		i, ok := at[path]
 		if !ok {
 			i = len(out)
@@ -366,8 +365,21 @@ func folders(projects []model.Project, sessions []model.Session) (out []preview.
 			out[i].Sessions = append(out[i].Sessions, sid)
 		}
 	}
+	add := func(path, sid string) {
+		if path == "" {
+			return
+		}
+		path = filepath.Clean(path)
+		add1(path, sid)
+		if real, err := filepath.EvalSymlinks(path); err == nil && real != path {
+			add1(real, sid)
+		}
+	}
 	for _, p := range projects {
 		project[filepath.Clean(p.Path)] = true
+		if real, err := filepath.EvalSymlinks(p.Path); err == nil {
+			project[real] = true
+		}
 		add(p.Path, "")
 	}
 	for _, x := range sessions {
@@ -390,7 +402,7 @@ func (s *Server) containerFolders(p model.Project, owner string) ([]preview.Fold
 
 // hostFolders are the folders of every host-run session, of every user:
 // a server in another one's folder is not this session's.
-func (s *Server) hostFolders() []preview.Folder {
+func (s *Server) hostFolders() ([]preview.Folder, map[string]bool) {
 	st := s.m.Store()
 	var projects []model.Project
 	host := map[string]bool{}
@@ -406,8 +418,7 @@ func (s *Server) hostFolders() []preview.Folder {
 			sessions = append(sessions, x)
 		}
 	}
-	out, _ := folders(projects, sessions)
-	return out
+	return folders(projects, sessions)
 }
 
 // portInfo is a listening port as the Ports tab shows it.
@@ -456,8 +467,7 @@ func (s *Server) sessionPorts(w http.ResponseWriter, r *http.Request) {
 	if p.Isolated() {
 		fs, project = s.containerFolders(p, sess.Owner)
 	} else {
-		fs = s.hostFolders()
-		project = map[string]bool{filepath.Clean(p.Path): true}
+		fs, project = s.hostFolders()
 	}
 	out["ports"] = describePorts(ports, fs, project, func(id string) bool {
 		x, ok := s.m.Store().Session(id)
@@ -519,16 +529,14 @@ func (s *Server) openPreview(w http.ResponseWriter, r *http.Request) {
 	g.Legacy, _ = r.Context().Value(legacyKey).(bool)
 	if _, ok := parseWildcard(s.opt.PreviewURL); ok {
 		g.Label = previewLabel(t.Key)
-	} else {
-		g.Slot = s.pv.ChooseSlot(r, g, s.previewSlots())
 	}
-	base := s.previewBase(r, t.Key, g.Slot)
-	if base == "" {
+	if s.previewBase(r, t.Key, 0) == "" {
 		httpError(w, http.StatusConflict, "previews are not set up on this server")
 		return
 	}
-	tok := s.pv.Mint(g)
-	if tok == "" {
+	tok, slot := s.pv.MintSlot(r, g, s.previewSlots())
+	base := s.previewBase(r, t.Key, slot)
+	if tok == "" || base == "" {
 		httpError(w, http.StatusTooManyRequests, "too many preview links at once; try again in a minute")
 		return
 	}

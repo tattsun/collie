@@ -8,7 +8,9 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -410,5 +412,25 @@ func TestSlotsKeepApart(t *testing.T) {
 		if got := cleanSetCookie(sc); got != "" {
 			t.Errorf("%q passed", sc)
 		}
+	}
+}
+
+// Links asked for at the same moment get different free slots.
+func TestMintSlotAtOnce(t *testing.T) {
+	p, _ := testProxy(t)
+	r := httptest.NewRequest("POST", "/api/x", nil)
+	var wg sync.WaitGroup
+	slots := make([]int, 4)
+	for i := range slots {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, slots[i] = p.MintSlot(r, Grant{UserID: "u", Login: "L", Port: 1000 + i, Target: "c:p/u"}, 4)
+		}()
+	}
+	wg.Wait()
+	slices.Sort(slots)
+	if !slices.Equal(slots, []int{0, 1, 2, 3}) {
+		t.Errorf("slots %v", slots)
 	}
 }

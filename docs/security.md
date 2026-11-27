@@ -56,7 +56,7 @@ This assumes the configuration from the [setup guide](setup.md): a dedicated `co
 
 - Previews open on an origin of their own: another port of Collie's address, or a host name per project. Collie's sign-in never opens anything there, and Collie's cookies are taken out of every request before it reaches the agent's server. Collie's API answers only its own origin, not other ports of the same name.
 - Only a session's owner can open its servers, even in a shared session. Each tap makes a link that works once, within a minute, for that session and port only, and on a shared port only in the browser that asked for it. The preview closes when that sign-in ends or the session stops being theirs.
-- A preview reaches the servers through Collie, not over the network, so it opens no way into or out of a container. For a host-run project it reaches only the `collie` user's own servers working in that session's folder, never Collie itself. Host-run agents all run as that user and can still reach each other's servers themselves; this keeps one session's previews from opening another's.
+- A preview reaches the servers through Collie, not over the network, so it opens no way into or out of a container. For a host-run project it reaches only the `collie` user's own servers working in that session's folder, never Collie itself. Host-run agents all run as that user, though: they reach each other's servers themselves, and one could start a server in another session's folder to have it listed there.
 
 ## What is *not* protected
 

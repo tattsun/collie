@@ -45,6 +45,10 @@ if (( serve + (${#domain} > 0) + (${#proxy} > 0) > 1 )); then
   echo "choose one of --serve / --funnel, --domain and --proxy" >&2
   exit 2
 fi
+if ! [[ "$preview_ports" =~ ^[0-9]+$ ]] || (( preview_ports < 1 || preview_ports > 16 )); then
+  echo "--preview-ports: give 1 to 16" >&2
+  exit 2
+fi
 if [[ -n "$proxy" && "$proxy" != https://* ]]; then
   echo "--proxy: the URL must start with https:// (passkeys need HTTPS)" >&2
   exit 2
@@ -116,7 +120,9 @@ addr=":$port"
 # up of the machine's name; Funnel allows only 8443 and 10000 next to 443.
 pport=$((port + 1))
 ts_ports=()
+ts_auto=0 # 1: this script maps the preview ports on Tailscale
 if [[ $serve == 1 && -z "$preview_url" ]]; then
+  ts_auto=1
   if [[ $funnel == 1 ]]; then
     ts_ports=(8443 10000)
   else
@@ -254,9 +260,23 @@ if [[ $serve == 1 ]]; then
       "$tailscale" serve --bg "$port" 2>/dev/null || { [[ "$os" == Linux ]] && sudo "$tailscale" serve --bg "$port"; } || \
         echo "warning: 'tailscale serve' failed. Try: sudo tailscale set --operator=$USER && tailscale serve --bg $port"
     fi
-    if [[ $funnel == 0 ]]; then
-      # Previews off the internet too (if --funnel put them there before).
-      for p in 8443 10000; do "$tailscale" funnel --https="$p" off >/dev/null 2>&1 || true; done
+    if [[ $ts_auto == 1 ]]; then
+      # Take down the preview mappings of an earlier install that aren't
+      # wanted now (fewer ports, or serve instead of funnel): whatever came
+      # to listen on their local ports would be served on this name.
+      wanted=" ${ts_ports[*]} "
+      for ((p = 8443; p < 8443 + 16; p++)); do
+        case "$wanted" in *" $p "*) [[ $funnel == 1 ]] || "$tailscale" funnel --https="$p" off >/dev/null 2>&1 || true; continue ;; esac
+        "$tailscale" funnel --https="$p" off >/dev/null 2>&1 || true
+        "$tailscale" serve --https="$p" off >/dev/null 2>&1 || true
+      done
+      case "$wanted" in
+        *" 10000 "*) ;;
+        *) "$tailscale" funnel --https=10000 off >/dev/null 2>&1 || true
+           "$tailscale" serve --https=10000 off >/dev/null 2>&1 || true ;;
+      esac
+    else
+      echo "note: with your own --preview-url, map the preview ports on Tailscale yourself (see docs/setup.md)."
     fi
     i=0
     for p in ${ts_ports[@]+"${ts_ports[@]}"}; do

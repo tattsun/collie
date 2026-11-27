@@ -218,10 +218,24 @@ func (p *Proxy) init() {
 // Mint returns a token for a grant that Collie's origin has checked.
 func (p *Proxy) Mint(g Grant) string {
 	p.init()
-	t := secret()
-	now := p.clock()
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	return p.mintLocked(g)
+}
+
+// MintSlot is Mint on the slot ChooseSlot picks, in one step: links asked
+// for at the same moment don't get the same free slot.
+func (p *Proxy) MintSlot(r *http.Request, g Grant, n int) (string, int) {
+	p.init()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	g.Slot = p.chooseSlotLocked(r, g, n)
+	return p.mintLocked(g), g.Slot
+}
+
+func (p *Proxy) mintLocked(g Grant) string {
+	t := secret()
+	now := p.clock()
 	mine := 0
 	var oldest string
 	for h, x := range p.tokens {
@@ -363,13 +377,17 @@ func (p *Proxy) browserGrantsLocked(r *http.Request, slot int) map[string]*grant
 // sign-in in the last minute count as taken, so opening several at once
 // spreads them out.
 func (p *Proxy) ChooseSlot(r *http.Request, g Grant, n int) int {
+	p.init()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.chooseSlotLocked(r, g, n)
+}
+
+func (p *Proxy) chooseSlotLocked(r *http.Request, g Grant, n int) int {
 	if n <= 1 {
 		return 0
 	}
-	p.init()
 	now := p.clock()
-	p.mu.Lock()
-	defer p.mu.Unlock()
 	same := func(x Grant) bool { return x.UserID == g.UserID && x.Target == g.Target && x.Port == g.Port }
 	used := make([]time.Time, n) // zero: free
 	for i := range n {

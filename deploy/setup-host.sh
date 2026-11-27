@@ -125,9 +125,11 @@ if ! [[ "$preview_ports" =~ ^[0-9]+$ ]] || (( preview_ports < 1 || preview_ports
   exit 2
 fi
 last=$((preview_ports - 1))
-ports="$port, $((port + 1))-$((port + 1 + last))"
+# A range of one port is written as the port: older nft and ufw refuse it.
+span() { if (( $2 == 0 )); then echo "$1"; else echo "$1$3$(($1 + $2))"; fi; }
+ports="$port, $(span $((port + 1)) $last -)"
 if [[ $public == 1 ]]; then
-  ports="$ports, 80, 443, 8443-$((8443 + last))"
+  ports="$ports, 80, 443, $(span 8443 $last -)"
   echo "== public HTTPS"
   # Ports below 1024 are root-only by default; Collie runs as $user.
   echo "net.ipv4.ip_unprivileged_port_start = 80" > /etc/sysctl.d/60-collie.conf
@@ -135,10 +137,10 @@ if [[ $public == 1 ]]; then
   if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
     ufw allow 80/tcp
     ufw allow 443/tcp
-    ufw allow "8443:$((8443 + last))/tcp"
+    ufw allow "$(span 8443 $last :)/tcp"
   fi
   if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
-    firewall-cmd --permanent --add-service=http --add-service=https "--add-port=8443-$((8443 + last))/tcp"
+    firewall-cmd --permanent --add-service=http --add-service=https "--add-port=$(span 8443 $last -)/tcp"
     firewall-cmd --reload
   fi
 fi

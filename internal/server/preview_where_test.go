@@ -116,6 +116,13 @@ func TestHostRunSessionsSeeOnlyTheirOwnServers(t *testing.T) {
 		return d
 	}
 	p1, w1, p2, other := dir("p1"), dir("worktrees/p1/s1"), dir("p2"), dir("elsewhere")
+	// A session whose folder goes through a symlink: processes report the
+	// real path.
+	real5 := dir("real/s5")
+	link5 := filepath.Join(base, "link-s5")
+	if err := os.Symlink(real5, link5); err != nil {
+		t.Fatal(err)
+	}
 	st := s.m.Store()
 	st.PutProject(model.Project{ID: "p1", Name: "web", Path: p1, OwnerUser: s.owner, Runtime: "host"})
 	st.PutProject(model.Project{ID: "p2", Name: "bobs", Path: p2, OwnerUser: bob.ID, Runtime: "host"})
@@ -123,9 +130,11 @@ func TestHostRunSessionsSeeOnlyTheirOwnServers(t *testing.T) {
 	st.PutSession(model.Session{ID: "s2", ProjectID: "p1", Owner: s.owner, Cwd: p1, Title: "in the folder"})
 	st.PutSession(model.Session{ID: "s3", ProjectID: "p1", Owner: s.owner, Cwd: p1, Title: "also in the folder"})
 	st.PutSession(model.Session{ID: "s4", ProjectID: "p2", Owner: bob.ID, Cwd: p2, Title: "bob's"})
+	st.PutSession(model.Session{ID: "s5", ProjectID: "p1", Owner: s.owner, Cwd: link5, Worktree: true, Title: "through a symlink"})
 
 	inW1, inP1, inP2, nowhere := startHelper(t, w1), startHelper(t, filepath.Join(p1, ".")), startHelper(t, p2), startHelper(t, other)
-	all := []int{inW1, inP1, inP2, nowhere}
+	in5 := startHelper(t, link5)
+	all := []int{inW1, inP1, inP2, nowhere, in5}
 
 	cases := []struct {
 		sess, sid string
@@ -137,6 +146,7 @@ func TestHostRunSessionsSeeOnlyTheirOwnServers(t *testing.T) {
 		{f.ownerSess, "s2", inP1, []string{"s2", "s3"}, "project"}, // the folder they share
 		{f.ownerSess, "s3", inP1, []string{"s2", "s3"}, "project"},
 		{f.bobSess, "s4", inP2, []string{"s4"}, "project"},
+		{f.ownerSess, "s5", in5, []string{"s5"}, "worktree"},
 	}
 	for _, c := range cases {
 		code, l := f.ports(t, c.sess, c.sid)

@@ -233,7 +233,11 @@ func main() {
 			a := net.JoinHostPort(host, strconv.Itoa(base+i))
 			l, err := net.Listen("tcp", a)
 			if err != nil {
-				log.Printf("note: previews of the agents' servers get %d port(s), not %d: %v", i, pv.n, err)
+				// If Tailscale or a proxy forwards a port to this one, whatever
+				// listens here instead is served on Collie's name, and browsers
+				// send it Collie's cookies.
+				log.Printf("warning: previews of the agents' servers get %d port(s), not %d: %v. "+
+					"Free that port, or lower --preview-ports and the ports your Tailscale or proxy forwards.", i, pv.n, err)
 				break
 			}
 			plns = append(plns, l)

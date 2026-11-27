@@ -38,6 +38,7 @@ Agents in every session can show you files right in the chat. Try asking "make t
 Turn them on in Account → **Notifications** on each device you want them on, then press **Send a test notification**. You hear when a session you started needs your approval or an answer, finishes, or stops with an error, also while Collie is closed.
 
 - On iPhone and iPad (iOS 16.4 or later), add Collie to the Home Screen first (Share → Add to Home Screen), open it from there, and turn notifications on in that app.
+- If you added Collie to the Home Screen with version 0.4.0 or earlier and it sits too high, with an empty strip along the bottom of the screen, delete the icon and add it again. iOS keeps the status bar setting from the day the icon was added. Then turn notifications on again in the new icon, and sign in if asked.
 - A device where Collie is open in front of you gets the notification from the page itself, not twice.
 - The server needs to reach the browsers' push services over HTTPS: `fcm.googleapis.com` (Chrome, Android), `push.services.mozilla.com` (Firefox), `web.push.apple.com` (Safari, iPhone) and `notify.windows.com` (Edge).
 - Behind Tailscale, notifications arrive even when the phone is off the tailnet, but opening one needs Tailscale connected.

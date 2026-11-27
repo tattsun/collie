@@ -7,7 +7,14 @@
     <meta name="theme-color" content="#f7f7f5" media="(prefers-color-scheme: light)" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <!--
+      No apple-mobile-web-app-status-bar-style: "black-translucent" makes iOS
+      size the Home Screen app's view to the screen minus the status bar but
+      still start it under the status bar, which blurs what's there and leaves
+      a strip at the bottom no CSS can reach. Without it the view starts below
+      the status bar, which takes the theme-color. iOS reads this tag only when
+      the app is added to the Home Screen.
+    -->
     <meta name="apple-mobile-web-app-title" content="Collie" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />

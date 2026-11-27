@@ -2347,6 +2347,23 @@ pre.out.error-box {
   resize: vertical;
   font-size: 12.5px;
 }
+.net-h {
+  margin: 6px 0 0;
+  font-size: 13px;
+}
+.net-mark {
+  display: inline-flex;
+  flex: none;
+}
+.psettings details summary {
+  cursor: pointer;
+}
+.psettings details .mono {
+  display: block;
+  margin-top: 4px;
+  word-spacing: 4px;
+  line-height: 1.6;
+}
 .link-btn {
   border: 0;
   background: none;

@@ -30,6 +30,7 @@ New projects run in an **Isolated container** by default. You can change this in
 - The container sees only that project's folder and its worktrees. Collie's data, other projects and your host `~/.claude` are not visible.
 - Memory, CPU and process limits apply. The defaults are 4 GB, half the cores and 4096 processes, and admins can change them per project.
 - If an agent runs away, **Kill now** stops the whole container. The conversation resumes on the next message.
+- A project's owner can choose where its containers may connect in Project → Settings → **Network**. With **Allowlist only**, they reach only the listed hosts and Claude's and Codex's own services. Tools that use `HTTPS_PROXY` work as usual, including git over `https://`, but SSH and other direct connections can't get out, so use `https://` remotes with a `GH_TOKEN`. Hosts that were blocked show up under **Recent connections**, where one tap allows them. Edits to the list apply at once. Switching between Internet and an allowlist restarts the project's containers, terminals included. Containers started inside such a project (with **Allow containers inside**) have no internet of their own.
 - Since the agent is boxed in, letting it run without approvals (Claude's **Bypass**, Codex's **Full access**) is easier to justify. You can switch the mode at any time from the chip in the message box.
 - An admin can turn on **Allow containers inside (Podman)** for a project, for example to develop Collie itself there. Agents can then use `podman` in that project's containers. Each user's images are kept per project and count against the server's disk. Changes apply when the containers restart, and the first start after updating Collie rebuilds the agent image.
 
@@ -68,6 +69,7 @@ Project → Settings shows which plugins your agents get there and which level d
 - Plugins are installed per project and user, so the first session after a change in each project takes a little longer.
 - Collie removes only the plugins it installed. Plugins you install yourself in a terminal stay, even if a level turns them off.
 - Only isolated projects get plugins. Host-run projects use the server user's own `~/.claude`, which Collie leaves alone.
+- In a project on an allowlist, the plugins' sources must be on the list too. Most come from GitHub (`github.com`, `*.githubusercontent.com`).
 
 ## Home
 

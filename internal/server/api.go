@@ -27,6 +27,7 @@ func (s *Server) apiRoutes() {
 	mx.HandleFunc("GET /api/projects/{id}/container", s.projectContainer)
 	mx.HandleFunc("GET /api/projects/{id}/env", s.getProjectEnv)
 	mx.HandleFunc("PUT /api/projects/{id}/env", s.putProjectEnv)
+	mx.HandleFunc("GET /api/projects/{id}/network", s.projectNetwork)
 	mx.HandleFunc("GET /api/projects/{id}/changes", s.projectChanges)
 	mx.HandleFunc("GET /api/dirs", s.dirs)
 
@@ -172,6 +173,17 @@ func (s *Server) putProjectEnv(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ok(w)
+}
+
+// projectNetwork lists the destinations the project's containers asked for
+// recently (allowed or blocked).
+func (s *Server) projectNetwork(w http.ResponseWriter, r *http.Request) {
+	recent, err := s.m.NetworkLog(actor(r), r.PathValue("id"))
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, map[string]any{"recent": recent})
 }
 
 func (s *Server) projectChanges(w http.ResponseWriter, r *http.Request) {

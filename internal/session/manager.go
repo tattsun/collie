@@ -71,6 +71,9 @@ func NewManager(cfg Config, st *store.Store, hub *Hub, sb *sandbox.Manager) *Man
 	m := &Manager{cfg: cfg, st: st, hub: hub, sb: sb, rts: map[string]*Runtime{}, caps: map[string]model.Caps{},
 		usage:     map[string]map[string]model.Usage{},
 		ctrActive: map[string]time.Time{}, hostOwner: cfg.HostOwner, toolLn: map[string]net.Listener{}}
+	if sb != nil {
+		sb.SetNetRules(st.Project)
+	}
 	if cfg.HostOwner != "" {
 		m.AdoptOrphans(cfg.HostOwner)
 	}

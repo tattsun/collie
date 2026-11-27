@@ -14,6 +14,9 @@ export interface Project {
   pids?: number
   /** the containers may run Podman inside (admins decide) */
   nested?: boolean
+  /** what the containers can connect to: '' the internet, 'allowlist' only netAllow's hosts */
+  network?: '' | 'allowlist'
+  netAllow?: string[]
   git: boolean
   status?: '' | 'cloning' | 'error'
   error?: string
@@ -56,6 +59,20 @@ export interface SandboxStatus {
   memory?: string
   cpus?: string
   pids?: number
+  /** always allowed on a network allowlist (the agents' own services) */
+  netAgents?: string[]
+  /** a starting list for a new allowlist */
+  netSuggested?: string[]
+}
+
+/** A destination a project's containers asked for recently. */
+export interface NetEntry {
+  host: string
+  port: number
+  /** why it was refused: not on the list, or at a private / local address */
+  blocked?: 'list' | 'address'
+  count: number
+  last: number
 }
 
 export interface ContainerInfo {

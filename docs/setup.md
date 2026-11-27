@@ -43,7 +43,7 @@ mise run install --domain collie.example.com     # or one of the lines below
 | `--serve` | Tailscale, tailnet only |
 | `--funnel` | Tailscale, tailnet and the internet |
 
-This builds Collie and the agent container image (the first build takes a few minutes), then registers a systemd user service.
+This builds Collie and the agent container image, then registers a systemd user service. The image's base (Ubuntu packages, Podman, mise) is downloaded ready-made from GHCR when one is published for your checkout, and built on the server otherwise. The first time takes a few minutes either way.
 
 Logs: `journalctl --user -u collie -f`
 
@@ -104,7 +104,7 @@ mise install
 mise run install --domain collie.example.com    # with the same options you used the first time
 ```
 
-To update only Claude Code / Codex in the image, use Admin → Containers → **Agent image** → **Rebuild**, or run `collie --build-image`. Each project's container switches to the new image the next time it restarts while nothing in it is in use. That first start on a new image can take a few minutes (Podman copies the image's files for the container's user IDs); the session shows a notice meanwhile.
+To update only Claude Code / Codex in the image, use Admin → Containers → **Agent image** → **Rebuild**, or run `collie --build-image`. This reinstalls only the agents; the base stays as it is and is updated with Collie. Each project's container switches to the new image the next time it restarts while nothing in it is in use. That first start on a new image can take a few minutes (Podman copies the image's files for the container's user IDs); the session shows a notice meanwhile.
 
 ## Lost passkeys
 

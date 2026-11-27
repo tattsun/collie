@@ -41,7 +41,7 @@ This assumes the configuration from the [setup guide](setup.md): a dedicated `co
 | | Isolated container (default) | Host-run (admins only) |
 |---|---|---|
 | Files | That project and its worktrees only | Everything the `collie` user can access, including Collie's own data |
-| Network | The internet. Not your LAN, your tailnet, this server or Collie's API | The same firewall rules as the `collie` user |
+| Network | The internet, or only the hosts on the project's allowlist. Not your LAN, your tailnet, this server or Collie's API | The same firewall rules as the `collie` user |
 | Your own account (`~/.ssh` etc.) | Unreachable | Unreachable, because `collie` is a separate user |
 
 - Group projects always run in containers, and only admins can drive a host-run agent.
@@ -49,10 +49,13 @@ This assumes the configuration from the [setup guide](setup.md): a dedicated `co
 - Project folders can't be nested inside each other, so no container can see another project.
 - Agents talk to Collie only through a tool socket given to their own container. A project's agent can address only its user's sessions in that same container.
 - With SELinux on (Fedora, RHEL and the like), the containers run without SELinux labels, because they share the project's files with the host. Their other walls stay: their own user namespace, no capabilities, seccomp, and only their own mounts.
+- A project on an allowlist (Project → Settings → **Network**) gives its containers no network of their own. Their only way out is Collie's proxy, which checks every connection against the list as it is at that moment. It never connects to the loopback or this server's addresses, even when they are listed. A private address, such as a NAS, gets through only when it is listed by IP and the firewall allows it (`--allow`).
+- Only the project's owner can change its network setting (for a group project, the group's owners). Members and agents can't loosen it.
 
 ## What is *not* protected
 
 - An agent in a container can read every file in its project and can reach the internet. Don't keep secrets in a project that you wouldn't want sent out.
+- An allowlist narrows where data can go, but allowed hosts can still carry it further. Claude's and Codex's own services are always allowed and accept uploads from any account. Hosts that serve many sites, such as CDNs or GitHub, can pass traffic on to them.
 - A host-run agent has all the access of the `collie` user.
 - On a Mac there are no containers and no firewall. Agents run as you, with everything your account can reach: your files, your LAN, and Collie's own data.
 - In a project with **Allow containers inside**, the container keeps running as the `collie` user's own ids, with the same files and network. But its processes can switch between the container's own ids and reach more of the kernel (FUSE, tun devices, nested namespaces that mount their own `/proc` or set their own hostname), so a kernel bug is easier to reach from there. Turn it on only for projects whose agents you trust.
@@ -61,6 +64,7 @@ This assumes the configuration from the [setup guide](setup.md): a dedicated `co
 
 - Collie installs only releases whose signature checks out against a key built into Collie. Swapping files on the release page, or passing an old release off as a new one, gets nothing installed.
 - A signed release can be made only by someone who can run the release workflow by hand, because pushing a tag doesn't start it. Keep the **Actions**, **Workflows** and **Secrets** permissions off GitHub tokens that agents use, such as a `GH_TOKEN` in Collie's environment. With them an agent could publish a release, read the signing key or replace it.
+- Each release also pins the base of the agent image (Ubuntu packages, Podman, mise) by digest, so the image registry can't hand servers a different one. The agents on top (Claude Code, Codex, the Playwright MCP server) are installed from npm when the image is built on the server.
 - Only admins can install updates. Home agents can't.
 
 ## Other things worth knowing

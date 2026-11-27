@@ -43,7 +43,7 @@ mise run install --domain collie.example.com     # または下の表のどれ�
 | `--serve` | Tailscale、tailnet 内だけ |
 | `--funnel` | Tailscale、tailnet とインターネット |
 
-Collie とエージェント用のコンテナイメージをビルドし（イメージの初回ビルドは数分かかります）、systemd ユーザーサービスとして登録します。
+Collie とエージェント用のコンテナイメージをビルドし、systemd ユーザーサービスとして登録します。イメージの土台（Ubuntu のパッケージ・Podman・mise）は、手元のソースに対応するものが GHCR に公開されていればそれをダウンロードし、なければサーバでビルドします。どちらの場合も初回は数分かかります。
 
 ログ: `journalctl --user -u collie -f`
 
@@ -104,7 +104,7 @@ mise install
 mise run install --domain collie.example.com    # 初回と同じオプションで
 ```
 
-イメージの中の Claude Code / Codex だけを更新したいときは、Admin → Containers → **Agent image** → **Rebuild** か、`collie --build-image` を実行します。各プロジェクトのコンテナは、中で何も使われていないときに次に再起動したタイミングで、新しいイメージに切り替わります。新しいイメージでの最初の起動には数分かかることがあり（Podman がコンテナのユーザー ID 用にイメージのファイルをコピーするため）、その間セッションにお知らせが表示されます。
+イメージの中の Claude Code / Codex だけを更新したいときは、Admin → Containers → **Agent image** → **Rebuild** か、`collie --build-image` を実行します。入れ直すのはエージェントだけで、土台はそのまま残り、Collie の更新と一緒に新しくなります。各プロジェクトのコンテナは、中で何も使われていないときに次に再起動したタイミングで、新しいイメージに切り替わります。新しいイメージでの最初の起動には数分かかることがあり（Podman がコンテナのユーザー ID 用にイメージのファイルをコピーするため）、その間セッションにお知らせが表示されます。
 
 ## パスキーをなくしたら
 

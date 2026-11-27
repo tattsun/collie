@@ -646,9 +646,11 @@ func (m *Manager) fetchCatalog() ([]CatalogPlugin, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	out, err := m.podman(ctx, "run", "--rm", "--network", containerNetwork, "--no-hosts",
-		"--cap-drop", "all", "--security-opt", "no-new-privileges",
+	// The network of a project with internet access.
+	args := append([]string{"run", "--rm"}, m.networkArgs(model.Project{}, "")...)
+	args = append(args, "--no-hosts", "--cap-drop", "all", "--security-opt", "no-new-privileges",
 		m.tag, "claude", "plugin", "list", "--available", "--json")
+	out, err := m.podman(ctx, args...)
 	if err != nil {
 		return nil, err
 	}

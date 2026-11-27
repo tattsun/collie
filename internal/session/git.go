@@ -39,7 +39,8 @@ func (m *Manager) git(p model.Project, uid string, create bool) gitutil.Ops {
 const maxHelperOutput = 64 << 20
 
 // runGitHelper runs `collie git-helper` in the user's container for the
-// project, starting the container if it isn't running.
+// project, starting the container if it isn't running (stopped as idle or
+// by a restart of Collie, only created, or, with create, not there yet).
 func (m *Manager) runGitHelper(p model.Project, uid string, create bool, timeout time.Duration, req []byte) ([]byte, error) {
 	if m.sb == nil || !m.sb.Available() {
 		return nil, errors.New("this project runs isolated, but podman is not installed on the server")
@@ -67,23 +68,30 @@ func (m *Manager) runGitHelper(p model.Project, uid string, create bool, timeout
 			if msg == "" {
 				msg = err.Error()
 			}
-			return nil, &helperError{msg: msg, notRunning: exitCode(err) == 125}
+			return nil, &helperError{msg: msg}
 		}
 		return out.Bytes(), nil
 	}
 	out, err := run()
 	var he *helperError
-	if errors.As(err, &he) && he.notRunning {
-		// Podman's own failure: most likely the container is stopped (or
-		// gone).
-		if !create && !m.sb.Exists(p.ID, uid) {
+	if errors.As(err, &he) {
+		// Podman's exit code doesn't tell its own failures from the
+		// helper's (it passes the helper's on), so ask about the container.
+		exists, running := m.sb.State(p.ID, uid)
+		switch {
+		case running && !sandbox.ExecSaysNotRunning(he.msg):
+			return nil, err // the helper's own failure (git's come in its answer)
+		case running:
+			// Started since (by an agent, or another call like this one).
+		case !exists && !create:
 			return nil, err
-		}
-		if _, err := m.sb.WaitImage(p.Image, 0, nil); err != nil {
-			return nil, err
-		}
-		if err := m.ensureContainer(p, uid, nil); err != nil {
-			return nil, err
+		default:
+			if _, err := m.sb.WaitImage(p.Image, 0, nil); err != nil {
+				return nil, err
+			}
+			if err := m.ensureContainer(p, uid, nil); err != nil {
+				return nil, err
+			}
 		}
 		out, err = run()
 	}
@@ -95,20 +103,10 @@ func (m *Manager) runGitHelper(p model.Project, uid string, create bool, timeout
 	return out, err
 }
 
-type helperError struct {
-	msg        string
-	notRunning bool
-}
+// helperError is podman's or the helper's failure, with what it printed.
+type helperError struct{ msg string }
 
 func (e *helperError) Error() string { return "git in the project's container: " + e.msg }
-
-func exitCode(err error) int {
-	var ee *exec.ExitError
-	if errors.As(err, &ee) {
-		return ee.ExitCode()
-	}
-	return -1
-}
 
 // cappedBuffer keeps up to max bytes and then fails the writes, which
 // stops the process writing.

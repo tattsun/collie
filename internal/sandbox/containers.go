@@ -548,12 +548,32 @@ func (m *Manager) BridgeArgv(p model.Project, userID string) []string {
 
 // Running reports whether the user's container for the project is running.
 func (m *Manager) Running(projectID, userID string) bool {
+	_, running := m.State(projectID, userID)
+	return running
+}
+
+// State reports whether the user has a container for the project and
+// whether it runs (a stopped or only created one doesn't).
+func (m *Manager) State(projectID, userID string) (exists, running bool) {
 	if !m.available {
-		return false
+		return false, false
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	return m.inspect(ctx, Name(projectID, userID)).running
+	st := m.inspect(ctx, Name(projectID, userID))
+	return st.exists, st.running
+}
+
+// ExecSaysNotRunning reports whether what a failed `podman exec` printed
+// is podman saying the container isn't running (stopped, or only created)
+// or doesn't exist. Its exit code doesn't tell: podman passes on the
+// command's own, and uses 255 for a container that isn't running and 125
+// for one that doesn't exist. Whatever runs in the container can print the
+// same, so this only ever means "try starting it".
+func ExecSaysNotRunning(stderr string) bool {
+	return strings.Contains(stderr, "can only create exec sessions on running containers") ||
+		strings.Contains(stderr, "container state improper") ||
+		strings.Contains(stderr, "no such container")
 }
 
 // Stale reports whether the user's container for the project kept an older
@@ -563,17 +583,6 @@ func (m *Manager) Stale(projectID, userID string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.stale[Name(projectID, userID)]
-}
-
-// Exists reports whether the user has a container for the project (running
-// or not).
-func (m *Manager) Exists(projectID, userID string) bool {
-	if !m.available {
-		return false
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	return m.inspect(ctx, Name(projectID, userID)).exists
 }
 
 // ReadFile reads a file as the user's agents see it in their container for

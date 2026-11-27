@@ -46,6 +46,7 @@ personal profile on top (Account → Profile in the UI). Edit here or in the UI
   claude/commands/      slash commands
   claude/mcp.json       MCP servers for Claude Code (Playwright is on by default)
   claude/settings.json  extra Claude Code settings (permissions, hooks, env…)
+  claude/plugins.json   Claude Code plugins (edit under Admin → Global plugins)
   codex/AGENTS.md       instructions for Codex
   codex/skills/         Codex skills
   codex/config.toml     Codex config (MCP servers…)

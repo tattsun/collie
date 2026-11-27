@@ -127,6 +127,12 @@ const ja: Record<string, string> = {
   'Attach image': '画像を添付',
   'Start session': 'セッションを開始',
   Project: 'プロジェクト',
+  'Claude Code plugins installed for every member’s agents in this project. Plugins enabled in the repository’s {file} are installed too.':
+    'このプロジェクトで、メンバー全員のエージェントに入れる Claude Code のプラグインです。リポジトリの {file} で有効にしたプラグインも入ります。',
+  'Claude Code plugins installed for your agents in this project. Plugins enabled in the repository’s {file} are installed too.':
+    'このプロジェクトでエージェントに入れる Claude Code のプラグインです。リポジトリの {file} で有効にしたプラグインも入ります。',
+  'What your agents get here': 'このプロジェクトで自分のエージェントに入るもの',
+  'Installed into your container before Claude starts; changes apply to agents started from now on.': 'Claude の起動前に自分のコンテナへインストールします。変更は、これから起動するエージェントに反映されます。',
   '{name} (cloning…)': '{name}（clone 中…）',
   'Share with {name}': '{name} に共有',
   'Share with the group': 'グループに共有',

@@ -1,9 +1,10 @@
 import { useState } from 'preact/hooks'
 import { api } from '../api'
 import { t } from '../i18n'
-import { go, groupById, groups, me, projects, route, toastError, userName, users } from '../store'
+import { go, groupById, groups, me, projects, route, sandbox, toastError, userName, users } from '../store'
 import { cls } from '../util'
 import { IBack, IPlus, ITrash, IUsers, Spinner } from './icons'
+import { PluginsEditor } from './Plugins'
 
 /** Display label of a group role (the value sent to the API stays 'member'/'owner'). */
 function roleLabel(role: string) {
@@ -144,6 +145,13 @@ function GroupDetail({ id }: { id: string }) {
           </div>
         )}
       </section>
+      {sandbox.value.available && (
+        <section class="card col gap">
+          <h3>{t('Plugins')}</h3>
+          <p class="dim small">{t('Claude Code plugins installed for every member’s agents in this group’s projects.')}</p>
+          <PluginsEditor url={`/api/groups/${id}/plugins`} readOnlyNote={t('Group owners can change these.')} />
+        </section>
+      )}
       <section class="card col gap">
         <h3>{t('Projects')}</h3>
         {gprojects.length === 0 && <div class="dim small">{t('No group projects yet.')}</div>}

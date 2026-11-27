@@ -225,6 +225,12 @@ func (r *Runtime) startDriver(flip bool) (agent.Driver, error) {
 		}); err != nil {
 			return nil, setupError{err}
 		}
+		if sess.Agent == "claude" {
+			// Before Claude Code starts: it loads plugins only at startup.
+			r.m.syncPlugins(proj, sess.Owner, sess.Cwd, func(msg string) {
+				r.sinkPut(&model.Item{ID: model.NewID(), Kind: model.KindNotice, Done: true, Text: msg})
+			})
+		}
 	}
 
 	// Home: its instructions, and Collie's tools for coordinating projects.

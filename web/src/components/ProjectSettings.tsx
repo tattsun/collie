@@ -3,6 +3,7 @@ import type { ContainerInfo, Project } from '../types'
 import { api } from '../api'
 import { groupById, me, sandbox, sessions, toast, toastError } from '../store'
 import { EnvEditor } from './Editors'
+import { EffectivePlugins, PluginsEditor } from './Plugins'
 import { cls } from '../util'
 import { IAlert, IBox, IRefresh, Spinner } from './icons'
 import { Modal, Segmented, rich, ContainerUsage } from './ui'
@@ -59,6 +60,7 @@ export function ProjectSettings({ p }: { p: Project }) {
   const [ctrs, setCtrs] = useState<(ContainerInfo & { userName?: string; mine?: boolean })[] | null>(null)
   const [busy, setBusy] = useState('')
   const [showLog, setShowLog] = useState(false)
+  const [pluginsSaved, setPluginsSaved] = useState(0)
   const active = sessions.value.some((s) => s.projectId === p.id && (s.status === 'running' || s.status === 'waiting' || s.status === 'starting'))
 
   const refresh = () => {
@@ -216,6 +218,24 @@ export function ProjectSettings({ p }: { p: Project }) {
             )}
           </p>
           <EnvEditor url={`/api/projects/${p.id}/env`} placeholder={'GH_TOKEN=github_pat_…'} note={t('Saved — applies to agents and shells started from now on')} />
+        </section>
+      )}
+
+      {isolated && (
+        <section class="card col gap">
+          <h3>{t('Plugins')}</h3>
+          <p class="dim small">
+            {rich(
+              p.ownerGroup
+                ? t('Claude Code plugins installed for every member’s agents in this project. Plugins enabled in the repository’s {file} are installed too.')
+                : t('Claude Code plugins installed for your agents in this project. Plugins enabled in the repository’s {file} are installed too.'),
+              { file: <code>.claude/settings.json</code> },
+            )}
+          </p>
+          <PluginsEditor url={`/api/projects/${p.id}/plugins`} readOnlyNote={t('Group owners can change these.')} onSaved={() => setPluginsSaved((n) => n + 1)} />
+          <div class="group-h">{t('What your agents get here')}</div>
+          <EffectivePlugins projectId={p.id} reload={pluginsSaved} />
+          <p class="dim small">{t('Installed into your container before Claude starts; changes apply to agents started from now on.')}</p>
         </section>
       )}
 

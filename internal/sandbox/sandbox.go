@@ -68,6 +68,13 @@ type Manager struct {
 	ready    bool
 	locks    map[string]*sync.Mutex
 
+	// The plugin directory (see PluginCatalog).
+	catMu    sync.Mutex
+	catalog  []CatalogPlugin
+	catAt    time.Time
+	catErr   error // the last refresh failed (at catErrAt)
+	catErrAt time.Time
+
 	// OnChange is called when the image status changes.
 	OnChange func()
 }

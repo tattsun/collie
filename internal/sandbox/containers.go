@@ -190,6 +190,11 @@ func within(p, dir string) bool {
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, "../")
 }
 
+// containerNetwork gives no shortcuts to the host: neither its loopback nor
+// the host.containers.internal alias is mapped into the container. (The
+// host's other addresses are blocked by deploy/setup-host.sh's firewall.)
+const containerNetwork = "pasta:--map-host-loopback,none,--map-guest-addr,none"
+
 func (m *Manager) runArgs(sp Spec, extra []string) []string {
 	p, uid := sp.Project, sp.UserID
 	home := m.HomeDir(p.ID, uid)
@@ -215,11 +220,7 @@ func (m *Manager) runArgs(sp Spec, extra []string) []string {
 		"--passwd-entry", fmt.Sprintf("%s:*:$UID:$GID::%s:/bin/bash", currentUser(), Home),
 		"--security-opt", "no-new-privileges",
 		"--cap-drop", "all",
-		// No shortcuts to the host: neither its loopback nor the
-		// host.containers.internal alias is mapped into the container. (The
-		// host's other addresses are blocked by deploy/setup-host.sh's
-		// firewall.)
-		"--network", "pasta:--map-host-loopback,none,--map-guest-addr,none",
+		"--network", containerNetwork,
 		// Our own minimal /etc/hosts: podman's would add host aliases and
 		// copy the server's entries.
 		"--no-hosts",
@@ -529,6 +530,7 @@ func (m *Manager) Remove(projectID string) {
 	_ = os.RemoveAll(m.MemoryDir(projectID))
 	_ = os.Remove(projectEnvPath(m.cfg.DataDir, projectID))
 	_ = os.Remove(m.hostsPath(projectID))
+	_ = os.Remove(m.ProjectPluginsPath(projectID))
 }
 
 // RemoveUser deletes a user's containers and data (not project files).

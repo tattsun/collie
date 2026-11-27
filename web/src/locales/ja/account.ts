@@ -13,6 +13,34 @@ const ja: Record<string, string> = {
   'Display name': '表示名',
   'Create passkey': 'パスキーを作成',
 
+  // ---- plugins (Plugins.tsx, and their sections in Admin / Account / Groups)
+  Plugins: 'プラグイン',
+  'Global plugins': '全体共通のプラグイン',
+  'My plugins': '自分のプラグイン',
+  'Claude Code plugins installed for every user’s agents in isolated projects. Groups, users and projects can add more, or turn these off for themselves.':
+    '隔離実行のプロジェクトで、全ユーザーのエージェントに入れる Claude Code のプラグインです。グループ・ユーザー・プロジェクトの単位で追加したり、その範囲だけオフにしたりできます。',
+  'Claude Code plugins for your agents in all of your isolated projects, added to the global ones (and a group project’s). Turning one off here keeps a global or group plugin out of your containers.':
+    '隔離実行の自分の全プロジェクトで、エージェントに入れる Claude Code のプラグインです。全体の設定（グループのプロジェクトではグループの設定も）に追加されます。ここでオフにすると、全体やグループで入れているプラグインを自分のコンテナには入れません。',
+  'Claude Code plugins installed for every member’s agents in this group’s projects.': 'このグループのプロジェクトで、メンバー全員のエージェントに入れる Claude Code のプラグインです。',
+  'Group owners can change these.': '変更できるのはグループのオーナーです。',
+  'Search the plugin directory, or type name@marketplace': 'プラグインディレクトリを検索するか、name@marketplace を入力',
+  'Loading the plugin directory…': 'プラグインディレクトリを読み込んでいます…',
+  'No match. Press Enter to add “{q}” as typed.': '見つかりません。Enter で「{q}」をそのまま追加します。',
+  'Marketplace name: the name in its marketplace.json (a-z, 0-9, ., -, _)': 'マーケットプレイス名は marketplace.json に書かれた名前です（a-z、0-9、.、-、_）',
+  'Source: owner/repo on GitHub, or a git / https URL': '取得元は GitHub の owner/repo か、git / https の URL で指定してください',
+  'No plugins here yet.': 'まだプラグインはありません。',
+  Install: 'インストール',
+  'Turn off': 'オフ',
+  '“Turn off” stops a plugin turned on at a broader level from being installed here.': '「オフ」にすると、より広い範囲で入れているプラグインをこの範囲では入れません。',
+  'Other marketplaces ({n})': 'ほかのマーケットプレイス（{n}）',
+  'Anthropic’s directory is always available. Add a marketplace to install plugins from it as name@marketplace.':
+    'Anthropic のディレクトリは最初から使えます。ほかのマーケットプレイスを追加すると、そこのプラグインを name@marketplace の形で入れられます。',
+  name: '名前',
+  'No plugins.': 'プラグインはありません。',
+  off: 'オフ',
+  Global: '全体',
+  Repository: 'リポジトリ',
+
   // ---- account (Account.tsx)
   'One-time link. Open it on the other device; anyone with it can use it until it expires.':
     '1 回限りのリンクです。追加する端末で開いてください。有効期限までは、このリンクを知っている人なら誰でも使えます。',

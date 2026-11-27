@@ -7,6 +7,7 @@ import { ago, cls, copyText } from '../util'
 import { lang, setLang, t, type Lang } from '../i18n'
 import { passkeyError, passkeysSupported } from '../webauthn'
 import { EnvEditor, ProfileEditor } from './Editors'
+import { PluginsEditor } from './Plugins'
 import { IBack, ICheck, IPlus, IShield, ITrash, IX, Spinner } from './icons'
 
 interface MeInfo {
@@ -114,6 +115,9 @@ export function AccountPage() {
         </a>
         <a href="#/account/profile" class={cls('tab', tab === 'profile' && 'on')}>
           {t('My skills & MCP')}
+        </a>
+        <a href="#/account/plugins" class={cls('tab', tab === 'plugins' && 'on')}>
+          {t('My plugins')}
         </a>
       </nav>
 
@@ -256,6 +260,20 @@ export function AccountPage() {
             <EnvEditor url="/api/me/env" placeholder={'GH_TOKEN=github_pat_…'} />
           </section>
         </div>
+      )}
+
+      {tab === 'plugins' && (
+        <section class="card col gap">
+          <h3>{t('My plugins')}</h3>
+          {sandbox.value.available ? (
+            <>
+              <p class="dim small">{t('Claude Code plugins for your agents in all of your isolated projects, added to the global ones (and a group project’s). Turning one off here keeps a global or group plugin out of your containers.')}</p>
+              <PluginsEditor url="/api/me/plugins" />
+            </>
+          ) : (
+            <p class="dim">{t('Isolation is not available on this server.')}</p>
+          )}
+        </section>
       )}
 
       {tab === 'profile' && (

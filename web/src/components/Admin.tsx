@@ -7,7 +7,7 @@ import { ago, cls, until } from '../util'
 import { LinkBox } from './Account'
 import { EnvEditor, ProfileEditor } from './Editors'
 import { PluginsEditor } from './Plugins'
-import { ImageLog } from './ProjectSettings'
+import { AgentImages } from './Images'
 import { UpdatesPanel } from './Updates'
 import { IBack, IPlus, IRefresh, ITrash, Spinner } from './icons'
 
@@ -22,7 +22,6 @@ export function AdminPage() {
   const [d, setD] = useState<Overview | null>(null)
   const [busy, setBusy] = useState('')
   const [link, setLink] = useState('')
-  const [showImage, setShowImage] = useState(false)
   const load = () => api<Overview>('GET', '/api/admin/overview').then(setD).catch(toastError)
   useEffect(() => {
     load()
@@ -148,43 +147,41 @@ export function AdminPage() {
       )}
 
       {d && tab === 'containers' && (
-        <section class="card col gap">
-          <div class="row gap">
-            <h3 class="grow">{t('Containers')}</h3>
-            <button class="btn small" onClick={() => setShowImage(true)}>
-              {t('Agent image…')}
-            </button>
-          </div>
-          <p class="dim small">{t('Every (project, user) pair has its own container. Admins see usage, not content.')}</p>
-          {d.containers.length === 0 && <div class="dim small">{t('No containers.')}</div>}
-          {d.containers.map((c) => (
-            <div key={c.projectId + c.userId} class="row gap list-row">
-              <span class={cls('dot', c.running ? 'running' : 'stopped')} />
-              <span class="grow small">
-                <b>{c.project || c.projectId}</b> · {c.user}
+        <div class="col gap-l">
+          <AgentImages />
+          <section class="card col gap">
+            <h3>{t('Containers')}</h3>
+            <p class="dim small">{t('Every (project, user) pair has its own container. Admins see usage, not content.')}</p>
+            {d.containers.length === 0 && <div class="dim small">{t('No containers.')}</div>}
+            {d.containers.map((c) => (
+              <div key={c.projectId + c.userId} class="row gap list-row">
+                <span class={cls('dot', c.running ? 'running' : 'stopped')} />
+                <span class="grow small">
+                  <b>{c.project || c.projectId}</b> · {c.user}
+                  {c.running && (
+                    <span>
+                      {' · '}
+                      <ContainerUsage mem={c.mem} cpu={c.cpu} pids={c.pids} limited={c.limitsEnforced} />
+                      {c.limitsEnforced === false && <span class="warn">{' · ' + t('limits NOT enforced')}</span>}
+                    </span>
+                  )}
+                </span>
                 {c.running && (
-                  <span>
-                    {' · '}
-                    <ContainerUsage mem={c.mem} cpu={c.cpu} pids={c.pids} limited={c.limitsEnforced} />
-                    {c.limitsEnforced === false && <span class="warn">{' · ' + t('limits NOT enforced')}</span>}
-                  </span>
+                  <button
+                    class="btn small danger"
+                    disabled={!!busy}
+                    onClick={() =>
+                      confirm(t("Kill {user}'s container for {project}?", { user: c.user, project: c.project })) &&
+                      run('k', async () => (await api('POST', '/api/admin/containers/kill', { projectId: c.projectId, userId: c.userId }), toast(t('Killed'))))()
+                    }
+                  >
+                    {t('Kill')}
+                  </button>
                 )}
-              </span>
-              {c.running && (
-                <button
-                  class="btn small danger"
-                  disabled={!!busy}
-                  onClick={() =>
-                    confirm(t("Kill {user}'s container for {project}?", { user: c.user, project: c.project })) &&
-                    run('k', async () => (await api('POST', '/api/admin/containers/kill', { projectId: c.projectId, userId: c.userId }), toast(t('Killed'))))()
-                  }
-                >
-                  {t('Kill')}
-                </button>
-              )}
-            </div>
-          ))}
-        </section>
+              </div>
+            ))}
+          </section>
+        </div>
       )}
 
       {tab === 'profile' && (
@@ -207,7 +204,6 @@ export function AdminPage() {
         </section>
       )}
       {tab === 'updates' && <UpdatesPanel />}
-      {showImage && <ImageLog onClose={() => setShowImage(false)} />}
     </div>
   )
 }

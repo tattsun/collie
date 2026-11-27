@@ -13,6 +13,34 @@ const ja: Record<string, string> = {
   'Building agent image…': 'エージェント用イメージをビルド中…',
   'Image build failed': 'イメージのビルドに失敗しました',
 
+  // ---- Custom agent images (Admin → Containers, Project → Settings)
+  'Agent images': 'エージェント用イメージ',
+  'New image': '新しいイメージ',
+  'New agent image': '新しいエージェント用イメージ',
+  'Collie standard': 'Collie 標準',
+  Details: '詳細',
+  'Default image': 'デフォルトのイメージ',
+  'Default ({name})': 'デフォルト（{name}）',
+  'Projects run Collie’s standard image unless you add images of your own on top of it, with what your teams need: packages, your company’s certificates, internal tools. Whoever manages a project picks one in its settings.':
+    'プロジェクトは Collie の標準イメージで動きます。その上にチームに必要なもの（パッケージ、社内の証明書、社内ツールなど）を足した独自のイメージを追加でき、プロジェクトを管理する人がプロジェクトの設定で選べます。',
+  'Projects that don’t pick an image, and everyone’s Home, run “{name}” from their next start. Continue?':
+    'イメージを選んでいないプロジェクトと全員の Home が、次の起動から「{name}」で動きます。続行しますか？',
+  'Delete the image “{name}”?\n\nProjects that use it switch to the default image the next time they start.':
+    'イメージ「{name}」を削除しますか？\n\nこのイメージを使っているプロジェクトは、次の起動からデフォルトのイメージに切り替わります。',
+  'e.g. Android, Data science': '例: Android、データ分析',
+  'Added on top of Collie’s standard image, so no {from} line is needed. The steps run as root while building; agents still run as the server user. A multi-stage build ends with {base}.':
+    'Collie の標準イメージの上に追加されるので、{from} 行は不要です。各ステップはビルド中に root で実行されますが、エージェントはこれまでどおりサーバのユーザーとして動きます。マルチステージビルドでは最後を {base} にしてください。',
+  'Build again without the cache, to get newer packages': 'キャッシュを使わずにビルドし直して、新しいパッケージを取り込みます',
+  Rebuild: '再ビルド',
+  'Save & build': '保存してビルド',
+  'Create & build': '作成してビルド',
+  'Rebuilding… (projects run the previous build)': '再ビルド中…（プロジェクトは前回のビルドで動きます）',
+  'Build failed — projects run the previous build': 'ビルド失敗（プロジェクトは前回のビルドで動きます）',
+  'Built (older version)': '作成済み（古い版）',
+  'Images are defined in {link}.': 'イメージは {link} で定義します。',
+  'Admin → Containers': '管理 → コンテナ',
+  'Admins define the images; whoever manages the project picks one.': 'イメージは管理者が用意し、プロジェクトを管理する人が選びます。',
+
   // ---- ProjectSettings: where agents run
   'Agents in this project are working. Saving restarts them in the new environment. Continue?':
     'このプロジェクトのエージェントが作業中です。保存すると新しい環境で再起動します。続行しますか？',

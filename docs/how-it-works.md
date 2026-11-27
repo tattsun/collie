@@ -35,6 +35,17 @@ New projects run in an **Isolated container** by default. You can change this in
 - Since the agent is boxed in, letting it run without approvals (Claude's **Bypass**, Codex's **Full access**) is easier to justify. You can switch the mode at any time from the chip in the message box.
 - An admin can turn on **Allow containers inside (Podman)** for a project, for example to develop Collie itself there. Agents can then use `podman` in that project's containers. Each user's images are kept per project and count against the server's disk. Changes apply when the containers restart, and the first start after updating Collie rebuilds the agent image.
 
+## Agent images
+
+Containers run Collie's standard image: Ubuntu with Claude Code, Codex, Playwright, mise and common tools. When your teams need more, such as system packages, your company's CA certificate or internal tools, an admin adds an image in Admin → Containers. An image is a few Containerfile lines that Collie builds on top of the standard one.
+
+- Whoever manages a project (its owner, or the group's owner) picks its image in Project → Settings. Projects that don't pick one, and everyone's Home, run the default image, which admins choose.
+- Whatever an image sets as `USER` or `ENTRYPOINT`, agents run as the `collie` user, with the same files, network and limits. A build without Claude Code, Codex or Collie's helpers is rejected.
+- Collie rebuilds an image when its definition changes and when an update brings a new standard image. Until the new build succeeds, projects keep running the previous one, so a failed build doesn't stop anyone. Only an image's very first build makes agents wait. **Rebuild** builds it again without the cache, to pick up newer packages.
+- Builds sit behind the same firewall as agents, so they can't reach your LAN or tailnet. To use a registry or package mirror on your network, allow it with `setup-host.sh --allow`. Agents can then reach it too. For a private registry, run `podman login` as the `collie` user. Agents can't see that login.
+- There is no folder to copy files from. Write them in with a heredoc (`COPY <<'EOF' /path`), or take them from another image with `COPY --from=`.
+- Each image adds its own layers to the server's disk.
+
 ## Users and groups
 
 - Personal projects and conversations are visible only to their owner. Admins can't see them either.

@@ -17,7 +17,7 @@ These need a passkey check from the last 15 minutes. Signing in counts. If yours
 
 - adding or removing a passkey, or making a link to add another device
 - inviting people, making recovery links, and changing or deleting users
-- the global skills, MCP and environment, which reach everyone's agents
+- the global skills, MCP and environment, and the agent images, which reach everyone's agents
 - registering an existing server folder and running a project's agents on the host
 
 So someone using a stolen or left-open session can't lock you out, let themselves back in later, or reach beyond your own projects through these. They can still do everything else you can do until that session is signed out.
@@ -59,6 +59,7 @@ This assumes the configuration from the [setup guide](setup.md): a dedicated `co
 - A host-run agent has all the access of the `collie` user.
 - On a Mac there are no containers and no firewall. Agents run as you, with everything your account can reach: your files, your LAN, and Collie's own data.
 - In a project with **Allow containers inside**, the container keeps running as the `collie` user's own ids, with the same files and network. But its processes can switch between the container's own ids and reach more of the kernel (FUSE, tun devices, nested namespaces that mount their own `/proc` or set their own hostname), so a kernel bug is easier to reach from there. Turn it on only for projects whose agents you trust.
+- An agent image an admin adds runs whatever its definition installs, in every project that uses it, and its build steps run as root in a build container that can reach the internet. Agents still run as the `collie` user, with the same files, network and limits. Only admins can add or change images.
 
 ## Updates
 

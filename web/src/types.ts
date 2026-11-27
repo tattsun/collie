@@ -17,6 +17,8 @@ export interface Project {
   /** what the containers can connect to: '' the internet, 'allowlist' only netAllow's hosts */
   network?: '' | 'allowlist'
   netAllow?: string[]
+  /** agent image: '' = the server's default, 'standard' = Collie's, else a custom image's id */
+  image?: string
   git: boolean
   status?: '' | 'cloning' | 'error'
   error?: string
@@ -56,6 +58,10 @@ export interface SandboxStatus {
   error?: string
   log?: string
   shared?: string
+  /** admin-defined images on top of Collie's standard one */
+  images?: CustomImageStatus[]
+  /** the image projects run unless they pick one ('' = standard) */
+  defaultImage?: string
   memory?: string
   cpus?: string
   pids?: number
@@ -73,6 +79,26 @@ export interface NetEntry {
   blocked?: 'list' | 'address'
   count: number
   last: number
+}
+
+export interface CustomImageStatus {
+  id: string
+  name: string
+  /** a build exists that projects can run */
+  ready: boolean
+  /** ...built from the current definition and standard image */
+  current: boolean
+  building?: boolean
+  error?: string
+  log?: string
+}
+
+/** A custom image's definition (admins). */
+export interface CustomImageDef {
+  id: string
+  name: string
+  containerfile: string
+  updatedAt?: number
 }
 
 export interface ContainerInfo {

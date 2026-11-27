@@ -68,6 +68,12 @@ func (s *Server) authRoutes() {
 	mx.HandleFunc("GET /api/shared/env", s.getSharedEnv)
 	mx.HandleFunc("PUT /api/shared/env", s.putSharedEnv)
 	mx.HandleFunc("POST /api/sandbox/build", s.buildImage)
+	mx.HandleFunc("GET /api/admin/images", s.listImages)
+	mx.HandleFunc("PATCH /api/admin/images", s.setDefaultImage)
+	mx.HandleFunc("POST /api/admin/images", s.putImage)
+	mx.HandleFunc("PUT /api/admin/images/{id}", s.putImage)
+	mx.HandleFunc("DELETE /api/admin/images/{id}", s.deleteImage)
+	mx.HandleFunc("POST /api/admin/images/{id}/build", s.rebuildImage)
 	mx.HandleFunc("POST /api/admin/update/check", s.updateCheck)
 	mx.HandleFunc("POST /api/admin/update/apply", s.updateApply)
 	mx.HandleFunc("POST /api/admin/update/cancel", s.updateCancel)
@@ -925,6 +931,104 @@ func (s *Server) buildImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, sb.Status())
+}
+
+// ---- custom agent images ----
+//
+// Their definitions run (as root, in a build container) on top of Collie's
+// image for every project that picks them, so changing them is a global
+// setting: a recent passkey check, like the global profile and env.
+
+func (s *Server) imageSandbox(w http.ResponseWriter, r *http.Request, verify bool) *sandbox.Manager {
+	if !requireAdmin(w, r) || (verify && !s.verified(w, r)) {
+		return nil
+	}
+	sb := s.m.Sandbox()
+	if sb == nil || !sb.Available() {
+		httpError(w, 400, "podman is not installed on the server")
+		return nil
+	}
+	return sb
+}
+
+func imageFail(w http.ResponseWriter, err error) {
+	if errors.Is(err, sandbox.ErrNoImage) {
+		httpError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	fail(w, err)
+}
+
+func (s *Server) listImages(w http.ResponseWriter, r *http.Request) {
+	sb := s.imageSandbox(w, r, false)
+	if sb == nil {
+		return
+	}
+	def, imgs := sb.Images()
+	writeJSON(w, map[string]any{"default": def, "images": imgs, "status": sb.Status().Images})
+}
+
+func (s *Server) putImage(w http.ResponseWriter, r *http.Request) {
+	sb := s.imageSandbox(w, r, true)
+	if sb == nil {
+		return
+	}
+	var req sandbox.ImageDef
+	if err := decode(r, &req); err != nil {
+		httpError(w, 400, err.Error())
+		return
+	}
+	req.ID = r.PathValue("id")
+	d, err := sb.PutImage(req)
+	if err != nil {
+		imageFail(w, err)
+		return
+	}
+	writeJSON(w, d)
+}
+
+func (s *Server) deleteImage(w http.ResponseWriter, r *http.Request) {
+	if s.imageSandbox(w, r, true) == nil {
+		return
+	}
+	if err := s.m.DeleteImage(r.PathValue("id")); err != nil {
+		imageFail(w, err)
+		return
+	}
+	ok(w)
+}
+
+func (s *Server) setDefaultImage(w http.ResponseWriter, r *http.Request) {
+	sb := s.imageSandbox(w, r, true)
+	if sb == nil {
+		return
+	}
+	var req struct {
+		Default string `json:"default"`
+	}
+	if err := decode(r, &req); err != nil {
+		httpError(w, 400, err.Error())
+		return
+	}
+	if err := sb.SetDefaultImage(req.Default); err != nil {
+		imageFail(w, err)
+		return
+	}
+	ok(w)
+}
+
+// rebuildImage builds a custom image again from scratch (newer packages,
+// or after a failure), like Rebuild for the standard image.
+func (s *Server) rebuildImage(w http.ResponseWriter, r *http.Request) {
+	sb := s.imageSandbox(w, r, false)
+	if sb == nil {
+		return
+	}
+	if err := sb.BuildImage(r.PathValue("id"), true); err != nil {
+		imageFail(w, err)
+		return
+	}
+	ok(w)
 }
 
 // ---- updates ----

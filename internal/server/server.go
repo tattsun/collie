@@ -414,6 +414,9 @@ func (s *Server) sandboxStatus(admin bool) any {
 	st := sb.Status()
 	if !admin {
 		st.Log, st.Shared = "", ""
+		for i := range st.Images {
+			st.Images[i].Log = ""
+		}
 	}
 	return st
 }

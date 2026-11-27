@@ -29,7 +29,10 @@ The workflow checks that the tag is on main, builds for amd64 and arm64, runs th
 
 Step 2 is manual on purpose. If pushing a tag started the workflow, anyone or any agent with push access could publish a release that every server installs. See [Security](security.md#updates) for the token permissions this relies on.
 
+The workflow builds and signs only the commit the tag pointed to when it started: if the tag is moved meanwhile, it stops. Check what is on main before you run it: anyone who can push could have put it there.
+
 ## Gotchas
 
 - GHCR may create the `collie-agent-base` package as private the first time. Servers can't pull it then: in the package's settings, change its visibility to public.
-- To replace the key, add the new public key to `internal/update/release.pub` and publish one release signed with the old key. Then replace the secret.
+- To replace the key, replace the old public key with the new one in `internal/update/release.pub` and publish one release signed with the old key. Then replace the secret. Servers trust every key in that file, so don't leave the old one in.
+- Servers that miss that release can't verify the ones after it. Install a newer build on them by hand.

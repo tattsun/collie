@@ -1085,18 +1085,11 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Auto  *bool   `json:"auto"`
-		Token *string `json:"token"`
+		Auto *bool `json:"auto"`
 	}
 	if err := decode(r, &req); err != nil {
 		httpError(w, 400, err.Error())
 		return
-	}
-	if req.Token != nil {
-		if err := up.SetToken(*req.Token); err != nil {
-			fail(w, err)
-			return
-		}
 	}
 	if req.Auto != nil {
 		if err := up.SetAuto(*req.Auto); err != nil {

@@ -40,7 +40,6 @@ export interface UpdateStatus {
   why?: string
   devBuild?: boolean
   auto: boolean
-  tokenSet: boolean
   checkedAt?: number
   checkError?: string
   phase?: '' | 'downloading' | 'preparing' | 'waiting' | 'restarting'

@@ -2,7 +2,7 @@ import { useState } from 'preact/hooks'
 import { api } from '../api'
 import { t, ts } from '../i18n'
 import { renderMarkdown } from '../markdown'
-import { go, toast, toastError, updateStatus } from '../store'
+import { go, toastError, updateStatus } from '../store'
 import type { UpdateStatus } from '../types'
 import { ago, cls } from '../util'
 import { IRefresh, Spinner } from './icons'
@@ -32,7 +32,6 @@ function phaseText(phase?: string): string {
 export function UpdatesPanel() {
   const u = updateStatus.value
   const [busy, setBusy] = useState('')
-  const [token, setToken] = useState('')
   if (!u) return <div class="dim small">{t('Updates are not available on this server.')}</div>
 
   const run = (key: string, fn: () => Promise<UpdateStatus | void>) => async () => {
@@ -56,13 +55,6 @@ export function UpdatesPanel() {
     if (confirm(msg)) run('apply', () => api<UpdateStatus>('POST', '/api/admin/update/apply'))()
   }
   const setAuto = (on: boolean) => run('auto', () => api<UpdateStatus>('PATCH', '/api/admin/update/settings', { auto: on }))()
-  const saveToken = (v: string) =>
-    run('token', async () => {
-      const st = await api<UpdateStatus>('PATCH', '/api/admin/update/settings', { token: v })
-      setToken('')
-      toast(v ? t('Token saved') : t('Token removed'))
-      return st
-    })()
   const inFlight = u.phase === 'downloading' || u.phase === 'preparing'
 
   return (
@@ -164,30 +156,6 @@ export function UpdatesPanel() {
           hint={t('Off: admins are told about new releases and update with one tap. On: a new release installs itself once no agent has been working and no terminal has been used for 10 minutes.')}
         />
         {u.auto && u.devBuild && <p class="warn small">{t('This server runs a development build, so releases are not installed automatically.')}</p>}
-        <label class="field">
-          <span class="field-l">
-            {t('GitHub token')} {u.tokenSet ? <span class="chip ok-chip">{t('set')}</span> : <span class="chip">{t('not set')}</span>}
-          </span>
-          <span class="dim small">{t('Only needed while {repo} is a private repository: a fine-grained token with read-only access to its contents.', { repo: u.repo || '' })}</span>
-          <div class="row gap">
-            <input
-              class="input grow"
-              type="password"
-              autocomplete="off"
-              placeholder="github_pat_…"
-              value={token}
-              onInput={(e) => setToken((e.target as HTMLInputElement).value)}
-            />
-            <button class="btn small" disabled={!token.trim() || !!busy} onClick={() => saveToken(token.trim())}>
-              {t('Save')}
-            </button>
-            {u.tokenSet && (
-              <button class="btn small danger" disabled={!!busy} onClick={() => saveToken('')}>
-                {t('Remove token')}
-              </button>
-            )}
-          </div>
-        </label>
       </section>
     </div>
   )

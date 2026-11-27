@@ -38,6 +38,7 @@ func (s *Server) apiRoutes() {
 	mx.HandleFunc("POST /api/sessions/{id}/interrupt", s.interrupt)
 	mx.HandleFunc("POST /api/sessions/{id}/stop", s.stop)
 	mx.HandleFunc("POST /api/sessions/{id}/tasks/{task}/stop", s.stopTask)
+	mx.HandleFunc("GET /api/sessions/{id}/tasks/{task}/output", s.taskOutput)
 	mx.HandleFunc("POST /api/sessions/{id}/asks/{ask}", s.reply)
 	mx.HandleFunc("GET /api/sessions/{id}/items", s.items)
 	mx.HandleFunc("GET /api/sessions/{id}/changes", s.sessionChanges)
@@ -268,6 +269,15 @@ func (s *Server) stopTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ok(w)
+}
+
+func (s *Server) taskOutput(w http.ResponseWriter, r *http.Request) {
+	out, err := s.m.TaskOutput(actor(r), r.PathValue("id"), r.PathValue("task"))
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, out)
 }
 
 func (s *Server) stop(w http.ResponseWriter, r *http.Request) {

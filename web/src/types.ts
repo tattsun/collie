@@ -154,6 +154,8 @@ export interface Session {
   tasks?: BgTask[]
   /** the schedule that started it */
   schedule?: string
+  /** Home conversations: the sessions Collie tells its agent about */
+  watching?: string[]
 }
 
 /** Starts a session with the same instructions at set times (mine only). */
@@ -287,7 +289,18 @@ export interface Item {
   images?: string[]
   media?: Media[]
   by?: string
-  via?: 'home' | 'schedule'
+  /** home: sent for the user by their Home agent; schedule: by one of their schedules; collie: Collie's notification to Home */
+  via?: 'home' | 'schedule' | 'collie'
+  notes?: Note[]
+}
+
+/** A change in a session a Home agent watches, as Collie told it. */
+export interface Note {
+  session: string
+  title: string
+  project?: string
+  event: 'done' | 'failed' | 'waiting' | 'question' | 'error' | 'unwatched'
+  detail?: string
 }
 
 export interface Command {

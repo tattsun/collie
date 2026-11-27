@@ -1,14 +1,14 @@
 import { memo } from 'preact/compat'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks'
-import type { Item, Session, Ask, PlanStep } from '../types'
-import { me, timeline, toastError, userName } from '../store'
+import type { Item, Session, Ask, PlanStep, Note } from '../types'
+import { me, sessionById, timeline, toastError, userName } from '../store'
 import { api } from '../api'
 import { renderMarkdown } from '../markdown'
 import { parseDiff, snippetDiff, diffStats, type DiffLine } from '../diff'
 import { describeTool } from './tools'
 import { cls, copyText, duration, money } from '../util'
 import { t, ts } from '../i18n'
-import { ICheck, IX, IChevron, IBrain, IShield, IDown, IStop, Spinner } from './icons'
+import { ICheck, IX, IChevron, IBrain, IShield, IDown, IStop, IBell, Spinner } from './icons'
 import { MediaCard, Thumbstrip, imagesAsMedia, openViewer } from './Media'
 
 // ---------------------------------------------------------------- shared bits
@@ -98,6 +98,61 @@ function UserMsg({ item }: { item: Item }) {
         </div>
       )}
       {item.text && <div class="bubble">{item.text}</div>}
+    </div>
+  )
+}
+
+function noteLabel(n: Note) {
+  switch (n.event) {
+    case 'done':
+      return t('Finished')
+    case 'failed':
+      return t('Ended with an error')
+    case 'waiting':
+      return t('Waiting for your approval')
+    case 'question':
+      return t('Has a question for you')
+    case 'error':
+      return t('Stopped with an error')
+    case 'unwatched':
+      return t('No longer watched (too many notifications)')
+  }
+  return n.event
+}
+
+/** What Collie told the Home agent about the sessions it watches (sid is the Home conversation). */
+function CollieNote({ item, sid }: { item: Item; sid: string }) {
+  const watching = sessionById.value.get(sid)?.watching || []
+  const unwatch = (id: string) => api('DELETE', `/api/sessions/${sid}/watching/${id}`).catch(toastError)
+  return (
+    <div class="collie-note" title={t('Collie told your Home agent how the sessions it watches are doing.')}>
+      <div class="cn-head">
+        <IBell size={12} /> {t('Notification from Collie')}
+      </div>
+      {(item.notes || []).map((n) => {
+        const s = sessionById.value.get(n.session)
+        return (
+          <div key={n.session + n.event} class={cls('cn-row', n.event)}>
+            <div class="cn-line">
+              {s ? (
+                <a class="cn-title" href={`#/s/${n.session}`}>
+                  {s.title || n.title}
+                </a>
+              ) : (
+                <span class="cn-title">{n.title}</span>
+              )}
+              {n.project && <span class="dim">{n.project}</span>}
+              <span class="cn-event">{noteLabel(n)}</span>
+            </div>
+            {n.detail && <div class="cn-detail">{n.detail}</div>}
+            {n.event !== 'unwatched' && watching.includes(n.session) && (
+              <button class="btn ghost small cn-stop" onClick={() => unwatch(n.session)}>
+                {t('Stop watching')}
+              </button>
+            )}
+          </div>
+        )
+      })}
     </div>
   )
 }
@@ -408,7 +463,7 @@ interface ItemProps {
 export const ItemView = memo(function ItemView({ item, kids, sid = '', cwd }: ItemProps) {
   switch (item.kind) {
     case 'user':
-      return <UserMsg item={item} />
+      return item.via === 'collie' ? <CollieNote item={item} sid={sid} /> : <UserMsg item={item} />
     case 'text':
       return item.text ? <Markdown text={item.text} class="msg-text" /> : null
     case 'thinking':

@@ -522,6 +522,32 @@ func (m *Manager) Exec(projectID, userID, dir, id string, tty bool, env []string
 	return argv, kill
 }
 
+// BridgeArgv is the command line that runs Collie's port bridge in the
+// user's container for the project (see package preview): HTTP/2 on its
+// stdio, which reaches the servers listening in the container. It gets
+// none of the env files (no secrets) and no detach keys, which would
+// otherwise cut the binary stream.
+func (m *Manager) BridgeArgv(p model.Project, userID string) []string {
+	argv := append([]string{m.cfg.Podman}, m.global...)
+	argv = append(argv, "exec", "-i", "--detach-keys=", Name(p.ID, userID), CollieBinPath, "port-bridge")
+	if p.Allowlisted() {
+		// The bridge to Collie's network proxy: not a server of the agent's.
+		_, port, _ := strings.Cut(ProxyAddr, ":")
+		argv = append(argv, "--skip", port)
+	}
+	return argv
+}
+
+// Running reports whether the user's container for the project is running.
+func (m *Manager) Running(projectID, userID string) bool {
+	if !m.available {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	return m.inspect(ctx, Name(projectID, userID)).running
+}
+
 // Stale reports whether the user's container for the project kept an older
 // configuration when it was last started (it was in use when that changed),
 // so it may lack newer mounts.

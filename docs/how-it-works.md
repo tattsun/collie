@@ -43,6 +43,10 @@ Turn them on in Account → **Notifications** on each device you want them on, t
 - The server needs to reach the browsers' push services over HTTPS: `fcm.googleapis.com` (Chrome, Android), `push.services.mozilla.com` (Firefox), `web.push.apple.com` (Safari, iPhone) and `notify.windows.com` (Edge).
 - Behind Tailscale, notifications arrive even when the phone is off the tailnet, but opening one needs Tailscale connected.
 
+## Dev servers
+
+Ask the agent to start the app (`npm run dev` and the like), then open the session's **Ports** tab. It lists what is listening in the project's container, and a tap opens it in a new tab, with hot reload. Only you can open your sessions' servers, even in a shared session. Where previews are served is set up on the server (see [Setup](setup.md#previews)).
+
 ## Isolation
 
 New projects run in an **Isolated container** by default. You can change this in Project → Settings.

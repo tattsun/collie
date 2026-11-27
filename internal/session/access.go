@@ -3,8 +3,11 @@ package session
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"time"
 
 	"github.com/tattsun/collie/internal/model"
+	"github.com/tattsun/collie/internal/sandbox"
 )
 
 // Who can see and do what:
@@ -212,4 +215,41 @@ func (m *Manager) Revalidate(stateFor func(uid string) any) {
 		c.resetKnown(m.VisibleProjects(c.UserID), m.VisibleSessions(c.UserID))
 		c.enqueue(mustJSON(st))
 	})
+}
+
+// PreviewSession returns a session whose servers the user may open in
+// their browser (package preview): only their own sessions, even in a
+// shared group session, and for host-run projects only if they're an admin.
+func (m *Manager) PreviewSession(uid, sid string) (model.Session, model.Project, error) {
+	s, err := m.visibleSession(uid, sid)
+	if err != nil {
+		return model.Session{}, model.Project{}, err
+	}
+	if s.Owner != uid {
+		return model.Session{}, model.Project{}, errNotOwner
+	}
+	p, ok := m.st.Project(s.ProjectID)
+	if !ok {
+		return model.Session{}, model.Project{}, ErrNotFound
+	}
+	if !p.Isolated() && !m.isAdmin(uid) {
+		return model.Session{}, model.Project{}, fmt.Errorf("%w: %v", ErrForbidden, errHostOnly)
+	}
+	if p.Isolated() && (m.sb == nil || !m.sb.Available()) {
+		return model.Session{}, model.Project{}, sandbox.ErrUnavailable
+	}
+	return s, p, nil
+}
+
+var errNotOwner = fmt.Errorf("%w: only the session's owner can open its servers", ErrForbidden)
+
+// TouchContainer counts a use of the user's container for the project
+// (a preview in use), so it isn't stopped as idle.
+func (m *Manager) TouchContainer(projectID, uid string) {
+	k := projectID + "/" + uid
+	m.ctrMu.Lock()
+	if _, ok := m.ctrActive[k]; ok {
+		m.ctrActive[k] = time.Now()
+	}
+	m.ctrMu.Unlock()
 }

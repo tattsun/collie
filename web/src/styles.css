@@ -930,6 +930,88 @@ button.chip {
   overflow-y: auto;
 }
 
+/* ports (previews of the agents' servers) */
+.ports {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px 24px;
+  max-width: 720px;
+}
+.ports-note p {
+  margin: 0 0 6px;
+}
+.ports-note p:last-child {
+  margin-bottom: 0;
+}
+.ports-note .btn {
+  margin-top: 4px;
+}
+.ports-empty {
+  margin: 4px 0;
+}
+.ports-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.ports-list li + li {
+  border-top: 1px solid var(--border);
+}
+.port-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 52px;
+  padding: 8px 14px;
+  border: 0;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.port-row:hover:not(:disabled) {
+  background: var(--hover);
+}
+.port-row:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+.port-num {
+  font-weight: 600;
+  font-size: 15px;
+}
+.port-proc {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dim);
+  font-size: 12.5px;
+}
+.port-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  color: var(--accent);
+  font-weight: 550;
+  font-size: 13px;
+  flex: none;
+}
+.ports-manual .input {
+  max-width: 200px;
+}
+.ports-hint {
+  margin-top: 0;
+}
+
 /* menus & modals */
 .menu-wrap {
   position: relative;
@@ -2902,12 +2984,12 @@ a.cn-title:hover {
 .mp-cost > :last-child {
   color: var(--text);
 }
-/* phones: make room for the meter next to the session tabs */
+/* phones: make room for the four session tabs, and the meter next to them */
 @media (max-width: 440px) {
-  .tabs:has(.meter) {
+  .tabs {
     padding: 0 4px;
   }
-  .tabs:has(.meter) .tab {
+  .tabs .tab {
     padding: 8px 8px;
   }
   .tabs:has(.meter) .tab svg {

@@ -7,9 +7,10 @@ import { Timeline } from './Timeline'
 import { Composer } from './Composer'
 import { TasksBar } from './Tasks'
 import { ChangesView } from './Changes'
+import { PortsView } from './Ports'
 import { AgentBadge, Menu, Modal, StatusPill } from './ui'
 import { SessionMeter } from './Usage'
-import { IBack, IBell, IBox, IBranch, IChat, IClock, IDiff, IMore, ITerminal, IUsers, Spinner } from './icons'
+import { IBack, IBell, IBox, IBranch, IChat, IClock, IDiff, IGlobe, IMore, ITerminal, IUsers, Spinner } from './icons'
 import { cls, home, money, shortMode } from '../util'
 import { t } from '../i18n'
 
@@ -235,6 +236,11 @@ export function SessionView({ id }: { id: string }) {
         <a href={`#/s/${id}/term`} class={cls('tab', tab === 'term' && 'on')}>
           <ITerminal size={14} /> {t('Terminal')}
         </a>
+        {(!s.owner || s.owner === me.value?.id) && (
+          <a href={`#/s/${id}/ports`} class={cls('tab', tab === 'ports' && 'on')}>
+            <IGlobe size={14} /> {t('Ports')}
+          </a>
+        )}
         <span class="grow" />
         {modeLabel && tab !== 'chat' && <span class="dim small tab-note">{modeLabel}</span>}
         {/* the composer shows it in the chat */}
@@ -250,6 +256,11 @@ export function SessionView({ id }: { id: string }) {
       {tab === 'changes' && (
         <div class="tab-body">
           <ChangesView url={`/api/sessions/${id}/changes`} refreshKey={s.status === 'idle' ? s.updatedAt : 0} />
+        </div>
+      )}
+      {tab === 'ports' && (
+        <div class="tab-body">
+          <PortsView s={s} />
         </div>
       )}
       {tab === 'term' && (

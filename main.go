@@ -15,16 +15,19 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/tattsun/collie/internal/auth"
 	"github.com/tattsun/collie/internal/egress"
+	"github.com/tattsun/collie/internal/preview"
 	"github.com/tattsun/collie/internal/push"
 	"github.com/tattsun/collie/internal/sandbox"
 	"github.com/tattsun/collie/internal/server"
@@ -60,6 +63,11 @@ func main() {
 		fmt.Fprintln(os.Stderr, "collie net-bridge:", err)
 		os.Exit(1)
 	}
+	// Run by Collie in a container (podman exec): carries Collie's
+	// connections to the servers listening there (package preview).
+	if len(os.Args) > 1 && os.Args[1] == "port-bridge" {
+		os.Exit(portBridge(os.Args[2:]))
+	}
 	home, _ := os.UserHomeDir()
 	if len(os.Args) > 1 && os.Args[1] == "update" {
 		os.Exit(update.Main(os.Args[2:], version.Version, updateRepo(env("COLLIE_UPDATE_REPO", defaultUpdateRepo)),
@@ -90,6 +98,8 @@ func main() {
 	repo := flag.String("update-repo", env("COLLIE_UPDATE_REPO", defaultUpdateRepo), "GitHub repository (owner/name) whose releases Collie updates to; \"off\" to disable")
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	publicURL := flag.String("public-url", os.Getenv("COLLIE_PUBLIC_URL"), "URL users open (passkeys are bound to it; default: the host of the first registration)")
+	previewAddr := flag.String("preview-addr", os.Getenv("COLLIE_PREVIEW_ADDR"), "listen address for previews of the agents' servers (default: the port after --addr's, or :8443 with --domain; \"off\" turns previews off)")
+	previewURL := flag.String("preview-url", os.Getenv("COLLIE_PREVIEW_URL"), "where users open previews, on another origin than Collie's: a URL such as https://preview.example.com, or :PORT for Collie's own host name on that port (needed behind a reverse proxy or tailscale serve)")
 	flag.Usage = usage
 	flag.Parse()
 	if *showVersion {
@@ -110,6 +120,10 @@ func main() {
 		if *domain != "" || !loopbackAddr(*addr) {
 			log.Fatalf("--no-auth is only for development on this machine: use --addr 127.0.0.1:PORT (and no --domain)")
 		}
+	}
+	pv, err := previewSetup(*addr, *domain, *previewAddr, *previewURL, *noAuth)
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	st, err := store.Open(*dataDir)
@@ -197,33 +211,66 @@ func main() {
 	if err != nil {
 		log.Printf("notifications while Collie is closed are off: %v", err)
 	}
-	srv := server.New(mgr, terms, users, server.Options{Token: *token, NoAuth: *noAuth, Web: web.FS(),
-		PublicURL: *publicURL, Owner: owner, Updater: upd, Push: pushSvc})
-	if web.FS() == nil {
-		log.Printf("warning: web UI is not built (run `mise run build`); only the API is available")
-	}
-
 	ln, err := net.Listen("tcp", *addr)
 	if err != nil {
 		log.Fatalf("listen: %v", err)
 	}
-	hs := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second,
+	var pln net.Listener
+	if pv.addr != "" {
+		if pln, err = net.Listen("tcp", pv.addr); err != nil {
+			log.Printf("note: previews of the agents' servers are off: %v", err)
+			pv.url = "off"
+		}
+	}
+	ownPorts := []int{ln.Addr().(*net.TCPAddr).Port}
+	previewPort := 0
+	if pln != nil {
+		previewPort = pln.Addr().(*net.TCPAddr).Port
+		ownPorts = append(ownPorts, previewPort)
+	}
+	if *domain != "" {
+		ownPorts = append(ownPorts, 80)
+	}
+	srv := server.New(mgr, terms, users, server.Options{Token: *token, NoAuth: *noAuth, Web: web.FS(),
+		PublicURL: *publicURL, Owner: owner, Updater: upd, Push: pushSvc,
+		PreviewURL: pv.url, PreviewPort: previewPort, OwnPorts: ownPorts})
+	if web.FS() == nil {
+		log.Printf("warning: web UI is not built (run `mise run build`); only the API is available")
+	}
+
+	var handler http.Handler = srv.Handler()
+	if pv.host != "" {
+		// The preview origin's own name, on Collie's HTTPS port.
+		handler = byHost{host: pv.host, match: srv.PreviewHandler(), other: handler}
+	}
+	hs := &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout: 2 * time.Minute, MaxHeaderBytes: 64 << 10}
+	var phs *http.Server
+	if pln != nil {
+		phs = &http.Server{Handler: srv.PreviewHandler(), ReadHeaderTimeout: 10 * time.Second,
+			IdleTimeout: 2 * time.Minute, MaxHeaderBytes: 64 << 10}
+	}
 	var certs *autocert.Manager
 	if *domain != "" {
 		certs = &autocert.Manager{
 			Prompt:     autocert.AcceptTOS,
-			HostPolicy: autocert.HostWhitelist(*domain),
+			HostPolicy: autocert.HostWhitelist(append([]string{*domain}, pv.certHosts...)...),
 			Cache:      autocert.DirCache(filepath.Join(*dataDir, "acme")),
 		}
-		hs.TLSConfig = certs.TLSConfig()
-		hs.TLSConfig.MinVersion = tls.VersionTLS12
-		// HTTP/1.1 only: the terminal and live updates are WebSockets.
-		var http1 http.Protocols
-		http1.SetHTTP1(true)
-		hs.Protocols = &http1
-		// Scanners probe every public address; their failed handshakes are noise.
-		hs.ErrorLog = log.New(quietHandshakes{}, "", log.LstdFlags)
+		for _, s := range []*http.Server{hs, phs} {
+			if s == nil {
+				continue
+			}
+			s.TLSConfig = certs.TLSConfig()
+			s.TLSConfig.MinVersion = tls.VersionTLS12
+			// HTTP/1.1 only: the terminal, live updates and dev servers' hot
+			// reload are WebSockets.
+			var http1 http.Protocols
+			http1.SetHTTP1(true)
+			s.Protocols = &http1
+			// Scanners probe every public address; their failed handshakes are noise.
+			s.ErrorLog = log.New(quietHandshakes{}, "", log.LstdFlags)
+		}
 	}
 
 	// The token is only shown on an interactive terminal, never written to a
@@ -244,8 +291,17 @@ func main() {
 		}
 	}
 	log.Printf("projects root: %s · data: %s", absRoot, *dataDir)
+	switch {
+	case pv.url == "off":
+	case pln != nil && pv.url != "":
+		log.Printf("previews of the agents' servers: %s (served on %s)", pv.url, pln.Addr())
+	case pln != nil:
+		log.Printf("previews of the agents' servers: port %d of the address Collie is opened at", previewPort)
+	case pv.host != "":
+		log.Printf("previews of the agents' servers: %s", pv.url)
+	}
 
-	go func() {
+	serve := func(hs *http.Server, ln net.Listener) {
 		var err error
 		if certs != nil {
 			err = hs.ServeTLS(ln, "", "")
@@ -255,7 +311,11 @@ func main() {
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Fatalf("serve: %v", err)
 		}
-	}()
+	}
+	go serve(hs, ln)
+	if phs != nil {
+		go serve(phs, pln)
+	}
 	if certs != nil {
 		go serveHTTPRedirect(certs)
 	}
@@ -275,6 +335,9 @@ func main() {
 	log.Printf("shutting down…")
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	_ = hs.Shutdown(ctx)
+	if phs != nil {
+		_ = phs.Shutdown(ctx)
+	}
 	cancel()
 	terms.CloseAll()
 	mgr.Shutdown()
@@ -304,6 +367,118 @@ func loopbackAddr(addr string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+
+// previewConf is where previews of the agents' servers are served.
+type previewConf struct {
+	addr      string   // their own listener ("": none)
+	url       string   // for server.Options.PreviewURL
+	host      string   // their own name on Collie's main (HTTPS) listener
+	certHosts []string // more names for Let's Encrypt (--domain)
+}
+
+// previewSetup works out the preview origin from the flags. Previews get
+// their own port next to Collie's by default (with --domain: 8443), which
+// works the same on a LAN, over Tailscale and on a domain, with the same
+// certificate. A host name of their own (--preview-url) separates them
+// from Collie further: then the browser doesn't even send Collie's cookie
+// to them.
+func previewSetup(addr, domain, pAddr, pURL string, noAuth bool) (previewConf, error) {
+	if pAddr == "off" || pURL == "off" {
+		return previewConf{url: "off"}, nil
+	}
+	c := previewConf{addr: pAddr, url: pURL}
+	bad := fmt.Errorf("--preview-url %q: give a URL such as https://preview.example.com, or :PORT", pURL)
+	switch {
+	case strings.HasPrefix(pURL, ":"):
+		if n, err := strconv.Atoi(pURL[1:]); err != nil || n <= 0 || n > 65535 {
+			return c, bad
+		}
+	case pURL != "":
+		u, err := url.Parse(pURL)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.User != nil {
+			return c, bad
+		}
+		c.url = u.Scheme + "://" + strings.ToLower(u.Host)
+		if domain != "" && u.Scheme == "https" && !strings.EqualFold(u.Hostname(), domain) {
+			c.certHosts = []string{strings.ToLower(u.Hostname())}
+			if p := u.Port(); p == "" || p == "443" {
+				// On Collie's own HTTPS port, by name: no listener of its own
+				// unless asked for one.
+				c.host = strings.ToLower(u.Hostname())
+				if pAddr == "" {
+					return c, nil
+				}
+			}
+		}
+	}
+	if c.addr == "" {
+		c.addr = nextPort(addr)
+		if domain != "" {
+			c.addr = ":8443"
+		}
+	}
+	if domain != "" && c.url == "" {
+		_, port, _ := net.SplitHostPort(c.addr)
+		c.url = "https://" + net.JoinHostPort(domain, port)
+	}
+	if noAuth && !loopbackAddr(c.addr) {
+		return c, fmt.Errorf("--no-auth: --preview-addr must be a loopback address too")
+	}
+	return c, nil
+}
+
+// nextPort is the listen address with the port after addr's.
+func nextPort(addr string) string {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return ""
+	}
+	n, err := strconv.Atoi(port)
+	if err != nil || n <= 0 || n >= 65535 {
+		return net.JoinHostPort(host, "0")
+	}
+	return net.JoinHostPort(host, strconv.Itoa(n+1))
+}
+
+// byHost sends requests for one host name to their own handler.
+type byHost struct {
+	host         string
+	match, other http.Handler
+}
+
+func (b byHost) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	h := r.Host
+	if hn, _, err := net.SplitHostPort(h); err == nil {
+		h = hn
+	}
+	if strings.EqualFold(h, b.host) {
+		b.match.ServeHTTP(w, r)
+		return
+	}
+	b.other.ServeHTTP(w, r)
+}
+
+// portBridge is `collie port-bridge [--skip PORT]…`.
+func portBridge(args []string) int {
+	f := preview.Filter{UID: -1}
+	for i := 0; i < len(args); i++ {
+		n := 0
+		if args[i] == "--skip" && i+1 < len(args) {
+			n, _ = strconv.Atoi(args[i+1])
+			i++
+		}
+		if !preview.ValidPort(n) {
+			fmt.Fprintln(os.Stderr, "usage: collie port-bridge [--skip PORT]…")
+			return 2
+		}
+		f.SkipPorts = append(f.SkipPorts, n)
+	}
+	if err := preview.ServeStdio(f); err != nil {
+		fmt.Fprintln(os.Stderr, "collie port-bridge:", err)
+		return 1
+	}
+	return 0
 }
 
 // quietHandshakes drops "TLS handshake error" lines from the server log.

@@ -24,7 +24,7 @@ sudo ./deploy/setup-host.sh            # add --public for your own domain
 
 This installs Podman and creates a `collie` user that runs Collie and every agent, so agents can't touch your own `~/.ssh` or personal files. It also adds a firewall rule: that user's processes can reach the internet, but not your LAN, your tailnet or this server. To let agents reach something like a NAS, pass `--allow 192.168.1.20/32`. See `--help` for all options.
 
-With `--public`, Collie may listen on ports 80 and 443 even though it doesn't run as root. This lets every user on the machine listen on ports from 80 up, so use it on a server that is there for Collie. It also opens 80 and 443 in ufw or firewalld if one is on. Open them in your cloud provider's firewall yourself.
+With `--public`, Collie may listen on ports 80 and 443 even though it doesn't run as root. This lets every user on the machine listen on ports from 80 up, so use it on a server that is there for Collie. It also opens 80, 443 and 8443 (for [previews](#previews)) in ufw or firewalld if one is on. Open them in your cloud provider's firewall yourself.
 
 ## 2. Install Collie (as `collie`)
 
@@ -49,7 +49,7 @@ Logs: `journalctl --user -u collie -f`
 
 ### Your own domain
 
-Point the domain's DNS at the server and open ports 80 and 443 before you first open Collie. The certificate is fetched on the first visit, and Let's Encrypt refuses for a while after a few failed tries. Port 80 only redirects to HTTPS and answers Let's Encrypt.
+Point the domain's DNS at the server and open ports 80 and 443 (and 8443 for [previews](#previews)) before you first open Collie. The certificate is fetched on the first visit, and Let's Encrypt refuses for a while after a few failed tries. Port 80 only redirects to HTTPS and answers Let's Encrypt.
 
 ### Your reverse proxy
 
@@ -87,6 +87,37 @@ The first time, `--funnel` prints a link to allow Funnel on your tailnet. To tak
 2. Click **Create passkey**. You become the first admin. From then on you can sign in only with a passkey, and the setup token stops working.
 3. Under Account → **Agent accounts**, connect your Claude Code / Codex. The screen walks you through it. You can add several Claude accounts (a subscription, Amazon Bedrock, an API key or custom settings) and choose one per project in Project → Settings → **Claude account**.
 4. Invite other people from Admin → Users → **Invite**. Their agents run on their own accounts, so each person pays for their own usage.
+
+## Previews
+
+In a session, the **Ports** tab lists the servers its agent has started, such as `npm run dev`, in the project's container (or on the server, for a host-run project). Tapping one opens it in a new tab through Collie, hot reload included.
+
+Previews are served on an origin of their own, so a page an agent wrote can't read or use your Collie sign-in. By default that origin is another port of Collie's address:
+
+| | Previews open at | What to set up |
+|---|---|---|
+| **Your own domain** | `https://collie.example.com:8443` | Open port 8443 too. `setup-host.sh --public` opens it in ufw or firewalld; open it in your cloud provider's firewall yourself |
+| **Your reverse proxy** | The address you give | Serve `http://127.0.0.1:7879`, WebSockets included, on a host name or port of its own, and add `--preview-url https://preview.example.com` to `mise run install --proxy …` |
+| **Tailscale** | `https://<machine>.<tailnet>.ts.net:8443` | Nothing: `--serve` and `--funnel` set it up (Funnel allows port 8443) |
+| Trying it out | `http://<server>:7879` | Nothing |
+
+A port is the default because it works the same on your own domain, over Tailscale and on a LAN, with the certificate Collie already has and nothing to add to DNS. Tailscale's certificates cover only the machine's own name, so there a port is the only option.
+
+A host name of its own keeps previews further from Collie, and is the better choice on your own domain if you can add a DNS record. Browsers keep cookies per host name, not per port. On a port, the browser also sends Collie's sign-in cookie to the preview (Collie drops it before anything reaches the agent's server), and a page there can overwrite Collie's cookies, which signs you out. With `--domain`, point another name at the server and add `--preview-url https://preview.collie.example.com`: Collie gets a certificate for it too and serves it on port 443. A name under another domain, such as `collie-preview.example.net`, also keeps previews from setting cookies for Collie's domain.
+
+Behind Caddy, for example:
+
+```
+preview.example.com {
+	reverse_proxy 127.0.0.1:7879
+}
+```
+
+- A browser has one preview open at a time. Opening another replaces it.
+- Servers listening on `localhost` or on every address are found. A project's container stops after 30 minutes without agents, terminals or previews in use, and its servers stop with it.
+- The servers see requests for `localhost:<port>`, so the host checks of dev servers such as Vite and webpack pass as they are.
+- Service workers don't run in previews.
+- `--preview-addr off` turns previews off.
 
 ## Update
 

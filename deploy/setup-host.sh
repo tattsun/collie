@@ -12,11 +12,12 @@
 #   3. installs a firewall rule: every process of that user — including the
 #      project containers — may reach the internet but NOT your LAN, your
 #      tailnet, link-local addresses, any of this server's own addresses, or
-#      Collie's own port.
+#      Collie's own ports (its API, and the next one for previews).
 #      (--allow adds exceptions, e.g. --allow 192.168.1.20/32 for a NAS.)
 #   4. with --public (for `mise run install --domain …`): lets unprivileged
 #      users bind ports 80 and up, so Collie can serve HTTPS itself, opens
-#      80/443 in ufw or firewalld if active, and keeps agents off those ports.
+#      80/443 (and 8443, for previews) in ufw or firewalld if active, and
+#      keeps agents off those ports.
 #
 # Then switch to that user and install Collie itself (see docs/setup.md).
 set -euo pipefail
@@ -115,10 +116,11 @@ if command -v tailscale >/dev/null 2>&1; then
   tailscale set --operator="$user" || true
 fi
 
-# Collie's own ports, which agents must never reach.
-ports="$port"
+# Collie's own ports, which agents must never reach: its API and the
+# previews of the agents' servers (the next port; 8443 with --domain).
+ports="$port, $((port + 1))"
 if [[ $public == 1 ]]; then
-  ports="$port, 80, 443"
+  ports="$port, $((port + 1)), 80, 443, 8443"
   echo "== public HTTPS"
   # Ports below 1024 are root-only by default; Collie runs as $user.
   echo "net.ipv4.ip_unprivileged_port_start = 80" > /etc/sysctl.d/60-collie.conf
@@ -126,9 +128,10 @@ if [[ $public == 1 ]]; then
   if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
     ufw allow 80/tcp
     ufw allow 443/tcp
+    ufw allow 8443/tcp
   fi
   if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
-    firewall-cmd --permanent --add-service=http --add-service=https
+    firewall-cmd --permanent --add-service=http --add-service=https --add-port=8443/tcp
     firewall-cmd --reload
   fi
 fi

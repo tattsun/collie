@@ -76,6 +76,27 @@ const ja: Record<string, string> = {
   Chat: 'チャット',
   Changes: '変更',
   Terminal: 'ターミナル',
+  Ports: 'ポート',
+
+  // ---- Ports (previews of the agents' servers)
+  "Only the session's owner can open its servers.": 'このセッションのサーバーを開けるのは、セッションを始めた人だけです。',
+  "Previews aren't set up on this server yet.": 'このサーバーではまだプレビューが設定されていません。',
+  'Collie serves them on their own port or host name. Behind a reverse proxy or tailscale serve, give it --preview-url (see Setup → Previews in the docs).':
+    'Collie はプレビューを別のポートかホスト名で配信します。リバースプロキシや tailscale serve の後ろで動かしているときは --preview-url を指定してください（ドキュメントの「セットアップ → プレビュー」）。',
+  'Ask an admin to set them up.': '管理者に設定を依頼してください。',
+  'Your browser blocked the new tab. Tap to open port {port}:': 'ブラウザが新しいタブをブロックしました。タップするとポート {port} を開きます：',
+  'Open port {port}': 'ポート {port} を開く',
+  "The project's container isn't running, so nothing in it is listening. Ask the agent to start the server again.":
+    'プロジェクトのコンテナが止まっているため、待ち受け中のサーバーはありません。エージェントにサーバーをもう一度起動してもらってください。',
+  'Nothing is listening yet. Ask the agent to start a dev server (npm run dev, for example); it shows up here.':
+    'まだ何も待ち受けていません。エージェントに開発サーバー（npm run dev など）を起動してもらうと、ここに表示されます。',
+  'Port, e.g. 5173': 'ポート番号（例: 5173）',
+  'Port number': 'ポート番号',
+  'Opens in a new tab, on an address of its own: the page can’t see your Collie sign-in. Only you can open it. A browser shows one preview at a time; opening another replaces it.':
+    '新しいタブで、Collie とは別のアドレスに開きます。ページから Collie のサインイン情報は見えません。開けるのはあなただけです。1 つのブラウザで開けるプレビューは 1 つだけで、別のものを開くと置き換わります。',
+  'previews are not set up on this server': 'このサーバーではプレビューが設定されていません',
+  'too many preview links at once; try again in a minute': 'プレビューのリンクを一度に作りすぎました。1 分ほど待ってからもう一度試してください',
+  'choose a port between 1 and 65535': '1〜65535 のポート番号を指定してください',
 
   // ---- Usage (sidebar panel, session meter)
   Usage: '使用量',

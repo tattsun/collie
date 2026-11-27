@@ -9,6 +9,7 @@
 #   mise run install --proxy URL        # on 127.0.0.1:7878 behind your own reverse proxy serving URL
 #   mise run install --serve            # on 127.0.0.1, published on your tailnet with `tailscale serve`
 #   mise run install --funnel           # like --serve, and on the internet with Tailscale Funnel
+#   … --preview-url URL                 # where previews of the agents' servers are opened (needed with --proxy)
 #
 # (or ./deploy/install.sh with the same options)
 # Env overrides: PREFIX (default ~/.local/bin), COLLIE_PORT (7878), COLLIE_ROOT, COLLIE_DATA
@@ -25,13 +26,15 @@ serve=0
 funnel=0
 domain=""
 proxy=""
+preview_url=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --serve) serve=1; shift ;;
     --funnel) serve=1; funnel=1; shift ;;
     --domain) domain="${2:?--domain needs a name, e.g. collie.example.com}"; shift 2 ;;
     --proxy) proxy="${2:?--proxy needs the URL users open, e.g. https://collie.example.com}"; shift 2 ;;
-    -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
+    --preview-url) preview_url="${2:?--preview-url needs a URL, e.g. https://preview.example.com}"; shift 2 ;;
+    -h|--help) sed -n '2,15p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -105,6 +108,11 @@ fi
 
 addr=":$port"
 [[ $serve == 1 || -n "$proxy" ]] && addr="127.0.0.1:$port"
+# Previews of the agents' servers are served on the next port, on their
+# own origin (docs/setup.md). Over Tailscale they get port 8443 of the
+# machine's name.
+pport=$((port + 1))
+[[ $serve == 1 && -z "$preview_url" ]] && preview_url=":8443"
 
 # PATH for the service: if mise is in use, put its shims first so tools it
 # manages (and per-project versions in each project's mise.toml) resolve the
@@ -121,6 +129,7 @@ data=()
 listen=("--addr" "$addr")
 [[ -n "$domain" ]] && listen=("--domain" "$domain")      # :443 (and :80 for the redirect)
 [[ -n "$proxy" ]] && listen+=("--public-url" "$proxy")
+[[ -n "$preview_url" ]] && listen+=("--preview-url" "$preview_url")
 # (${data[@]+…}: bash 3.2 calls an empty array unbound)
 cmd=("$prefix/collie" "${listen[@]}" ${data[@]+"${data[@]}"})
 started=1
@@ -233,6 +242,16 @@ if [[ $serve == 1 ]]; then
       "$tailscale" serve --bg "$port" 2>/dev/null || { [[ "$os" == Linux ]] && sudo "$tailscale" serve --bg "$port"; } || \
         echo "warning: 'tailscale serve' failed. Try: sudo tailscale set --operator=$USER && tailscale serve --bg $port"
     fi
+    if [[ "$preview_url" == ":8443" ]]; then
+      if [[ $funnel == 1 ]]; then
+        "$tailscale" funnel --bg --https=8443 "http://127.0.0.1:$pport" || \
+          echo "warning: 'tailscale funnel' for previews failed. Try: tailscale funnel --bg --https=8443 http://127.0.0.1:$pport"
+      else
+        "$tailscale" funnel --https=8443 off >/dev/null 2>&1 || true
+        "$tailscale" serve --bg --https=8443 "http://127.0.0.1:$pport" || \
+          echo "warning: 'tailscale serve' for previews failed. Try: tailscale serve --bg --https=8443 http://127.0.0.1:$pport"
+      fi
+    fi
     "$tailscale" serve status 2>/dev/null || true
   else
     echo "warning: tailscale CLI not found; install Tailscale and run 'tailscale serve --bg $port'."
@@ -258,10 +277,14 @@ if [[ $serve == 1 ]]; then
 elif [[ -n "$domain" ]]; then
   url="https://$domain"
   echo "The certificate is fetched on the first visit: $domain must already point at this server,"
-  echo "and ports 443 and 80 must be open to the internet."
+  echo "and ports 443 and 80 must be open to the internet (and 8443, for previews of the agents' servers)."
 elif [[ -n "$proxy" ]]; then
   url="${proxy%/}"
   echo "Point your reverse proxy at http://127.0.0.1:$port (see docs/setup.md)."
+  if [[ -z "$preview_url" ]]; then
+    echo "To open the agents' dev servers from a session (Ports), also serve http://127.0.0.1:$pport"
+    echo "on a name or port of its own and run this again with --preview-url (see docs/setup.md)."
+  fi
 fi
 if [[ -n "$url" ]]; then
   echo "First setup — open this, then create your passkey (the link stops working once one exists):"

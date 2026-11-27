@@ -45,7 +45,7 @@ Turn them on in Account → **Notifications** on each device you want them on, t
 
 ## Dev servers
 
-Ask the agent to start the app (`npm run dev` and the like), then open the session's **Ports** tab. It lists what is listening in the project's container, and a tap opens it in a new tab, with hot reload. Only you can open your sessions' servers, even in a shared session. Where previews are served is set up on the server (see [Setup](setup.md#previews)).
+Ask the agent to start the app (`npm run dev` and the like), then open the session's **Ports** tab. It lists what is listening in the project's container, this session's servers first, and a tap opens it in a new tab, with hot reload. Several can be open at once. Only you can open your sessions' servers, even in a shared session. Where previews are served is set up on the server (see [Setup](setup.md#previews)).
 
 ## Isolation
 

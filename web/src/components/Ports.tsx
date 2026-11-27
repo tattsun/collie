@@ -1,12 +1,22 @@
 import { useEffect, useState } from 'preact/hooks'
 import type { Session } from '../types'
 import { api } from '../api'
-import { me, toastError } from '../store'
+import { me, projectById, sessionById, toastError } from '../store'
 import { t, ts } from '../i18n'
 import { IExternal, IGlobe, Spinner } from './icons'
 
-type Port = { port: number; addr: string; process?: string }
-type Ports = { enabled: boolean; shared: boolean; running: boolean; ports: Port[]; error?: string }
+/** A listening port, with the sessions working in the folder its server
+ * runs in (none: not known) and whether that is a worktree or the
+ * project's folder (which sessions without a worktree share). */
+type Port = { port: number; addr: string; process?: string; sessions: string[]; folder?: 'worktree' | 'project' }
+type Ports = { enabled: boolean; shared: boolean; slots: number; running: boolean; ports: Port[]; error?: string }
+
+/** Whose a server is, as a label for a session other than this one. */
+function whose(p: Port): string {
+  if (!p.sessions.length) return p.folder === 'project' ? t('Project folder') : t('Unknown')
+  const titles = p.sessions.map((id) => sessionById.value.get(id)?.title || t('Untitled session'))
+  return titles.length > 1 ? t('{title} +{n}', { title: titles[0], n: titles.length - 1 }) : titles[0]
+}
 
 /** The servers listening in the session's container (or on the server, for
  * a host-run session), each opened in a new tab on Collie's preview origin. */
@@ -69,6 +79,32 @@ export function PortsView({ s }: { s: Session }) {
     return <div class="center pad">{err ? <p class="err">{ts(err)}</p> : <Spinner />}</div>
   }
   const off = !data.enabled
+  const hostRun = projectById.value.get(s.projectId)?.runtime !== 'container'
+  const mine = data.ports.filter((p) => p.sessions.includes(s.id))
+  const others = data.ports.filter((p) => !p.sessions.includes(s.id) && (p.sessions.length || p.folder === 'project'))
+  const unknown = data.ports.filter((p) => !p.sessions.length && p.folder !== 'project')
+  const row = (p: Port, label: string) => (
+    <li key={p.port}>
+      <button class="port-row" disabled={off} onClick={() => open(p.port)}>
+        <IGlobe size={16} />
+        <span class="port-num mono">{p.port}</span>
+        <span class="port-main">
+          <span class="port-proc mono">{p.process || ''}</span>
+          {label && <span class="port-who">{label}</span>}
+        </span>
+        <span class="port-open">
+          <IExternal size={14} /> {t('Open')}
+        </span>
+      </button>
+    </li>
+  )
+  const group = (title: string, ports: Port[], label: (p: Port) => string) =>
+    ports.length > 0 && (
+      <section class="ports-group">
+        <h4 class="ports-h">{title}</h4>
+        <ul class="ports-list">{ports.map((p) => row(p, label(p)))}</ul>
+      </section>
+    )
   return (
     <div class="ports">
       {off && (
@@ -96,20 +132,11 @@ export function PortsView({ s }: { s: Session }) {
       ) : data.ports.length === 0 ? (
         <p class="dim ports-empty">{t('Nothing is listening yet. Ask the agent to start a dev server (npm run dev, for example); it shows up here.')}</p>
       ) : (
-        <ul class="ports-list">
-          {data.ports.map((p) => (
-            <li key={p.port}>
-              <button class="port-row" disabled={off} onClick={() => open(p.port)}>
-                <IGlobe size={16} />
-                <span class="port-num mono">{p.port}</span>
-                <span class="port-proc mono">{p.process || ''}</span>
-                <span class="port-open">
-                  <IExternal size={14} /> {t('Open')}
-                </span>
-              </button>
-            </li>
-          ))}
-        </ul>
+        <>
+          {group(t('This session'), mine, (p) => (p.sessions.length > 1 ? t('Folder shared with {n} other sessions', { n: p.sessions.length - 1 }) : ''))}
+          {group(t('Other sessions'), others, whose)}
+          {group(t('Unknown'), unknown, () => '')}
+        </>
       )}
       <form
         class="row gap ports-manual"
@@ -135,7 +162,12 @@ export function PortsView({ s }: { s: Session }) {
       </form>
       <p class="hint ports-hint">
         {t('Opens in a new tab, on an address of its own: the page can’t see your Collie sign-in. Only you can open it.')}
-        {data.shared && ' ' + t('Previews share that address in your browser: opening another one replaces this one.')}
+        {data.shared &&
+          ' ' +
+            (data.slots > 1
+              ? t('Up to {n} previews can be open at once in your browser; opening more replaces the one used longest ago.', { n: data.slots })
+              : t('Previews share that address in your browser: opening another one replaces this one.'))}
+        {hostRun && ' ' + t('This project runs on the server itself, where every host-run agent works as the same user: only servers working in this session’s folder are shown and can be opened.')}
       </p>
     </div>
   )

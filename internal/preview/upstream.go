@@ -13,6 +13,7 @@ import (
 type Upstream struct {
 	dial  func(ctx context.Context, port int) (net.Conn, error)
 	ports func(ctx context.Context) ([]Port, error)
+	check func(port int) error // nil: any port may be asked for
 	stop  func()
 	tr    *http.Transport // HTTP/1.1 to the servers, over dial
 }
@@ -42,17 +43,24 @@ func newUpstream(dial func(context.Context, int) (net.Conn, error), ports func(c
 	return u
 }
 
-// HostUpstream reaches servers on this machine itself (host-run projects).
+// HostUpstream reaches servers on this machine itself (host-run
+// projects): only those the filter lets through, checked again for every
+// connection (a server of another session may have taken the port since).
 func HostUpstream(f Filter) *Upstream {
 	var d net.Dialer
 	d.Timeout = 10 * time.Second
-	return newUpstream(func(ctx context.Context, port int) (net.Conn, error) {
+	u := newUpstream(func(ctx context.Context, port int) (net.Conn, error) {
 		addr, err := DialAddr(port, f)
 		if err != nil {
 			return nil, err
 		}
 		return d.DialContext(ctx, "tcp", addr)
 	}, func(context.Context) ([]Port, error) { return Listening(f) }, nil)
+	u.check = func(port int) error {
+		_, err := DialAddr(port, f)
+		return err
+	}
+	return u
 }
 
 // BridgeUpstream reaches the servers in a container through its bridge.
@@ -60,6 +68,15 @@ func BridgeUpstream(b *Bridge) *Upstream { return newUpstream(b.Dial, b.Ports, b
 
 // Ports lists the ports something listens on.
 func (u *Upstream) Ports(ctx context.Context) ([]Port, error) { return u.ports(ctx) }
+
+// Check tells whether a port may be opened here (on the host: only a
+// server of the session's own folder). Containers allow any.
+func (u *Upstream) Check(port int) error {
+	if u.check == nil {
+		return nil
+	}
+	return u.check(port)
+}
 
 func (u *Upstream) close() {
 	u.tr.CloseIdleConnections()

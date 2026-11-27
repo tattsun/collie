@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -22,22 +24,47 @@ import (
 // the pages themselves are served on preview origins (PreviewHandler),
 // where Collie's sign-in never opens anything.
 //
-// Preview origins are either one shared origin on another port of
-// Collie's host name (PreviewURL "", ":PORT" or a URL), or, with a
-// wildcard URL (https://*.preview.example.com), a host name of its own for
-// every container: <label>.preview.example.com.
+// Preview origins are either a few ports of Collie's host name (slots,
+// PreviewURL "", ":" or a URL), or, with a wildcard URL
+// (https://*.preview.example.com), a host name of its own for every
+// container: <label>.preview.example.com.
 
 func (s *Server) previewRoutes() {
 	s.mux.HandleFunc("GET /api/sessions/{id}/ports", s.sessionPorts)
 	s.mux.HandleFunc("POST /api/sessions/{id}/preview", s.openPreview)
 }
 
-// PreviewHandler serves the preview origins (on their own listener, or
-// for their own host names).
-func (s *Server) PreviewHandler() http.Handler { return s.pv }
+// PreviewHandler serves one slot's preview port (the first for names of
+// their own).
+func (s *Server) PreviewHandler(slot int) http.Handler { return s.pv.Slot(slot) }
 
 func (s *Server) previewEnabled() bool {
-	return s.opt.PreviewURL != "off" && (s.opt.PreviewURL != "" || s.opt.PreviewPort != 0)
+	return s.opt.PreviewURL != "off" && (s.opt.PreviewURL != "" || len(s.opt.PreviewPorts) > 0)
+}
+
+// previewSlots is how many previews a browser can have open at once on
+// Collie's host name (with names of their own: one per container).
+func (s *Server) previewSlots() int {
+	if _, ok := parseWildcard(s.opt.PreviewURL); ok {
+		return 1
+	}
+	return max(1, len(s.publicPorts()))
+}
+
+// publicPorts are the preview ports as browsers use them.
+func (s *Server) publicPorts() []int {
+	if s.opt.PreviewPublic != nil {
+		return s.opt.PreviewPublic
+	}
+	return s.opt.PreviewPorts
+}
+
+func (s *Server) publicPort(slot int) (string, bool) {
+	ports := s.publicPorts()
+	if slot < 0 || slot >= len(ports) {
+		return "", false
+	}
+	return strconv.Itoa(ports[slot]), true
 }
 
 func (s *Server) newPreview() *preview.Proxy {
@@ -157,10 +184,10 @@ func (s *Server) browserScheme(r *http.Request) string {
 	return "http"
 }
 
-// previewBase is the preview origin for a target, for a browser on
-// Collie's origin, or "" when previews aren't set up (or can't be guessed:
-// behind a reverse proxy, it takes --preview-url).
-func (s *Server) previewBase(r *http.Request, target string) string {
+// previewBase is the preview origin of a slot for a target, for a browser
+// on Collie's origin, or "" when previews aren't set up (or can't be
+// guessed: behind a reverse proxy, it takes --preview-url).
+func (s *Server) previewBase(r *http.Request, target string, slot int) string {
 	if !s.previewEnabled() {
 		return ""
 	}
@@ -168,11 +195,19 @@ func (s *Server) previewBase(r *http.Request, target string) string {
 	if w, ok := parseWildcard(v); ok {
 		return w.url(previewLabel(target))
 	}
+	port, ok := s.publicPort(slot)
+	if !ok {
+		return ""
+	}
 	switch {
 	case strings.HasPrefix(v, "http://") || strings.HasPrefix(v, "https://"):
-		return strings.TrimSuffix(v, "/")
+		u, err := url.Parse(v)
+		if err != nil {
+			return ""
+		}
+		return u.Scheme + "://" + net.JoinHostPort(u.Hostname(), port)
 	case strings.HasPrefix(v, ":"):
-		return s.browserScheme(r) + "://" + net.JoinHostPort(s.browserHost(r), v[1:])
+		return s.browserScheme(r) + "://" + net.JoinHostPort(s.browserHost(r), port)
 	}
 	// Only for a browser that reached Collie directly: from this machine
 	// by a local name, or from elsewhere. Through a local proxy (loopback,
@@ -185,7 +220,7 @@ func (s *Server) previewBase(r *http.Request, target string) string {
 	if r.TLS != nil {
 		scheme = "https"
 	}
-	return scheme + "://" + net.JoinHostPort(host, strconv.Itoa(s.opt.PreviewPort))
+	return scheme + "://" + net.JoinHostPort(host, port)
 }
 
 func localName(h string) bool {
@@ -196,9 +231,9 @@ func localName(h string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-// previewOrigin is the preview origin a request was made to, as the
-// browser sees it, and with a wildcard, the label in its host name.
-func (s *Server) previewOrigin(r *http.Request) (origin, label string, ok bool) {
+// previewOrigin is the preview origin a request to a slot was made to, as
+// the browser sees it, and with a wildcard, the label in its host name.
+func (s *Server) previewOrigin(r *http.Request, slot int) (origin, label string, ok bool) {
 	v := s.opt.PreviewURL
 	if w, ok := parseWildcard(v); ok {
 		l, ok := w.label(hostname(requestHost(r)))
@@ -208,9 +243,12 @@ func (s *Server) previewOrigin(r *http.Request) (origin, label string, ok bool) 
 		return w.url(l), l, true
 	}
 	if strings.HasPrefix(v, "http://") || strings.HasPrefix(v, "https://") {
-		if u, err := url.Parse(v); err == nil {
-			return u.Scheme + "://" + u.Host, "", true
+		u, err := url.Parse(v)
+		port, ok := s.publicPort(slot)
+		if err != nil || !ok {
+			return "", "", false
 		}
+		return u.Scheme + "://" + net.JoinHostPort(u.Hostname(), port), "", true
 	}
 	h := requestHost(r)
 	scheme := "http"
@@ -289,7 +327,17 @@ func (s *Server) previewTarget(uid, sid string) (preview.Target, error) {
 		pid, owner := p.ID, sess.Owner
 		t.Touch = func() { s.m.TouchContainer(pid, owner) }
 	} else {
-		t.Upstream = s.upstreams.Get("host", func() *preview.Upstream { return preview.HostUpstream(s.hostFilter) })
+		// On the host every user's agents of every host-run project run
+		// as the same user: a session reaches only the servers working in
+		// its own folder, checked again for every connection.
+		f := s.hostFilter
+		if f.Allow == nil { // (tests may say otherwise)
+			f.Allow = func(dirs []string) bool {
+				fo, ok := preview.Where(dirs, s.hostFolders())
+				return ok && slices.Contains(fo.Sessions, sid)
+			}
+		}
+		t.Upstream = s.upstreams.Get("host|"+sid, func() *preview.Upstream { return preview.HostUpstream(f) })
 	}
 	if p.Allowlisted() {
 		t.Allow = append([]string{}, p.NetAllow...)
@@ -297,35 +345,151 @@ func (s *Server) previewTarget(uid, sid string) (preview.Target, error) {
 	return t, nil
 }
 
+// folders are where sessions work, for telling which session a server
+// belongs to: their own worktrees, and the project's folder, which the
+// sessions without a worktree share (and which may have none).
+func folders(projects []model.Project, sessions []model.Session) (out []preview.Folder, project map[string]bool) {
+	project = map[string]bool{}
+	at := map[string]int{}
+	add := func(path, sid string) {
+		if path == "" {
+			return
+		}
+		path = filepath.Clean(path)
+		i, ok := at[path]
+		if !ok {
+			i = len(out)
+			at[path] = i
+			out = append(out, preview.Folder{Path: path})
+		}
+		if sid != "" {
+			out[i].Sessions = append(out[i].Sessions, sid)
+		}
+	}
+	for _, p := range projects {
+		project[filepath.Clean(p.Path)] = true
+		add(p.Path, "")
+	}
+	for _, x := range sessions {
+		add(x.Cwd, x.ID)
+	}
+	return out, project
+}
+
+// containerFolders are the folders of the sessions in a user's container
+// for a project (all theirs).
+func (s *Server) containerFolders(p model.Project, owner string) ([]preview.Folder, map[string]bool) {
+	var sessions []model.Session
+	for _, x := range s.m.Store().Sessions() {
+		if x.ProjectID == p.ID && x.Owner == owner {
+			sessions = append(sessions, x)
+		}
+	}
+	return folders([]model.Project{p}, sessions)
+}
+
+// hostFolders are the folders of every host-run session, of every user:
+// a server in another one's folder is not this session's.
+func (s *Server) hostFolders() []preview.Folder {
+	st := s.m.Store()
+	var projects []model.Project
+	host := map[string]bool{}
+	for _, p := range st.Projects() {
+		if !p.Isolated() {
+			projects = append(projects, p)
+			host[p.ID] = true
+		}
+	}
+	var sessions []model.Session
+	for _, x := range st.Sessions() {
+		if host[x.ProjectID] {
+			sessions = append(sessions, x)
+		}
+	}
+	out, _ := folders(projects, sessions)
+	return out
+}
+
+// portInfo is a listening port as the Ports tab shows it.
+type portInfo struct {
+	Port    int    `json:"port"`
+	Addr    string `json:"addr"`
+	Process string `json:"process,omitempty"`
+	// Sessions are those working in the folder the server runs in (several
+	// for the project's folder); none when that is not known.
+	Sessions []string `json:"sessions"`
+	// Folder is "worktree" or "project" (the project's folder), "" when
+	// not known.
+	Folder string `json:"folder,omitempty"`
+}
+
 // sessionPorts lists what listens in the session's container (or, for a
-// host-run session, on the server as Collie's user).
+// host-run session, in its folder on the server), each with the sessions
+// whose folder it runs in.
 func (s *Server) sessionPorts(w http.ResponseWriter, r *http.Request) {
 	a := actor(r)
-	t, err := s.previewTarget(a.ID, r.PathValue("id"))
+	sid := r.PathValue("id")
+	t, err := s.previewTarget(a.ID, sid)
 	if err != nil {
 		fail(w, err)
 		return
 	}
 	_, own := parseWildcard(s.opt.PreviewURL)
-	out := map[string]any{"enabled": s.previewBase(r, t.Key) != "", "shared": !own, "running": true, "ports": []preview.Port{}}
+	out := map[string]any{"enabled": s.previewBase(r, t.Key, 0) != "", "shared": !own, "slots": s.previewSlots(),
+		"running": true, "ports": []portInfo{}}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 	ports, err := t.Upstream.Ports(ctx)
+	sess, _ := s.m.Store().Session(sid)
+	p, _ := s.m.Store().Project(sess.ProjectID)
 	if err != nil {
-		sess, _ := s.m.Store().Session(r.PathValue("id"))
-		if p, ok := s.m.Store().Project(sess.ProjectID); ok && p.Isolated() && !s.m.Sandbox().Running(p.ID, sess.Owner) {
+		if p.Isolated() && !s.m.Sandbox().Running(p.ID, sess.Owner) {
 			out["running"] = false
 		} else {
 			out["error"] = err.Error()
 		}
-	} else if ports != nil {
-		out["ports"] = ports
+		writeJSON(w, out)
+		return
 	}
+	var fs []preview.Folder
+	var project map[string]bool
+	if p.Isolated() {
+		fs, project = s.containerFolders(p, sess.Owner)
+	} else {
+		fs = s.hostFolders()
+		project = map[string]bool{filepath.Clean(p.Path): true}
+	}
+	out["ports"] = describePorts(ports, fs, project, func(id string) bool {
+		x, ok := s.m.Store().Session(id)
+		return ok && x.Owner == a.ID
+	})
 	writeJSON(w, out)
 }
 
+// describePorts says for each port which of the user's sessions (mine)
+// work in the folder its server runs in.
+func describePorts(ports []preview.Port, fs []preview.Folder, project map[string]bool, mine func(string) bool) []portInfo {
+	list := []portInfo{}
+	for _, x := range ports {
+		pi := portInfo{Port: x.Port, Addr: x.Addr, Process: x.Cmd, Sessions: []string{}}
+		if fo, ok := preview.Where(x.Dirs, fs); ok {
+			pi.Folder = "worktree"
+			if project[fo.Path] {
+				pi.Folder = "project"
+			}
+			for _, id := range fo.Sessions {
+				if mine(id) {
+					pi.Sessions = append(pi.Sessions, id)
+				}
+			}
+		}
+		list = append(list, pi)
+	}
+	return list
+}
+
 // openPreview hands out a link that opens one of the session's ports on
-// its preview origin: good once, for a minute, for this user, sign-in,
+// a preview origin: good once, for a minute, for this user, sign-in,
 // session and port only.
 func (s *Server) openPreview(w http.ResponseWriter, r *http.Request) {
 	var req struct {
@@ -346,9 +510,8 @@ func (s *Server) openPreview(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	base := s.previewBase(r, t.Key)
-	if base == "" {
-		httpError(w, http.StatusConflict, "previews are not set up on this server")
+	if err := t.Upstream.Check(req.Port); err != nil {
+		httpError(w, http.StatusForbidden, "no server of this session is listening on that port")
 		return
 	}
 	g := preview.Grant{UserID: a.ID, SessionID: sid, Port: req.Port, Target: t.Key}
@@ -356,6 +519,13 @@ func (s *Server) openPreview(w http.ResponseWriter, r *http.Request) {
 	g.Legacy, _ = r.Context().Value(legacyKey).(bool)
 	if _, ok := parseWildcard(s.opt.PreviewURL); ok {
 		g.Label = previewLabel(t.Key)
+	} else {
+		g.Slot = s.pv.ChooseSlot(r, g, s.previewSlots())
+	}
+	base := s.previewBase(r, t.Key, g.Slot)
+	if base == "" {
+		httpError(w, http.StatusConflict, "previews are not set up on this server")
+		return
 	}
 	tok := s.pv.Mint(g)
 	if tok == "" {

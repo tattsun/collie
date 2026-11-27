@@ -15,6 +15,9 @@ type Filter struct {
 	// SkipPorts are never listed nor connected to (e.g. the allowlist
 	// proxy's bridge in a container, Collie's own ports on the host).
 	SkipPorts []int
+	// Allow, if set, keeps only servers whose working directories (see
+	// ancestry) it accepts: on the host, the ones of one session's folder.
+	Allow func(dirs []string) bool
 }
 
 func (f Filter) skip(s socket, pr proc) bool {
@@ -22,6 +25,9 @@ func (f Filter) skip(s socket, pr proc) bool {
 		return true
 	}
 	if f.SkipOwn && pr.pid == os.Getpid() {
+		return true
+	}
+	if f.Allow != nil && !f.Allow(pr.dirs) {
 		return true
 	}
 	return slices.Contains(f.SkipPorts, s.port)

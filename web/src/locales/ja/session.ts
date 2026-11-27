@@ -97,6 +97,18 @@ const ja: Record<string, string> = {
   'Previews share that address in your browser: opening another one replaces this one.':
     'このブラウザではプレビュー同士がそのアドレスを共有するので、別のものを開くとこちらは置き換わります。',
   'previews are not set up on this server': 'このサーバーではプレビューが設定されていません',
+  'no server of this session is listening on that port': 'このセッションのサーバーはそのポートで待ち受けていません',
+  'This session': 'このセッション',
+  'Other sessions': 'ほかのセッション',
+  Unknown: '不明',
+  'Project folder': 'プロジェクトのフォルダ',
+  'Untitled session': '無題のセッション',
+  '{title} +{n}': '{title} ほか {n} 件',
+  'Folder shared with {n} other sessions': 'ほかの {n} セッションとフォルダを共有',
+  'Up to {n} previews can be open at once in your browser; opening more replaces the one used longest ago.':
+    'このブラウザでは同時に {n} 個までプレビューを開けます。それ以上開くと、いちばん長く使っていないものが置き換わります。',
+  'This project runs on the server itself, where every host-run agent works as the same user: only servers working in this session’s folder are shown and can be opened.':
+    'このプロジェクトはサーバー上で直接動いていて、ホスト実行のエージェントはみな同じユーザーで動きます。そのため、このセッションのフォルダで動いているサーバーだけを表示し、開けるようにしています。',
   'too many preview links at once; try again in a minute': 'プレビューのリンクを一度に作りすぎました。1 分ほど待ってからもう一度試してください',
   'choose a port between 1 and 65535': '1〜65535 のポート番号を指定してください',
 

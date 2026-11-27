@@ -26,7 +26,35 @@ func scan() ([]socket, map[uint64]proc, error) {
 	for _, s := range socks {
 		want[s.inode] = true
 	}
-	return socks, owners(want), nil
+	procs := owners(want)
+	dirs := map[int][]string{}
+	for ino, pr := range procs {
+		d, ok := dirs[pr.pid]
+		if !ok {
+			d = ancestry(pr.pid, os.Getpid(), procParent, procCwd)
+			dirs[pr.pid] = d
+		}
+		pr.dirs = d
+		procs[ino] = pr
+	}
+	return socks, procs, nil
+}
+
+func procParent(pid int) int {
+	b, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+	if err != nil {
+		return 0
+	}
+	return parseStatPPid(string(b))
+}
+
+// procCwd is a process's working directory ("" if not ours to read).
+func procCwd(pid int) string {
+	d, err := os.Readlink("/proc/" + strconv.Itoa(pid) + "/cwd")
+	if err != nil {
+		return ""
+	}
+	return cleanCwd(d)
 }
 
 // At most this many processes are looked through for socket owners.

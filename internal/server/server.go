@@ -54,11 +54,17 @@ type Options struct {
 	// Push sends Web Push notifications (nil: none).
 	Push *push.Service
 	// Previews of the agents' servers (see preview.go). PreviewURL is
-	// where browsers reach them: a URL, ":PORT" for the host name Collie is
-	// reached by on another port, "" for PreviewPort on the host name a
-	// browser reached Collie by directly, or "off".
-	PreviewURL  string
-	PreviewPort int // where Collie serves previews (0: no listener of its own)
+	// where browsers reach them: "" for the preview ports on the host name
+	// a browser reached Collie by directly, ":" for that host name on the
+	// PreviewPublic ports, a URL on Collie's own name (its port being the
+	// first of PreviewPublic), a wildcard URL for names of their own, or
+	// "off".
+	PreviewURL string
+	// PreviewPorts are the ports Collie serves previews on, one per slot
+	// (none: no listeners of their own); PreviewPublic the ports browsers
+	// use for them (nil: the same).
+	PreviewPorts  []int
+	PreviewPublic []int
 	// OwnPorts are Collie's own listening ports, never opened as a
 	// host-run session's server.
 	OwnPorts []int

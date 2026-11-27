@@ -27,6 +27,9 @@ type Port struct {
 	Port int    `json:"port"`
 	Addr string `json:"addr"`              // the address it is bound to ("0.0.0.0", "::1", …)
 	Cmd  string `json:"process,omitempty"` // a short form of the command line that listens
+	// Dirs are the working directories of the process that listens and
+	// of its parents, nearest first (see Where).
+	Dirs []string `json:"dirs,omitempty"`
 
 	uid   int
 	inode uint64
@@ -162,6 +165,9 @@ func merge(socks []socket, names map[uint64]proc, skip func(socket, proc) bool) 
 		if p.Cmd == "" {
 			p.Cmd = pr.cmd
 		}
+		if p.Dirs == nil {
+			p.Dirs = pr.dirs
+		}
 	}
 	out := make([]Port, 0, len(by))
 	for _, p := range by {
@@ -197,6 +203,7 @@ type proc struct {
 	pid  int
 	cmd  string
 	hide bool
+	dirs []string // see ancestry
 }
 
 // ErrNotListening means nothing listens on the port asked for.

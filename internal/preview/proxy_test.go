@@ -27,7 +27,7 @@ func testProxy(t *testing.T) (*Proxy, *atomic.Bool) {
 			}
 			return Target{Key: g.Target, Upstream: up}, nil
 		},
-		Origin: func(*http.Request) (string, string, bool) { return "https://p.test", "", true },
+		Origin: func(*http.Request, int) (string, string, bool) { return "https://p.test", "", true },
 	}
 	return p, &gone
 }
@@ -51,12 +51,12 @@ func openIn(t *testing.T, p *Proxy, g Grant, cookie string) (*httptest.ResponseR
 	r := httptest.NewRequest("GET", OpenPath+"?t="+p.Mint(g), nil)
 	r.Header.Set("Sec-Fetch-Mode", "navigate")
 	if cookie != "" {
-		r.AddCookie(&http.Cookie{Name: CookieName, Value: cookie})
+		r.AddCookie(&http.Cookie{Name: CookieName(g.Slot), Value: cookie})
 	}
 	w := httptest.NewRecorder()
-	p.ServeHTTP(w, r)
+	p.Slot(g.Slot).ServeHTTP(w, r)
 	for _, c := range w.Result().Cookies() {
-		if c.Name == CookieName {
+		if c.Name == CookieName(g.Slot) {
 			return w, c.Value
 		}
 	}
@@ -108,7 +108,7 @@ func TestNoInformationalResponses(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	fmt.Fprintf(conn, "GET / HTTP/1.1\r\nHost: p.test\r\nCookie: %s=%s\r\nConnection: close\r\n\r\n", CookieName, c)
+	fmt.Fprintf(conn, "GET / HTTP/1.1\r\nHost: p.test\r\nCookie: %s=%s\r\nConnection: close\r\n\r\n", CookieName(0), c)
 	raw, _ := io.ReadAll(conn)
 	if strings.Contains(string(raw), "103") || strings.Contains(string(raw), "collie_sess") || strings.Contains(string(raw), "Strict-Transport") {
 		t.Errorf("1xx passed on:\n%s", raw)
@@ -139,7 +139,7 @@ func TestStreamsEndWithTheGrant(t *testing.T) {
 	srv := httptest.NewServer(p)
 	defer srv.Close()
 	req, _ := http.NewRequest("GET", srv.URL+"/events", nil)
-	req.AddCookie(&http.Cookie{Name: CookieName, Value: c})
+	req.AddCookie(&http.Cookie{Name: CookieName(0), Value: c})
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -288,5 +288,127 @@ func TestBridgeUnreadDownloadsDoNotBlockOthers(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Error("unread downloads held up another connection through the bridge")
+	}
+}
+
+// choose is the slot Collie's origin picks for a link, for a browser
+// holding these preview cookies.
+func choose(p *Proxy, g Grant, n int, cookies map[int]string) int {
+	r := httptest.NewRequest("POST", "/api/x", nil)
+	for slot, v := range cookies {
+		r.AddCookie(&http.Cookie{Name: CookieName(slot), Value: v})
+	}
+	return p.ChooseSlot(r, g, n)
+}
+
+func TestChooseSlot(t *testing.T) {
+	p, _ := testProxy(t)
+	now := time.Now()
+	p.Now = func() time.Time { return now }
+	g := func(port int) Grant {
+		return Grant{UserID: "u", Login: "L", SessionID: "s", Port: port, Target: "c:p/u"}
+	}
+
+	// A fresh browser: the first slot.
+	if s := choose(p, g(5173), 3, nil); s != 0 {
+		t.Errorf("fresh: %d", s)
+	}
+	// Links handed out in the last minute count as taken: opening two at
+	// once spreads them.
+	a := g(5173)
+	a.Slot = 0
+	p.Mint(a)
+	if s := choose(p, g(3000), 3, nil); s != 1 {
+		t.Errorf("second at once: %d", s)
+	}
+	// Opened: the cookies tell. The same server goes back to its slot.
+	now = now.Add(2 * time.Minute) // links expired
+	_, c0 := openIn(t, p, a, "")
+	b := g(3000)
+	b.Slot = 1
+	now = now.Add(time.Second)
+	_, c1 := openIn(t, p, b, "")
+	cookies := map[int]string{0: c0, 1: c1}
+	if s := choose(p, g(5173), 3, cookies); s != 0 {
+		t.Errorf("same server: %d", s)
+	}
+	if s := choose(p, g(8000), 3, cookies); s != 2 {
+		t.Errorf("free slot: %d", s)
+	}
+	// All taken: the one used longest ago (slot 0, unless used since).
+	c := g(8000)
+	c.Slot = 2
+	now = now.Add(time.Second)
+	_, c2 := openIn(t, p, c, "")
+	cookies[2] = c2
+	if s := choose(p, g(9000), 3, cookies); s != 0 {
+		t.Errorf("all taken: %d, want the oldest (0)", s)
+	}
+	now = now.Add(time.Second)
+	use(t, p, 0, c0) // slot 0 used again
+	if s := choose(p, g(9000), 3, cookies); s != 1 {
+		t.Errorf("all taken after using 0: %d, want 1", s)
+	}
+	// Another user's sign-in's links don't count; one slot: always it.
+	if s := choose(p, g(9000), 1, cookies); s != 0 {
+		t.Errorf("one slot: %d", s)
+	}
+}
+
+func use(t *testing.T, p *Proxy, slot int, cookie string) {
+	t.Helper()
+	r := httptest.NewRequest("GET", "/__collie/nothing", nil)
+	r.AddCookie(&http.Cookie{Name: CookieName(slot), Value: cookie})
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, g := range p.browserGrantsLocked(r, slot) {
+		g.used = p.clock()
+	}
+}
+
+// Each slot is a port, an origin and a cookie of its own: nothing opened
+// on one works on another.
+func TestSlotsKeepApart(t *testing.T) {
+	p, _ := testProxy(t)
+	port := listen(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "ok") }))
+	g := Grant{UserID: "u", Port: port, Target: "host", Slot: 1}
+	serve := func(slot int, path string, cookies map[string]string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest("GET", path, nil)
+		r.Header.Set("Sec-Fetch-Mode", "navigate")
+		for k, v := range cookies {
+			r.AddCookie(&http.Cookie{Name: k, Value: v})
+		}
+		w := httptest.NewRecorder()
+		p.Slot(slot).ServeHTTP(w, r)
+		return w
+	}
+	// A link for slot 1 doesn't open on slot 0.
+	if w := serve(0, OpenPath+"?t="+p.Mint(g), nil); w.Code != http.StatusForbidden || w.Header().Get("Set-Cookie") != "" {
+		t.Errorf("slot 1's link on slot 0: %d", w.Code)
+	}
+	w := serve(1, OpenPath+"?t="+p.Mint(g), nil)
+	var c string
+	for _, x := range w.Result().Cookies() {
+		if x.Name == CookieName(1) {
+			c = x.Value
+		}
+	}
+	if c == "" {
+		t.Fatalf("open on slot 1: %d", w.Code)
+	}
+	if w := serve(1, "/", map[string]string{CookieName(1): c}); w.Code != http.StatusOK {
+		t.Errorf("slot 1: %d", w.Code)
+	}
+	// Its cookie, under slot 0's name or its own, opens nothing on slot 0.
+	for _, name := range []string{CookieName(0), CookieName(1)} {
+		if w := serve(0, "/", map[string]string{name: c}); w.Code != http.StatusUnauthorized {
+			t.Errorf("slot 1's cookie as %s on slot 0: %d", name, w.Code)
+		}
+	}
+	// Servers can't set any slot's cookie.
+	for _, sc := range []string{CookieName(0) + "=x", CookieName(7) + "=x; Path=/"} {
+		if got := cleanSetCookie(sc); got != "" {
+			t.Errorf("%q passed", sc)
+		}
 	}
 }

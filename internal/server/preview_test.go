@@ -33,6 +33,7 @@ type devServer struct {
 	port int
 	mu   sync.Mutex
 	last *http.Request
+	stop func()
 }
 
 func newDevServer(t *testing.T) *devServer {
@@ -77,6 +78,7 @@ func newDevServer(t *testing.T) *devServer {
 	go srv.Serve(ln)
 	t.Cleanup(func() { srv.Close() })
 	d.port = ln.Addr().(*net.TCPAddr).Port
+	d.stop = func() { srv.Close() }
 	return d
 }
 
@@ -100,10 +102,11 @@ type previewFixture struct {
 
 func newPreviewFixture(t *testing.T) *previewFixture {
 	t.Helper()
-	s := newTestServer(t, Options{PreviewURL: previewOrigin})
+	s := newTestServer(t, Options{PreviewURL: previewOrigin, PreviewPublic: []int{8443}})
 	// The dev server runs in this test's own process, which host-run
-	// previews would otherwise leave out as Collie's.
-	s.hostFilter = preview.Filter{UID: -1}
+	// previews would otherwise leave out as Collie's, and in no session's
+	// folder (see TestHostRunSessionsSeeOnlyTheirOwnServers for that).
+	s.hostFilter = preview.Filter{UID: -1, Allow: func([]string) bool { return true }}
 	f := &previewFixture{testServer: s, dev: newDevServer(t), now: time.Now()}
 	s.pv.Now = func() time.Time { return f.now }
 	if err := s.users.AddPasskey(s.owner, webauthn.Credential{ID: []byte("c1")}, ""); err != nil {
@@ -167,14 +170,14 @@ func (f *previewFixture) onPreview(method, path string, opts ...reqOpt) *httptes
 		o(r)
 	}
 	w := httptest.NewRecorder()
-	f.PreviewHandler().ServeHTTP(w, r)
+	f.PreviewHandler(0).ServeHTTP(w, r)
 	return w
 }
 
 func previewCookie(t *testing.T, w *httptest.ResponseRecorder) string {
 	t.Helper()
 	for _, c := range w.Result().Cookies() {
-		if c.Name == preview.CookieName {
+		if c.Name == preview.CookieName(0) {
 			if !c.HttpOnly || c.SameSite != http.SameSiteLaxMode || !c.Secure || c.Domain != "" {
 				t.Errorf("preview cookie %+v: want HttpOnly, SameSite=Lax, Secure, host-only", c)
 			}
@@ -240,7 +243,7 @@ func TestPreviewOnlyForTheSessionsOwner(t *testing.T) {
 	// only ever for the session it was minted for.
 	_, bobTok := f.mint(t, f.bobSess, f.bobSession, port)
 	c := f.open(t, bobTok, f.bobSess)
-	f.onPreview("GET", "/", cookie(preview.CookieName, c))
+	f.onPreview("GET", "/", cookie(preview.CookieName(0), c))
 	if r := f.dev.lastRequest(); r == nil {
 		t.Fatal("bob's own preview didn't reach the server")
 	}
@@ -257,7 +260,7 @@ func TestPreviewTokensAreSingleUseAndShortLived(t *testing.T) {
 		t.Errorf("a spent token worked again: %d", w.Code)
 	}
 	// (The back button in the browser that has the preview open just goes back to it.)
-	w = f.onPreview("GET", preview.OpenPath+"?t="+tok, cookie(preview.CookieName, c))
+	w = f.onPreview("GET", preview.OpenPath+"?t="+tok, cookie(preview.CookieName(0), c))
 	if w.Code != http.StatusSeeOther || previewCookie(t, w) != "" {
 		t.Errorf("spent token with the preview open: %d", w.Code)
 	}
@@ -280,7 +283,7 @@ func TestPreviewTokensAreSingleUseAndShortLived(t *testing.T) {
 	if w := f.do("GET", "/api/state", "", header("Authorization", "Bearer "+tok3)); w.Code != http.StatusUnauthorized {
 		t.Errorf("a preview token signed in to Collie: %d", w.Code)
 	}
-	if w := f.do("GET", "/api/state", "", cookie(preview.CookieName, c)); w.Code != http.StatusUnauthorized {
+	if w := f.do("GET", "/api/state", "", cookie(preview.CookieName(0), c)); w.Code != http.StatusUnauthorized {
 		t.Errorf("the preview cookie signed in to Collie: %d", w.Code)
 	}
 }
@@ -304,7 +307,7 @@ func TestPreviewKeepsCollieCookiesFromTheServer(t *testing.T) {
 	f := newPreviewFixture(t)
 	_, tok := f.mint(t, f.ownerSess, f.sessionID, f.dev.port)
 	c := f.open(t, tok, f.ownerSess)
-	w := f.onPreview("GET", "/page?q=1", cookie(preview.CookieName, c), cookie(sessionCookie, f.ownerSess),
+	w := f.onPreview("GET", "/page?q=1", cookie(preview.CookieName(0), c), cookie(sessionCookie, f.ownerSess),
 		cookie(legacyCookie, "the-setup-token"), cookie("app", "mine"),
 		header("Origin", previewOrigin), header("Referer", previewOrigin+"/from?x=1"),
 		header("Tailscale-User-Login", "alice@example.com"), header("X-Forwarded-For", "198.51.100.1"),
@@ -347,12 +350,12 @@ func TestPreviewKeepsCollieCookiesFromTheServer(t *testing.T) {
 		t.Error("headers reaching Collie's host name passed")
 	}
 	// Redirects to the server itself stay on the preview origin.
-	w = f.onPreview("GET", "/redirect", cookie(preview.CookieName, c))
+	w = f.onPreview("GET", "/redirect", cookie(preview.CookieName(0), c))
 	if loc := w.Header().Get("Location"); loc != previewOrigin+"/next?x=1" {
 		t.Errorf("redirect to %q", loc)
 	}
 	// Collie's own paths never reach the server.
-	if w := f.onPreview("GET", "/__collie/anything", cookie(preview.CookieName, c)); w.Code != http.StatusNotFound {
+	if w := f.onPreview("GET", "/__collie/anything", cookie(preview.CookieName(0), c)); w.Code != http.StatusNotFound {
 		t.Errorf("/__collie/: %d", w.Code)
 	}
 }
@@ -361,18 +364,18 @@ func TestPreviewEndsWithTheSignIn(t *testing.T) {
 	f := newPreviewFixture(t)
 	_, tok := f.mint(t, f.ownerSess, f.sessionID, f.dev.port)
 	c := f.open(t, tok, f.ownerSess)
-	if w := f.onPreview("GET", "/", cookie(preview.CookieName, c)); w.Code != http.StatusOK {
+	if w := f.onPreview("GET", "/", cookie(preview.CookieName(0), c)); w.Code != http.StatusOK {
 		t.Fatalf("preview: %d", w.Code)
 	}
 	// Signing out of Collie closes the preview (within seconds).
 	_, sess, _ := f.users.SessionUser(f.ownerSess, "")
 	f.users.DeleteSession(sess.Hash)
 	f.now = f.now.Add(3 * time.Second)
-	if w := f.onPreview("GET", "/", cookie(preview.CookieName, c)); w.Code != http.StatusForbidden {
+	if w := f.onPreview("GET", "/", cookie(preview.CookieName(0), c)); w.Code != http.StatusForbidden {
 		t.Errorf("preview after signing out: %d", w.Code)
 	}
 	// For good.
-	if w := f.onPreview("GET", "/", cookie(preview.CookieName, c)); w.Code != http.StatusUnauthorized {
+	if w := f.onPreview("GET", "/", cookie(preview.CookieName(0), c)); w.Code != http.StatusUnauthorized {
 		t.Errorf("preview after signing out, again: %d", w.Code)
 	}
 	// A token minted before the sign-out is no good either.
@@ -391,7 +394,7 @@ func TestPreviewEndsWhenTheSessionIsNoLongerYours(t *testing.T) {
 	c := f.open(t, tok, f.ownerSess)
 	f.m.Store().DeleteSession(f.sessionID)
 	f.now = f.now.Add(3 * time.Second)
-	if w := f.onPreview("GET", "/", cookie(preview.CookieName, c)); w.Code != http.StatusForbidden {
+	if w := f.onPreview("GET", "/", cookie(preview.CookieName(0), c)); w.Code != http.StatusForbidden {
 		t.Errorf("preview of a deleted session: %d", w.Code)
 	}
 }
@@ -400,17 +403,19 @@ func TestPreviewReplacesTheOneOpenBefore(t *testing.T) {
 	f := newPreviewFixture(t)
 	_, tok := f.mint(t, f.ownerSess, f.sessionID, f.dev.port)
 	c1 := f.open(t, tok, f.ownerSess)
-	_, tok2 := f.mint(t, f.ownerSess, f.sessionID, 1)
-	w := f.onPreview("GET", preview.OpenPath+"?t="+tok2, cookie(preview.CookieName, c1), cookie(sessionCookie, f.ownerSess))
+	other := newDevServer(t)
+	_, tok2 := f.mint(t, f.ownerSess, f.sessionID, other.port)
+	w := f.onPreview("GET", preview.OpenPath+"?t="+tok2, cookie(preview.CookieName(0), c1), cookie(sessionCookie, f.ownerSess))
 	c2 := previewCookie(t, w)
 	if c2 == "" || c2 == c1 {
 		t.Fatal("no new cookie")
 	}
-	if w := f.onPreview("GET", "/", cookie(preview.CookieName, c1)); w.Code != http.StatusUnauthorized {
+	if w := f.onPreview("GET", "/", cookie(preview.CookieName(0), c1)); w.Code != http.StatusUnauthorized {
 		t.Errorf("the replaced cookie still works: %d", w.Code)
 	}
-	// Port 1: nothing listens there.
-	w = f.onPreview("GET", "/", cookie(preview.CookieName, c2))
+	// The server stops: the page says so and tries again.
+	other.stop()
+	w = f.onPreview("GET", "/", cookie(preview.CookieName(0), c2))
 	if w.Code != http.StatusBadGateway || !strings.Contains(w.Body.String(), "http-equiv=\"refresh\"") {
 		t.Errorf("nothing listening: %d %s", w.Code, w.Body.String())
 	}
@@ -420,7 +425,7 @@ func TestPreviewRefusesOtherOrigins(t *testing.T) {
 	f := newPreviewFixture(t)
 	_, tok := f.mint(t, f.ownerSess, f.sessionID, f.dev.port)
 	c := f.open(t, tok, f.ownerSess)
-	ck := cookie(preview.CookieName, c)
+	ck := cookie(preview.CookieName(0), c)
 	// Collie's own origin (same site as a preview on another port) and others.
 	for _, o := range []string{"https://collie.example.com", "https://evil.example", "null"} {
 		if w := f.onPreview("POST", "/x", ck, header("Origin", o)); w.Code != http.StatusForbidden {
@@ -453,12 +458,12 @@ func TestPreviewWebSocketsCloseWithTheSignIn(t *testing.T) {
 	f := newPreviewFixture(t)
 	_, tok := f.mint(t, f.ownerSess, f.sessionID, f.dev.port)
 	c := f.open(t, tok, f.ownerSess)
-	srv := httptest.NewServer(f.PreviewHandler())
+	srv := httptest.NewServer(f.PreviewHandler(0))
 	defer srv.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	h := http.Header{}
-	h.Set("Cookie", preview.CookieName+"="+c+"; "+sessionCookie+"="+f.ownerSess)
+	h.Set("Cookie", preview.CookieName(0)+"="+c+"; "+sessionCookie+"="+f.ownerSess)
 	h.Set("Origin", previewOrigin)
 	ws, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http")+"/ws", &websocket.DialOptions{HTTPHeader: h})
 	if err != nil {
@@ -521,20 +526,20 @@ func TestPreviewBase(t *testing.T) {
 		r    *http.Request
 		want string
 	}{
-		{"own port, on a LAN", Options{PreviewPort: 7879}, req("192.168.1.5:5000", "192.168.1.10:7878", nil), "http://192.168.1.10:7879"},
-		{"own port, on this machine", Options{PreviewPort: 7879}, req("127.0.0.1:5000", "localhost:7878", nil), "http://localhost:7879"},
-		{"own port, behind a local proxy", Options{PreviewPort: 7879}, req("127.0.0.1:5000", "box.tail1.ts.net", nil), ""},
-		{"port of the proxy", Options{PreviewPort: 7879, PreviewURL: ":8443"}, req("127.0.0.1:5000", "box.tail1.ts.net", nil), "https://box.tail1.ts.net:8443"},
-		{"port of the proxy, public URL", Options{PreviewPort: 7879, PreviewURL: ":8443", PublicURL: "https://collie.example.com"},
+		{"own port, on a LAN", Options{PreviewPorts: []int{7879}}, req("192.168.1.5:5000", "192.168.1.10:7878", nil), "http://192.168.1.10:7879"},
+		{"own port, on this machine", Options{PreviewPorts: []int{7879}}, req("127.0.0.1:5000", "localhost:7878", nil), "http://localhost:7879"},
+		{"own port, behind a local proxy", Options{PreviewPorts: []int{7879}}, req("127.0.0.1:5000", "box.tail1.ts.net", nil), ""},
+		{"port of the proxy", Options{PreviewPorts: []int{7879}, PreviewURL: ":", PreviewPublic: []int{8443}}, req("127.0.0.1:5000", "box.tail1.ts.net", nil), "https://box.tail1.ts.net:8443"},
+		{"port of the proxy, public URL", Options{PreviewPorts: []int{7879}, PreviewURL: ":", PreviewPublic: []int{8443}, PublicURL: "https://collie.example.com"},
 			req("127.0.0.1:5000", "127.0.0.1:7878", map[string]string{"X-Forwarded-Proto": "https"}), "https://collie.example.com:8443"},
-		{"URL", Options{PreviewURL: "https://collie.example.com:8443"}, req("127.0.0.1:5000", "collie.example.com", nil), "https://collie.example.com:8443"},
+		{"URL", Options{PreviewURL: "https://collie.example.com:8443", PreviewPublic: []int{8443}}, req("127.0.0.1:5000", "collie.example.com", nil), "https://collie.example.com:8443"},
 		{"own names", Options{PreviewURL: "https://*.preview.example.com"}, req("127.0.0.1:5000", "collie.example.com", nil), "https://" + previewLabel("c:p1/u1") + ".preview.example.com"},
-		{"off", Options{PreviewPort: 7879, PreviewURL: "off"}, req("192.168.1.5:5000", "192.168.1.10:7878", nil), ""},
+		{"off", Options{PreviewPorts: []int{7879}, PreviewURL: "off"}, req("192.168.1.5:5000", "192.168.1.10:7878", nil), ""},
 		{"none", Options{}, req("192.168.1.5:5000", "192.168.1.10:7878", nil), ""},
 	}
 	for _, c := range cases {
 		s := &Server{opt: c.opt}
-		if got := s.previewBase(c.r, "c:p1/u1"); got != c.want {
+		if got := s.previewBase(c.r, "c:p1/u1", 0); got != c.want {
 			t.Errorf("%s: %q, want %q", c.name, got, c.want)
 		}
 	}
@@ -572,7 +577,7 @@ func TestPreviewSharedOriginIsNotCached(t *testing.T) {
 	f := newPreviewFixture(t)
 	_, tok := f.mint(t, f.ownerSess, f.sessionID, f.dev.port)
 	c := f.open(t, tok, f.ownerSess)
-	w := f.onPreview("GET", "/", cookie(preview.CookieName, c))
+	w := f.onPreview("GET", "/", cookie(preview.CookieName(0), c))
 	if got := w.Header().Get("Cache-Control"); got != "no-store" {
 		t.Errorf("Cache-Control %q on the shared origin", got)
 	}
@@ -619,17 +624,17 @@ func TestPreviewOriginPerContainer(t *testing.T) {
 	if w.Code != http.StatusSeeOther || c == "" || w.Header().Get("Clear-Site-Data") != "" {
 		t.Fatalf("open on its own origin: %d %v", w.Code, w.Header())
 	}
-	w = f.onPreview("GET", "/", cookie(preview.CookieName, c), at(own), header("Origin", "https://"+own))
+	w = f.onPreview("GET", "/", cookie(preview.CookieName(0), c), at(own), header("Origin", "https://"+own))
 	if w.Code != http.StatusOK || w.Header().Get("Cache-Control") != "public, max-age=31536000" {
 		t.Errorf("preview on its own origin: %d %v", w.Code, w.Header())
 	}
 	// The cookie is only good on its own origin, and other names are no
 	// preview origin at all.
-	if w := f.onPreview("GET", "/", cookie(preview.CookieName, c), at(other)); w.Code != http.StatusUnauthorized {
+	if w := f.onPreview("GET", "/", cookie(preview.CookieName(0), c), at(other)); w.Code != http.StatusUnauthorized {
 		t.Errorf("cookie on another container's origin: %d", w.Code)
 	}
 	for _, h := range []string{"preview.example.com", "evil.example", "a.b.preview.example.com", "collie.example.com"} {
-		if w := f.onPreview("GET", "/", cookie(preview.CookieName, c), at(h)); w.Code != http.StatusNotFound {
+		if w := f.onPreview("GET", "/", cookie(preview.CookieName(0), c), at(h)); w.Code != http.StatusNotFound {
 			t.Errorf("%s: %d", h, w.Code)
 		}
 	}

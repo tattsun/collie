@@ -36,11 +36,13 @@ import (
 //     user taken out.
 //
 // Where previews have host names of their own, every container (the
-// target) gets its own origin. Otherwise all previews share one origin,
-// another port of Collie's host name, and a browser has one preview open
-// at a time there: opening another one replaces it. Then a link only opens
-// in the browser that asked for it (Bind), and nothing a page leaves in the
-// browser's cache or storage outlives a switch to another target.
+// target) gets its own origin. Otherwise previews open on a few ports of
+// Collie's host name (slots), each an origin of its own with a cookie of
+// its own: a browser has one preview open per slot, and opening another
+// takes a free slot or replaces the one used longest ago. There a link
+// only opens in the browser that asked for it (Bind), and nothing a page
+// leaves in the browser's cache or storage outlives a switch of its slot
+// to another target.
 //
 // A preview cookie is good for nothing but the one port of the one
 // session, and Collie's own sign-in never opens anything here.
@@ -57,9 +59,12 @@ type Grant struct {
 	// Target names where the session's servers run: its container, or the
 	// host. Previews of different targets never share an origin's state.
 	Target string
-	// Label is the host label of the target's own origin ("" where all
-	// previews share one origin).
+	// Label is the host label of the target's own origin ("" where
+	// previews open on Collie's host name).
 	Label string
+	// Slot is which of the preview ports it opens on (0 where targets have
+	// names of their own).
+	Slot int
 }
 
 // Target is where a grant leads now.
@@ -82,9 +87,9 @@ var (
 )
 
 const (
-	// CookieName is the preview origin's own cookie. Collie's origin never
-	// reads it, and it is never passed on to the servers.
-	CookieName = "collie_preview"
+	// cookiePrefix starts the preview cookies' names, one per slot (see
+	// CookieName). They are never passed on to the servers.
+	cookiePrefix = "collie_preview"
 	// OpenPath exchanges a token for the cookie. Paths under /__collie/
 	// never reach the servers.
 	OpenPath   = "/__collie/open"
@@ -106,7 +111,12 @@ const (
 // a server can't set them. (Cookies don't keep to ports, so when previews
 // are on another port of Collie's host name, the browser sends Collie's
 // sign-in cookie along; it stops here.)
-var reserved = map[string]bool{"collie_sess": true, "collie_auth": true, CookieName: true}
+var reserved = map[string]bool{"collie_sess": true, "collie_auth": true}
+
+// CookieName is the preview cookie of a slot. Cookies don't keep to
+// ports: each slot's has a name of its own, so opening a preview on one
+// port never replaces another port's, and is only ever read there.
+func CookieName(slot int) string { return cookiePrefix + "_" + strconv.Itoa(slot) }
 
 // frontDoor are the cookie names (or their beginnings) of sign-in proxies
 // that may sit in front of Collie and its previews: oauth2-proxy (split
@@ -116,7 +126,7 @@ var frontDoor = []string{"_oauth2_proxy", "_pomerium", "authelia_session", "CF_A
 // collieOrDoor reports whether a cookie is Collie's own or a sign-in
 // proxy's: never passed to a preview's server, nor set by one.
 func collieOrDoor(name string) bool {
-	if reserved[name] {
+	if reserved[name] || strings.HasPrefix(name, cookiePrefix) {
 		return true
 	}
 	for _, p := range frontDoor {
@@ -131,11 +141,11 @@ func collieOrDoor(name string) bool {
 type Proxy struct {
 	// Resolve checks that a grant still holds and says where it leads.
 	Resolve func(Grant) (Target, error)
-	// Origin is the preview origin a request was made to, as the browser
-	// sees it (scheme://host[:port]), and the target label in its host
-	// name where targets have origins of their own. ok is false for a host
-	// that is no preview origin.
-	Origin func(*http.Request) (origin, label string, ok bool)
+	// Origin is the preview origin a request to a slot was made to, as the
+	// browser sees it (scheme://host[:port]), and the target label in its
+	// host name where targets have origins of their own. ok is false for a
+	// host that is no preview origin.
+	Origin func(r *http.Request, slot int) (origin, label string, ok bool)
 	// Bind, where previews share one origin, checks that a link is opened
 	// in the browser it was made for: the one signed in to Collie with the
 	// grant's sign-in. (It only compares; it never signs anything in.)
@@ -335,24 +345,74 @@ func (f *flight) end() {
 // browserGrants are the grants behind the request's preview cookies. A
 // page can set a cookie of the same name for a narrower path; any genuine
 // one counts. p.mu must be held.
-func (p *Proxy) browserGrantsLocked(r *http.Request) map[string]*grant {
+func (p *Proxy) browserGrantsLocked(r *http.Request, slot int) map[string]*grant {
 	out := map[string]*grant{}
-	for _, c := range r.CookiesNamed(CookieName) {
+	for _, c := range r.CookiesNamed(CookieName(slot)) {
 		h := hashOf(c.Value)
-		if g := p.grants[h]; g != nil {
+		if g := p.grants[h]; g != nil && g.Slot == slot {
 			out[h] = g
 		}
 	}
 	return out
 }
 
+// ChooseSlot picks the preview port for a link to g, in the browser that
+// asks for it from Collie's own origin (on the same host name, it sends
+// the preview cookies along): the slot already showing that server, else
+// a free one, else the one used longest ago. Links handed to the same
+// sign-in in the last minute count as taken, so opening several at once
+// spreads them out.
+func (p *Proxy) ChooseSlot(r *http.Request, g Grant, n int) int {
+	if n <= 1 {
+		return 0
+	}
+	p.init()
+	now := p.clock()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	same := func(x Grant) bool { return x.UserID == g.UserID && x.Target == g.Target && x.Port == g.Port }
+	used := make([]time.Time, n) // zero: free
+	for i := range n {
+		for _, x := range p.browserGrantsLocked(r, i) {
+			if p.expired(x, now) || x.Label != "" {
+				continue
+			}
+			if same(x.Grant) {
+				return i
+			}
+			if x.used.After(used[i]) {
+				used[i] = x.used
+			}
+		}
+	}
+	for _, t := range p.tokens {
+		if t.Login != g.Login || t.UserID != g.UserID || !now.Before(t.expires) || t.Slot < 0 || t.Slot >= n {
+			continue
+		}
+		if same(t.Grant) {
+			return t.Slot
+		}
+		used[t.Slot] = now
+	}
+	best := 0
+	for i := range used {
+		if used[i].IsZero() {
+			return i
+		}
+		if used[i].Before(used[best]) {
+			best = i
+		}
+	}
+	return best
+}
+
 // lookup finds the grant behind the request's preview cookie for this
 // origin and checks that it still holds.
-func (p *Proxy) lookup(r *http.Request, label string) (*grant, error) {
+func (p *Proxy) lookup(r *http.Request, label string, slot int) (*grant, error) {
 	now := p.clock()
 	var g *grant
 	p.mu.Lock()
-	for h, x := range p.browserGrantsLocked(r) {
+	for h, x := range p.browserGrantsLocked(r, slot) {
 		if p.expired(x, now) {
 			p.dropLocked(h)
 			continue
@@ -385,22 +445,30 @@ func (p *Proxy) lookup(r *http.Request, label string) (*grant, error) {
 
 var errNoGrant = errors.New("no preview open")
 
-func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+// Slot serves one of the preview ports.
+func (p *Proxy) Slot(slot int) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { p.serve(w, r, slot) })
+}
+
+// ServeHTTP serves the first slot (or names of their own).
+func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) { p.serve(w, r, 0) }
+
+func (p *Proxy) serve(w http.ResponseWriter, r *http.Request, slot int) {
 	p.init()
-	origin, label, ok := p.Origin(r)
+	origin, label, ok := p.Origin(r, slot)
 	if !ok {
 		p.page(w, r, http.StatusNotFound, msgNotFound, nil)
 		return
 	}
 	if r.URL.Path == OpenPath {
-		p.open(w, r, origin, label)
+		p.open(w, r, origin, label, slot)
 		return
 	}
 	if strings.HasPrefix(r.URL.Path, ownPrefix) {
 		p.page(w, r, http.StatusNotFound, msgNotFound, nil)
 		return
 	}
-	g, err := p.lookup(r, label)
+	g, err := p.lookup(r, label, slot)
 	switch {
 	case errors.Is(err, errNoGrant):
 		p.page(w, r, http.StatusUnauthorized, msgNotOpen, nil)
@@ -476,7 +544,7 @@ func normOrigin(o string) string {
 }
 
 // open exchanges a token for the preview cookie.
-func (p *Proxy) open(w http.ResponseWriter, r *http.Request, origin, label string) {
+func (p *Proxy) open(w http.ResponseWriter, r *http.Request, origin, label string, slot int) {
 	h := w.Header()
 	h.Set("Referrer-Policy", "no-referrer")
 	h.Set("Cache-Control", "no-store")
@@ -490,15 +558,15 @@ func (p *Proxy) open(w http.ResponseWriter, r *http.Request, origin, label strin
 	if !ok {
 		// Spent or expired (say, the back button): a browser that has a
 		// preview open here just goes back to it.
-		if _, err := p.lookup(r, label); err == nil {
+		if _, err := p.lookup(r, label, slot); err == nil {
 			http.Redirect(w, r, "/", http.StatusSeeOther)
 			return
 		}
 		p.page(w, r, http.StatusForbidden, msgLinkUsed, nil)
 		return
 	}
-	if g.Label != label {
-		// A link for another target's origin.
+	if g.Label != label || g.Slot != slot {
+		// A link for another origin (another target's name, another port).
 		p.page(w, r, http.StatusForbidden, msgLinkUsed, nil)
 		return
 	}
@@ -518,7 +586,7 @@ func (p *Proxy) open(w http.ResponseWriter, r *http.Request, origin, label strin
 	p.mu.Lock()
 	// The cookie replaces the one this browser had here: so does the grant.
 	same := false
-	for k, x := range p.browserGrantsLocked(r) {
+	for k, x := range p.browserGrantsLocked(r, slot) {
 		if x.Label == label {
 			same = same || x.Target == g.Target
 			p.dropLocked(k)
@@ -528,15 +596,15 @@ func (p *Proxy) open(w http.ResponseWriter, r *http.Request, origin, label strin
 	p.grants[hashOf(s)] = &grant{Grant: g, created: now, used: now, checked: now, target: t}
 	p.mu.Unlock()
 	http.SetCookie(w, &http.Cookie{
-		Name: CookieName, Value: s, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode,
+		Name: CookieName(slot), Value: s, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode,
 		MaxAge: int(grantMax.Seconds()), Secure: strings.HasPrefix(origin, "https://"),
 	})
 	if label != "" || same {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
-	// The shared origin now leads to another target: clear what the last
-	// one's pages left in this browser (local storage, IndexedDB, cache)
+	// This port now leads to another target: clear what the last one's
+	// pages left on it in this browser (local storage, IndexedDB, cache)
 	// before its page loads. Browsers act on this header for a page more
 	// surely than for a redirect.
 	h.Set("Clear-Site-Data", `"cache", "storage"`)

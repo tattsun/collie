@@ -1,7 +1,9 @@
 #!/bin/bash
-# collie-kill <id> [SIGNAL]  — signal the process group started by collie-exec.
+# collie-kill <id> [SIGNAL]  — signal the session started by collie-exec.
+# The whole session, not just one process group: a shell with job control
+# runs each job in a group of its own.
 f="/tmp/collie-pg/$1"
 [ -f "$f" ] || exit 0
-kill -s "${2:-TERM}" -- "-$(cat "$f")" 2>/dev/null
+pkill -"${2:-TERM}" -s "$(cat "$f")" 2>/dev/null
 [ "${2:-TERM}" = KILL ] && rm -f "$f"
 exit 0

@@ -64,3 +64,7 @@ This assumes the configuration from the [setup guide](setup.md): a dedicated `co
 
 - HTML and SVG that agents show you never run as Collie's own page. They open in a sandbox without network access, so they can't touch your Collie session or send anything out, even after you press **Run scripts**.
 - Deleting a project in Collie leaves its files on disk. Only the worktrees Collie created are removed, and their branches are kept.
+
+## Reporting a vulnerability
+
+Report it privately, not in a public issue: see [SECURITY.md](../SECURITY.md).

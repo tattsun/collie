@@ -92,7 +92,6 @@ Collie checks GitHub for new releases. When one is out, admins see `vX → vY` a
 
 - The service restarts. Running agents stop and pick up again on the next message, and open browsers reload by themselves.
 - If the new version doesn't come up, Collie goes back to the previous version and its data, and the Updates screen says what happened. A version that failed is never retried automatically.
-- While the repository is private, set a GitHub token under Updates. Use a fine-grained token with read-only access to the repository's contents.
 - Updating itself only works for the systemd user service that `mise run install` sets up. A server running a build from before self-updating existed has to be updated by hand once, as below.
 
 To update from the source instead:

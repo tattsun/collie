@@ -33,6 +33,15 @@ Agents in every session can show you files right in the chat. Try asking "make t
 - Playwright records video as WebM. If a video won't play on your iPhone, ask for MP4.
 - HTML pages open in a sandbox without network access, so they have to be a single file with styles and images embedded. The agent is told this. Scripts run only after you press **Run scripts**.
 
+## Notifications
+
+Turn them on in Account → **Notifications** on each device you want them on, then press **Send a test notification**. You hear when a session you started needs your approval or an answer, finishes, or stops with an error, also while Collie is closed.
+
+- On iPhone and iPad (iOS 16.4 or later), add Collie to the Home Screen first (Share → Add to Home Screen), open it from there, and turn notifications on in that app.
+- A device where Collie is open in front of you gets the notification from the page itself, not twice.
+- The server needs to reach the browsers' push services over HTTPS: `fcm.googleapis.com` (Chrome, Android), `push.services.mozilla.com` (Firefox), `web.push.apple.com` (Safari, iPhone) and `notify.windows.com` (Edge).
+- Behind Tailscale, notifications arrive even when the phone is off the tailnet, but opening one needs Tailscale connected.
+
 ## Isolation
 
 New projects run in an **Isolated container** by default. You can change this in Project → Settings.

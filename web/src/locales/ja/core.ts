@@ -21,6 +21,29 @@ const ja: Record<string, string> = {
   'Needs your approval': '承認待ちです',
   Finished: '完了しました',
   'Stopped with an error': 'エラーで停止しました',
+  'on for this device': 'この端末でオン',
+  'When a session needs your approval or an answer, finishes, or stops with an error — also while Collie is closed. They show only the project, the session’s title and its state, never what was said.':
+    'セッションが承認や回答を待っているとき、完了したとき、エラーで止まったときに通知します。Collie を閉じていても届きます。表示されるのはプロジェクト名・セッションのタイトル・状態だけで、会話の内容は含まれません。',
+  'Turn on on this device': 'この端末で通知をオンにする',
+  'Turn off on this device': 'この端末で通知をオフにする',
+  'Send a test notification': 'テスト通知を送る',
+  'Test notification sent. It should arrive in a few seconds.': 'テスト通知を送りました。数秒で届くはずです。',
+  'On iPhone and iPad, notifications need Collie on the Home Screen: Share → Add to Home Screen, then open it from there.':
+    'iPhone・iPad で通知を受け取るには、Collie をホーム画面に追加してください（共有 → ホーム画面に追加）。追加したアイコンから開いて通知をオンにします。',
+  'On iPhone and iPad, notifications need Collie on the Home Screen: Share → Add to Home Screen, then open it from there (iOS 16.4 or later).':
+    'iPhone・iPad で通知を受け取るには、Collie をホーム画面に追加してください（共有 → ホーム画面に追加）。追加したアイコンから開いて、ここで通知をオンにします（iOS 16.4 以降）。',
+  'This iOS version can’t deliver notifications from web apps. Update to iOS 16.4 or later.': 'この iOS ではウェブアプリの通知を受け取れません。iOS 16.4 以降にアップデートしてください。',
+  'Notifications need the HTTPS address of Collie.': '通知を使うには Collie の HTTPS のアドレスで開いてください。',
+  'This browser can’t receive notifications while Collie is closed; you get them only while it is open.': 'このブラウザでは、Collie を閉じている間の通知を受け取れません。開いている間だけ通知します。',
+  'Notifications for Collie are blocked in this browser’s settings. Allow them there, then turn them on here.': 'このブラウザの設定で Collie の通知がブロックされています。設定で許可してから、ここでオンにしてください。',
+  'Couldn’t set up notifications for while Collie is closed: {error}': 'Collie を閉じている間の通知を設定できませんでした: {error}',
+  'The service worker did not start. Reload the page and try again.': 'Service Worker が起動しませんでした。ページを再読み込みしてやり直してください。',
+  'This device is not registered for notifications': 'この端末は通知の登録がされていません',
+  'notifications are not available on this server': 'このサーバでは通知を使えません',
+  'this device is not registered for notifications': 'この端末は通知の登録がされていません',
+  "this browser's push service is not supported": 'このブラウザのプッシュ通知サービスには対応していません',
+  'invalid push subscription': 'プッシュ通知の登録内容が正しくありません',
+  "the browser has dropped this device's registration for notifications; turn them off and on again": 'ブラウザがこの端末の通知の登録を取り消しました。通知をいったんオフにしてから、もう一度オンにしてください',
   // session status
   Starting: '起動中',
   Working: '作業中',
@@ -192,6 +215,8 @@ export default ja
 
 // Server messages with variable parts: [pattern, Japanese ($1… = captures)].
 export const patterns: [RegExp, string][] = [
+  // notifications
+  [/^push service (\S+) answered ([\s\S]*)$/, 'プッシュ通知サービス $1 が拒否しました: $2'],
   // updates
   [/^check for updates: ([\s\S]*)$/, '更新を確認できません: $1'],
   [/^download: ([\s\S]*)$/, 'ダウンロードに失敗しました: $1'],

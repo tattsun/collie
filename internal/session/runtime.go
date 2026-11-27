@@ -332,6 +332,19 @@ func (r *Runtime) sinkPut(it *model.Item) {
 	r.put(it)
 }
 
+// pendingQuestion reports whether the latest open ask is a question (not
+// an approval).
+func (r *Runtime) pendingQuestion() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i := len(r.items) - 1; i >= 0 && i >= len(r.items)-200; i-- {
+		if it := r.items[i]; it.Ask != nil && it.Ask.State == "pending" {
+			return it.Kind == model.KindQuestion
+		}
+	}
+	return false
+}
+
 func (r *Runtime) fail(err error) {
 	r.sinkPut(&model.Item{ID: model.NewID(), Kind: model.KindError, Done: true, Text: err.Error()})
 	r.m.setStatus(r.id, model.StatusError)

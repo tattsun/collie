@@ -8,6 +8,7 @@ import { lang, setLang, t, type Lang } from '../i18n'
 import { passkeyError, passkeysSupported } from '../webauthn'
 import { ClaudeAccountsCard } from './ClaudeAccounts'
 import { EnvEditor, ProfileEditor } from './Editors'
+import { NotificationsCard } from './Notifications'
 import { PluginsEditor } from './Plugins'
 import { SessionPrefsCard } from './SessionPrefs'
 import { IBack, ICheck, IPlus, IShield, ITrash, IX, Spinner } from './icons'
@@ -139,6 +140,8 @@ export function AccountPage() {
               </select>
             </label>
           </section>
+
+          <NotificationsCard />
 
           <section class="card col gap">
             <h3>

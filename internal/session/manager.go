@@ -78,6 +78,12 @@ type Manager struct {
 	// changing schedules; clock stands in for time.Now in tests.
 	schedMu sync.Mutex
 	clock   func() time.Time
+
+	// Notify, if set, hears when a session starts waiting for an approval
+	// or answers ("approval" / "question"), finishes its turn ("done") or
+	// fails ("error"), to tell its owner on devices where Collie is closed
+	// (set by the server, which sends Web Push).
+	Notify func(s model.Session, event string)
 }
 
 func NewManager(cfg Config, st *store.Store, hub *Hub, sb *sandbox.Manager) *Manager {
@@ -399,8 +405,9 @@ func (m *Manager) updateSession(sid string, fn func(*model.Session)) (model.Sess
 }
 
 func (m *Manager) setStatus(sid, status string) {
-	m.updateSession(sid, func(s *model.Session) {
-		prev := s.Status
+	var prev string
+	s, ok := m.updateSession(sid, func(s *model.Session) {
+		prev = s.Status
 		s.Status = status
 		if status == model.StatusIdle && (prev == model.StatusRunning || prev == model.StatusWaiting) {
 			s.Unread = true
@@ -411,6 +418,37 @@ func (m *Manager) setStatus(sid, status string) {
 			s.UpdatedAt = model.NowMs()
 		}
 	})
+	if ev := statusEvent(prev, status); ok && ev != "" && m.Notify != nil {
+		go m.notifyStatus(s, ev)
+	}
+}
+
+// statusEvent names the status changes a session's owner is told about.
+func statusEvent(prev, status string) string {
+	switch {
+	case prev == status:
+		return ""
+	case status == model.StatusWaiting:
+		return "waiting"
+	case status == model.StatusIdle && (prev == model.StatusRunning || prev == model.StatusWaiting):
+		return "done"
+	case status == model.StatusError:
+		return "error"
+	}
+	return ""
+}
+
+func (m *Manager) notifyStatus(s model.Session, ev string) {
+	if ev == "waiting" {
+		ev = "approval"
+		m.mu.Lock()
+		r := m.rts[s.ID]
+		m.mu.Unlock()
+		if r != nil && r.pendingQuestion() {
+			ev = "question"
+		}
+	}
+	m.Notify(s, ev)
 }
 
 // ---- sessions ----

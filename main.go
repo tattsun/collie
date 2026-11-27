@@ -25,6 +25,7 @@ import (
 
 	"github.com/tattsun/collie/internal/auth"
 	"github.com/tattsun/collie/internal/egress"
+	"github.com/tattsun/collie/internal/push"
 	"github.com/tattsun/collie/internal/sandbox"
 	"github.com/tattsun/collie/internal/server"
 	"github.com/tattsun/collie/internal/session"
@@ -192,8 +193,12 @@ func main() {
 		// in the last day) and terminals in use in the last half hour.
 		Busy: func() int { return mgr.BusySessions(24*time.Hour) + terms.Active(30*time.Minute) },
 	})
+	pushSvc, err := push.Open(*dataDir)
+	if err != nil {
+		log.Printf("notifications while Collie is closed are off: %v", err)
+	}
 	srv := server.New(mgr, terms, users, server.Options{Token: *token, NoAuth: *noAuth, Web: web.FS(),
-		PublicURL: *publicURL, Owner: owner, Updater: upd})
+		PublicURL: *publicURL, Owner: owner, Updater: upd, Push: pushSvc})
 	if web.FS() == nil {
 		log.Printf("warning: web UI is not built (run `mise run build`); only the API is available")
 	}

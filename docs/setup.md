@@ -104,7 +104,7 @@ mise install
 mise run install --domain collie.example.com    # with the same options you used the first time
 ```
 
-To update only Claude Code / Codex in the image, use Admin → Containers → **Agent image** → **Rebuild**, or run `collie --build-image`. Each project's container switches to the new image the next time it restarts while nothing in it is in use.
+To update only Claude Code / Codex in the image, use Admin → Containers → **Agent image** → **Rebuild**, or run `collie --build-image`. Each project's container switches to the new image the next time it restarts while nothing in it is in use. That first start on a new image can take a few minutes (Podman copies the image's files for the container's user IDs); the session shows a notice meanwhile.
 
 ## Lost passkeys
 

@@ -161,6 +161,7 @@ const ja: Record<string, string> = {
   'Review started': 'レビューを開始しました',
   'Could not resume the previous Claude conversation; started a fresh one.':
     '以前の Claude の会話を再開できなかったため、新しい会話を開始しました。',
+  'Starting the container. The first start after an image update can take a few minutes…': 'コンテナを起動しています。イメージの更新後、最初の起動には数分かかることがあります…',
   'Building the agent container image (first time only — this takes a few minutes)…':
     'エージェントのコンテナイメージをビルドしています（初回のみ。数分かかります）…',
   'Claude Code has no usable account for you. Add one under Account → Agent accounts (Sign in with Claude, Bedrock or an API key); if you already did, check which account this project uses in Project → Settings.':

@@ -141,7 +141,7 @@ export function UpdatesPanel() {
           {!u.canApply && (
             <div class="col gap small">
               <p class="warn">{t('This server cannot update itself: {why}', { why: ts(u.why || '') })}</p>
-              <p class="dim">{t('To update by hand, see the update section of the README.')}</p>
+              <p class="dim">{t('To update by hand, see “Update” in docs/setup.md.')}</p>
             </div>
           )}
           {u.notes && <div class="md small" dangerouslySetInnerHTML={{ __html: renderMarkdown(u.notes) }} />}

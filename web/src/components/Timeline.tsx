@@ -9,6 +9,7 @@ import { describeTool } from './tools'
 import { cls, copyText, duration, money } from '../util'
 import { t, ts } from '../i18n'
 import { ICheck, IX, IChevron, IBrain, IShield, IDown, IStop, Spinner } from './icons'
+import { MediaCard, Thumbstrip, imagesAsMedia, openViewer } from './Media'
 
 // ---------------------------------------------------------------- shared bits
 
@@ -87,10 +88,10 @@ function UserMsg({ item }: { item: Item }) {
       )}
       {item.images && item.images.length > 0 && (
         <div class="thumbs">
-          {item.images.map((id) => (
-            <a key={id} href={`/api/uploads/${id}`} target="_blank" rel="noopener">
+          {item.images.map((id, i) => (
+            <button key={id} class="thumb-btn" onClick={() => openViewer(imagesAsMedia(item.images!), i)} aria-label={t('Open')}>
               <img src={`/api/uploads/${id}`} loading="lazy" alt="" />
-            </a>
+            </button>
           ))}
         </div>
       )}
@@ -177,6 +178,7 @@ function ToolCall({ item, kids, cwd }: { item: Item; kids?: Item[]; cwd: string 
           <StatusIcon status={tool.status} />
         </span>
       </button>
+      {item.images && item.images.length > 0 && <Thumbstrip ids={item.images} class="tool-shots" />}
       {open && (
         <div class="tool-body">
           {tool.name === 'Bash' && tool.input?.command && <Pre class="cmd" text={'$ ' + tool.input.command} />}
@@ -392,6 +394,8 @@ function ResultLine({ item }: { item: Item }) {
   )
 }
 
+const SHOW_MEDIA = 'mcp__collie__show_media'
+
 interface ItemProps {
   item: Item
   kids?: Item[]
@@ -410,7 +414,11 @@ export const ItemView = memo(function ItemView({ item, kids, sid = '', cwd }: It
     case 'tool':
       // These are shown as question / plan cards instead.
       if (!item.tool || item.tool.name === 'AskUserQuestion' || item.tool.name === 'ExitPlanMode') return null
+      // What show_media showed follows as a media item.
+      if (item.tool.name === SHOW_MEDIA && item.tool.status === 'ok') return null
       return <ToolCall item={item} kids={kids} cwd={cwd} />
+    case 'media':
+      return <MediaCard item={item} />
     case 'approval':
       return item.ask ? <Approval item={item} sid={sid} cwd={cwd} /> : null
     case 'question':

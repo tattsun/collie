@@ -18,15 +18,21 @@ import (
 func newHomeTestManager(t *testing.T) *Manager {
 	t.Helper()
 	m, _ := newTestManager(t)
-	m.homeLn = map[string]net.Listener{}
+	m.toolLn = map[string]net.Listener{}
 	return m
 }
 
-// rpc sends one JSON-RPC request through handleRPC and decodes the answer.
+// rpc sends one JSON-RPC request through handleRPC, on the user's Home
+// socket, and decodes the answer.
 func rpc(t *testing.T, m *Manager, uid, method string, params any) map[string]any {
 	t.Helper()
+	return rpcOn(t, m, &toolConn{scope: toolScope{uid: uid}}, method, params)
+}
+
+func rpcOn(t *testing.T, m *Manager, tc *toolConn, method string, params any) map[string]any {
+	t.Helper()
 	line, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
-	resp := m.handleRPC(uid, line)
+	resp := m.handleRPC(tc, line)
 	b, _ := json.Marshal(resp)
 	var out map[string]any
 	if err := json.Unmarshal(b, &out); err != nil {
@@ -38,7 +44,12 @@ func rpc(t *testing.T, m *Manager, uid, method string, params any) map[string]an
 // call runs a tool and returns its text and whether it failed.
 func call(t *testing.T, m *Manager, uid, tool string, args any) (string, bool) {
 	t.Helper()
-	out := rpc(t, m, uid, "tools/call", map[string]any{"name": tool, "arguments": args})
+	return callOn(t, m, &toolConn{scope: toolScope{uid: uid}}, tool, args)
+}
+
+func callOn(t *testing.T, m *Manager, tc *toolConn, tool string, args any) (string, bool) {
+	t.Helper()
+	out := rpcOn(t, m, tc, "tools/call", map[string]any{"name": tool, "arguments": args})
 	res, ok := out["result"].(map[string]any)
 	if !ok {
 		t.Fatalf("%s: no result: %v", tool, out)
@@ -97,7 +108,7 @@ func TestHomeToolsSeeOnlyTheUsersWork(t *testing.T) {
 	for _, x := range tools {
 		names = append(names, x.(map[string]any)["name"].(string))
 	}
-	for _, want := range []string{"list_projects", "list_sessions", "read_session", "start_session", "send_message"} {
+	for _, want := range []string{"list_projects", "list_sessions", "read_session", "start_session", "send_message", "show_media"} {
 		if !slices.Contains(names, want) {
 			t.Errorf("tool %s missing: %v", want, names)
 		}
@@ -105,7 +116,7 @@ func TestHomeToolsSeeOnlyTheUsersWork(t *testing.T) {
 	if out := rpc(t, m, "alice", "nope", nil); out["error"] == nil {
 		t.Error("unknown method accepted")
 	}
-	if m.handleRPC("alice", []byte(`{"jsonrpc":"2.0","method":"notifications/initialized"}`)) != nil {
+	if m.handleRPC(&toolConn{scope: toolScope{uid: "alice"}}, []byte(`{"jsonrpc":"2.0","method":"notifications/initialized"}`)) != nil {
 		t.Error("answered a notification")
 	}
 
@@ -149,15 +160,20 @@ func TestHomeMountsLeaveCollieDataOut(t *testing.T) {
 	}
 }
 
-func TestHomeClaudeArgs(t *testing.T) {
-	args := homeClaudeArgs([]string{"--mcp-config", "/profile/mcp.json", "--settings", "/s.json"}, "/bin/collie", []string{"mcp-bridge", "/run/collie/collie.sock"})
+func TestCollieToolArgs(t *testing.T) {
+	allowed := append(slices.Clone(homeReadTools), mediaTools...)
+	args := collieClaudeArgs([]string{"--mcp-config", "/profile/mcp.json", "--settings", "/s.json"}, "/bin/collie", []string{"mcp-bridge", "/run/collie/collie.sock", "s1"}, allowed)
 	if args[0] != "--mcp-config" || args[1] != "/profile/mcp.json" || !strings.Contains(args[2], `"collie"`) || args[3] != "--settings" {
 		t.Errorf("tools config not added to the existing --mcp-config: %q", args)
 	}
-	if i := slices.Index(args, "--allowedTools"); i < 0 || !slices.Contains(args[i:], "mcp__collie__read_session") || slices.Contains(args[i:], "mcp__collie__start_session") {
+	if i := slices.Index(args, "--allowedTools"); i < 0 || !slices.Contains(args[i:], "mcp__collie__read_session") ||
+		!slices.Contains(args[i:], "mcp__collie__show_media") || slices.Contains(args[i:], "mcp__collie__start_session") {
 		t.Errorf("allowed tools: %q", args)
 	}
-	codex := homeCodexArgs(nil, "/bin/collie", []string{"mcp-bridge", "/s"})
+	if args := collieClaudeArgs(nil, "/bin/collie", nil, nil); slices.Contains(args, "--allowedTools") {
+		t.Errorf("an empty --allowedTools: %q", args)
+	}
+	codex := collieCodexArgs(nil, "/bin/collie", []string{"mcp-bridge", "/s"})
 	if !slices.Equal(codex, []string{"-c", `mcp_servers.collie.command="/bin/collie"`, "-c", `mcp_servers.collie.args=["mcp-bridge","/s"]`}) {
 		t.Errorf("codex args: %q", codex)
 	}
@@ -172,7 +188,7 @@ func TestHomeSocketServesMCP(t *testing.T) {
 	if again, _ := m.homeSocket("alice"); again != dir {
 		t.Fatal("a second socket for the same user")
 	}
-	c, err := net.Dial("unix", filepath.Join(dir, homeSockName))
+	c, err := net.Dial("unix", filepath.Join(dir, toolSockName))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +204,7 @@ func TestHomeSocketServesMCP(t *testing.T) {
 	if !strings.Contains(line, `"id":7`) || !strings.Contains(line, `"result"`) {
 		t.Errorf("ping answer: %s", line)
 	}
-	if fi, err := os.Stat(filepath.Join(dir, homeSockName)); err != nil || fi.Mode().Perm() != 0o600 {
+	if fi, err := os.Stat(filepath.Join(dir, toolSockName)); err != nil || fi.Mode().Perm() != 0o600 {
 		t.Errorf("socket permissions: %v %v", fi.Mode(), err)
 	}
 }

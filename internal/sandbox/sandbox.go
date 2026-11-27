@@ -68,8 +68,9 @@ type Manager struct {
 	built    chan struct{} // closed when the current build finishes
 	ready    bool
 	locks    map[string]*sync.Mutex
-	imgID    string    // ID of the image tag, cached briefly
-	imgIDAt  time.Time // when imgID was looked up
+	imgID    string          // ID of the image tag, cached briefly
+	imgIDAt  time.Time       // when imgID was looked up
+	stale    map[string]bool // containers left running with an older configuration
 
 	// OnChange is called when the image status changes.
 	OnChange func()
@@ -79,7 +80,7 @@ func New(cfg Config) *Manager {
 	if cfg.Podman == "" {
 		cfg.Podman = "podman"
 	}
-	m := &Manager{cfg: cfg, locks: map[string]*sync.Mutex{}, buildLog: &tail{max: 6 << 10}}
+	m := &Manager{cfg: cfg, locks: map[string]*sync.Mutex{}, stale: map[string]bool{}, buildLog: &tail{max: 6 << 10}}
 	_, err := exec.LookPath(cfg.Podman)
 	m.available = err == nil
 	m.tag = "localhost/collie-agent:" + imageHash()

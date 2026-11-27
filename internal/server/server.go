@@ -63,6 +63,7 @@ type Server struct {
 
 	agentsAvail map[string]bool
 	build       string
+	logins      claudeLogins
 }
 
 func New(m *session.Manager, terms *term.Manager, users *auth.Store, opt Options) *Server {

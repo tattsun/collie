@@ -32,8 +32,6 @@ var (
 	errHomeFixed       = errors.New("Home cannot be renamed, moved or deleted")
 )
 
-const homeSockName = "collie.sock"
-
 // homeReadTools never change anything, so agents may call them unasked.
 var homeReadTools = []string{"list_projects", "list_sessions", "read_session"}
 
@@ -108,75 +106,19 @@ func (m *Manager) homeMounts(uid string) []string {
 	return out
 }
 
-// homeSpec adds what a Home container needs: the projects, the tools
-// socket and the binary that bridges to it.
+// homeSpec adds what a Home container needs: the projects, and the tools
+// socket with the binary that bridges to it.
 func (m *Manager) homeSpec(sp *sandbox.Spec, uid string) error {
-	dir, err := m.homeSocket(uid)
-	if err != nil {
-		return err
-	}
-	exe, err := os.Executable()
-	if err != nil {
-		return err
-	}
 	sp.ReadOnly = m.homeMounts(uid)
-	sp.CollieRun = dir
-	sp.CollieBin = exe
-	return nil
+	return m.toolsSpec(sp, toolScope{uid: uid})
 }
 
-// homeSocket starts the user's tools socket (once per process) and returns
-// the directory holding it.
-func (m *Manager) homeSocket(uid string) (string, error) {
-	m.homeMu.Lock()
-	defer m.homeMu.Unlock()
-	dir := filepath.Join(m.st.Dir(), "run", uid)
-	if m.homeLn[uid] != nil {
-		return dir, nil
-	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", err
-	}
-	sock := filepath.Join(dir, homeSockName)
-	_ = os.Remove(sock) // left over from an earlier run
-	ln, err := net.Listen("unix", sock)
-	if err != nil {
-		return "", err
-	}
-	_ = os.Chmod(sock, 0o600)
-	m.homeLn[uid] = ln
-	go func() {
-		for {
-			c, err := ln.Accept()
-			if err != nil {
-				return
-			}
-			go m.serveTools(uid, c)
-		}
-	}()
-	return dir, nil
-}
+// homeSocket starts the user's Home tools socket.
+func (m *Manager) homeSocket(uid string) (string, error) { return m.toolSocket(toolScope{uid: uid}) }
 
-// homeTool is the MCP server command (Collie's bridge to the socket) as
-// the Home agent runs it.
-func (m *Manager) homeTool(p model.Project, uid string) (string, []string, error) {
-	dir, err := m.homeSocket(uid)
-	if err != nil {
-		return "", nil, err
-	}
-	if p.Isolated() {
-		return sandbox.CollieBinPath, []string{"mcp-bridge", sandbox.CollieRunDir + "/" + homeSockName}, nil
-	}
-	exe, err := os.Executable()
-	if err != nil {
-		return "", nil, err
-	}
-	return exe, []string{"mcp-bridge", filepath.Join(dir, homeSockName)}, nil
-}
-
-// homeClaudeArgs adds the tools to Claude Code's arguments (next to any
-// MCP config already given) and lets it use the read-only ones unasked.
-func homeClaudeArgs(base []string, cmd string, args []string) []string {
+// collieClaudeArgs adds Collie's tools to Claude Code's arguments (next to
+// any MCP config already given) and lets it use the allowed ones unasked.
+func collieClaudeArgs(base []string, cmd string, args []string, allowed []string) []string {
 	cfg := string(mustJSON(map[string]any{"mcpServers": map[string]any{
 		"collie": map[string]any{"command": cmd, "args": args},
 	}}))
@@ -186,16 +128,18 @@ func homeClaudeArgs(base []string, cmd string, args []string) []string {
 	} else {
 		out = append(out, "--mcp-config", cfg)
 	}
-	out = append(out, "--allowedTools")
-	for _, t := range homeReadTools {
-		out = append(out, "mcp__collie__"+t)
+	if len(allowed) > 0 {
+		out = append(out, "--allowedTools")
+		for _, t := range allowed {
+			out = append(out, "mcp__collie__"+t)
+		}
 	}
 	return out
 }
 
-// homeCodexArgs adds the tools to Codex's configuration for this process
-// only (CODEX_HOME is shared with the user's project containers).
-func homeCodexArgs(base []string, cmd string, args []string) []string {
+// collieCodexArgs adds Collie's tools to Codex's configuration for this
+// process only (CODEX_HOME is shared by all of the user's containers).
+func collieCodexArgs(base []string, cmd string, args []string) []string {
 	return append(slices.Clone(base),
 		"-c", "mcp_servers.collie.command="+strconv.Quote(cmd),
 		"-c", "mcp_servers.collie.args="+string(mustJSON(args)))
@@ -210,6 +154,7 @@ You are the user's **Home agent** in Collie, the web app where they run coding a
 - ` + "`list_projects`, `list_sessions`, `read_session`" + `: the user's projects, what each session is doing, and what was said in it.
 - ` + "`start_session`" + `: start an agent in a project with your instructions.
 - ` + "`send_message`" + `: give an existing session more instructions.
+- ` + "`show_media`" + `: show the user images, videos or an HTML page right in this chat.
 
 ## How to work
 - You are the coordinator. Changes to a project are made by a session in that project: start one (or instruct an existing one) with clear, self-contained instructions — that agent does not see this conversation.
@@ -239,14 +184,14 @@ type rpcMsg struct {
 	Params  json.RawMessage `json:"params,omitempty"`
 }
 
-func (m *Manager) serveTools(uid string, c net.Conn) {
+func (m *Manager) serveTools(tc *toolConn, c net.Conn) {
 	defer c.Close()
 	r := bufio.NewReaderSize(c, 64<<10)
 	enc := json.NewEncoder(c)
 	for {
 		line, err := r.ReadBytes('\n')
 		if len(bytes.TrimSpace(line)) > 0 {
-			if resp := m.handleRPC(uid, line); resp != nil {
+			if resp := m.handleRPC(tc, line); resp != nil {
 				if enc.Encode(resp) != nil {
 					return
 				}
@@ -273,14 +218,31 @@ func toolText(text string, isErr bool) map[string]any {
 	return map[string]any{"content": []any{map[string]any{"type": "text", "text": text}}, "isError": isErr}
 }
 
-func (m *Manager) handleRPC(uid string, line []byte) (resp any) {
+const (
+	homeServerInstructions  = "Collie: see the user's projects and sessions, start or instruct sessions in their projects, and show the user files with show_media."
+	mediaServerInstructions = "Collie is the app the user follows this session in, often on a phone. show_media puts files in front of them: screenshots, design options, " +
+		"screen recordings (e.g. Playwright's recordVideo), HTML reports. Use it when seeing the result helps them review your work."
+)
+
+func (m *Manager) handleRPC(tc *toolConn, line []byte) (resp any) {
 	var req rpcMsg
 	if err := json.Unmarshal(line, &req); err != nil {
 		return rpcError(nil, -32700, "parse error")
 	}
+	if req.Method == "collie/session" {
+		// Sent by the bridge first: the session whose agent this is.
+		var p struct {
+			ID string `json:"id"`
+		}
+		if json.Unmarshal(req.Params, &p) == nil && m.toolSessionOK(tc.scope, p.ID) {
+			tc.session = p.ID
+		}
+		return nil
+	}
 	if len(req.ID) == 0 || string(req.ID) == "null" {
 		return nil // a notification: nothing to answer
 	}
+	home := tc.scope.project == ""
 	switch req.Method {
 	case "initialize":
 		var p struct {
@@ -294,12 +256,16 @@ func (m *Manager) handleRPC(uid string, line []byte) (resp any) {
 			"protocolVersion": p.ProtocolVersion,
 			"capabilities":    map[string]any{"tools": map[string]any{}},
 			"serverInfo":      map[string]any{"name": "collie", "version": "1"},
-			"instructions":    "Collie: see the user's projects and sessions, and start or instruct sessions in their projects.",
+			"instructions":    map[bool]string{true: homeServerInstructions, false: mediaServerInstructions}[home],
 		})
 	case "ping":
 		return rpcResult(req.ID, map[string]any{})
 	case "tools/list":
-		return rpcResult(req.ID, map[string]any{"tools": homeToolDefs})
+		tools := []map[string]any{showMediaDef}
+		if home {
+			tools = append(slices.Clone(homeToolDefs), showMediaDef)
+		}
+		return rpcResult(req.ID, map[string]any{"tools": tools})
 	case "tools/call":
 		var p struct {
 			Name      string          `json:"name"`
@@ -314,13 +280,29 @@ func (m *Manager) handleRPC(uid string, line []byte) (resp any) {
 				resp = rpcResult(req.ID, toolText("internal error", true))
 			}
 		}()
-		text, err := m.callTool(uid, p.Name, p.Arguments)
+		var text string
+		var err error
+		switch {
+		case p.Name == "show_media":
+			text, err = m.toolShowMedia(tc, orEmpty(p.Arguments))
+		case home:
+			text, err = m.callTool(tc.scope.uid, p.Name, p.Arguments)
+		default:
+			err = fmt.Errorf("unknown tool %q", p.Name)
+		}
 		if err != nil {
 			return rpcResult(req.ID, toolText(err.Error(), true))
 		}
 		return rpcResult(req.ID, toolText(text, false))
 	}
 	return rpcError(req.ID, -32601, "method not found: "+req.Method)
+}
+
+func orEmpty(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 || string(raw) == "null" {
+		return json.RawMessage("{}")
+	}
+	return raw
 }
 
 func obj(props map[string]any, required ...string) map[string]any {
@@ -383,9 +365,7 @@ var homeToolDefs = []map[string]any{
 // ---- tools ----
 
 func (m *Manager) callTool(uid, name string, raw json.RawMessage) (string, error) {
-	if len(raw) == 0 || string(raw) == "null" {
-		raw = json.RawMessage("{}")
-	}
+	raw = orEmpty(raw)
 	a := Actor{ID: uid, Admin: m.isAdmin(uid)}
 	switch name {
 	case "list_projects":
@@ -671,6 +651,23 @@ func formatItem(it *model.Item) string {
 		}
 		if it.Tool.Status == "error" && it.Tool.Output != "" {
 			line += ": " + clip(it.Tool.Output, 300)
+		}
+		if len(it.Images) > 0 {
+			line += fmt.Sprintf(" [%d image(s)]", len(it.Images))
+		}
+		return line
+	case model.KindMedia:
+		var files []string
+		for _, f := range it.Media {
+			n := f.Name
+			if f.Caption != "" {
+				n += " (" + clip(f.Caption, 100) + ")"
+			}
+			files = append(files, n)
+		}
+		line := "- showed the user " + strings.Join(files, ", ")
+		if it.Text != "" {
+			line += ": " + clip(it.Text, 300)
 		}
 		return line
 	case model.KindApproval, model.KindQuestion:

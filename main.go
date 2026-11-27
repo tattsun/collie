@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -45,8 +46,8 @@ func env(k, def string) string {
 func main() {
 	// Run by the Home agent (inside its container): connects the agent's MCP
 	// stdio to Collie's tools socket.
-	if len(os.Args) == 3 && os.Args[1] == "mcp-bridge" {
-		os.Exit(mcpBridge(os.Args[2]))
+	if (len(os.Args) == 3 || len(os.Args) == 4) && os.Args[1] == "mcp-bridge" {
+		os.Exit(mcpBridge(os.Args[2], os.Args[3:]...))
 	}
 	home, _ := os.UserHomeDir()
 	if len(os.Args) > 1 && os.Args[1] == "update" {
@@ -163,7 +164,7 @@ func main() {
 	srv := server.New(mgr, terms, users, server.Options{Token: *token, NoAuth: *noAuth, Web: web.FS(),
 		ProxyUID: *proxyUID, PublicURL: *publicURL, Owner: owner, Updater: upd})
 	if web.FS() == nil {
-		log.Printf("warning: web UI is not built (run `make`); only the API is available")
+		log.Printf("warning: web UI is not built (run `mise run build`); only the API is available")
 	}
 
 	ln, err := net.Listen("tcp", *addr)
@@ -383,14 +384,22 @@ func subcommand(name string, args []string) int {
 }
 
 // mcpBridge copies stdin to the Unix socket and the socket to stdout until
-// Collie's side is done (it finishes after the agent closes stdin).
-func mcpBridge(sock string) int {
+// Collie's side is done (it finishes after the agent closes stdin). Given
+// a session, it first tells Collie which session's agent it serves.
+func mcpBridge(sock string, session ...string) int {
 	c, err := net.Dial("unix", sock)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "collie mcp-bridge:", err)
 		return 1
 	}
 	defer c.Close()
+	if len(session) > 0 && session[0] != "" {
+		hello, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "method": "collie/session", "params": map[string]string{"id": session[0]}})
+		if _, err := c.Write(append(hello, '\n')); err != nil {
+			fmt.Fprintln(os.Stderr, "collie mcp-bridge:", err)
+			return 1
+		}
+	}
 	go func() {
 		_, _ = io.Copy(c, os.Stdin)
 		if uc, ok := c.(*net.UnixConn); ok {

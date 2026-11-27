@@ -259,27 +259,27 @@ func TestUpdaterRejectsBadReleases(t *testing.T) {
 	}
 }
 
-func TestUpdaterSendsToken(t *testing.T) {
+func TestUpdaterDropsOldToken(t *testing.T) {
 	f := newFakeRelease(t, "v0.3.0")
 	u := newTestUpdater(t, f, nil)
-	_ = u.Check(t.Context())
-	if got := f.auth.Load(); got != "" {
-		t.Errorf("sent %q without a token", got)
-	}
-	if err := u.SetToken(" secret \n"); err != nil {
+	path := filepath.Join(u.dir, "settings.json")
+	if err := os.MkdirAll(u.dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	_ = u.Check(t.Context())
-	if got := f.auth.Load(); got != "Bearer secret" {
-		t.Errorf("Authorization %q", got)
+	if err := os.WriteFile(path, []byte(`{"auto": true, "token": "secret"}`), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	// Persisted, privately.
-	fi, err := os.Stat(filepath.Join(u.dir, "settings.json"))
-	if err != nil || fi.Mode().Perm() != 0o600 {
-		t.Errorf("settings.json: %v %v", fi, err)
+	u2 := New(u.cfg)
+	if !u2.Status().Auto {
+		t.Error("lost the auto setting")
 	}
-	if u2 := New(u.cfg); !u2.Status().TokenSet {
-		t.Error("token not persisted")
+	b, err := os.ReadFile(path)
+	if err != nil || strings.Contains(string(b), "secret") {
+		t.Errorf("settings.json still has the token: %s %v", b, err)
+	}
+	_ = u2.Check(t.Context())
+	if got := f.auth.Load(); got != "" {
+		t.Errorf("sent Authorization %q", got)
 	}
 }
 

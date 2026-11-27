@@ -82,7 +82,6 @@ type Status struct {
 	Why        string  `json:"why,omitempty"`      // …and if not, why
 	DevBuild   bool    `json:"devBuild,omitempty"` // not a release: never updated automatically
 	Auto       bool    `json:"auto"`
-	TokenSet   bool    `json:"tokenSet"`
 	CheckedAt  int64   `json:"checkedAt,omitempty"`
 	CheckError string  `json:"checkError,omitempty"`
 	Phase      string  `json:"phase,omitempty"`
@@ -101,8 +100,7 @@ type Result struct {
 }
 
 type settings struct {
-	Auto  bool   `json:"auto,omitempty"`
-	Token string `json:"token,omitempty"` // GitHub token, for a private repository
+	Auto bool `json:"auto,omitempty"`
 }
 
 type Updater struct {
@@ -151,6 +149,14 @@ func New(cfg Config) *Updater {
 	u.why = u.cannotApply(viaSystemd)
 	if b, err := os.ReadFile(filepath.Join(u.dir, "settings.json")); err == nil {
 		_ = json.Unmarshal(b, &u.set)
+		// Older versions could keep a GitHub token here, for when the
+		// repository was private. Don't leave it lying around.
+		var old struct{ Token string }
+		if json.Unmarshal(b, &old) == nil && old.Token != "" {
+			if err := u.saveLocked(); err != nil {
+				log.Printf("update: drop the stored GitHub token: %v", err)
+			}
+		}
 	}
 	u.last = readResult(u.dir)
 	return u
@@ -258,7 +264,7 @@ func (u *Updater) Status() Status {
 	st := Status{
 		Current: u.cfg.Current, Enabled: u.cfg.Repo != "", Repo: u.cfg.Repo,
 		CanApply: u.why == "", Why: u.why, DevBuild: !parseVersion(u.cfg.Current).release(),
-		Auto: u.set.Auto, TokenSet: u.set.Token != "", CheckError: u.checkErr,
+		Auto: u.set.Auto, CheckError: u.checkErr,
 		Phase: u.phase, Error: u.err, Busy: busy, Last: u.last,
 	}
 	if !u.checked.IsZero() {
@@ -279,10 +285,7 @@ func (u *Updater) Check(ctx context.Context) error {
 	if u.cfg.Repo == "" {
 		return errors.New("update checks are turned off")
 	}
-	u.mu.Lock()
-	token := u.set.Token
-	u.mu.Unlock()
-	rel, err := newGitHub(u.cfg.API, u.cfg.Repo, token).latest(ctx)
+	rel, err := newGitHub(u.cfg.API, u.cfg.Repo).latest(ctx)
 	u.mu.Lock()
 	u.checked = time.Now()
 	if err != nil {
@@ -306,16 +309,6 @@ func (u *Updater) SetAuto(on bool) error {
 	if on {
 		go u.maybeAuto()
 	}
-	return err
-}
-
-// SetToken stores the GitHub token used to read releases ("" clears it).
-func (u *Updater) SetToken(token string) error {
-	u.mu.Lock()
-	u.set.Token = strings.TrimSpace(token)
-	err := u.saveLocked()
-	u.mu.Unlock()
-	u.changed()
 	return err
 }
 
@@ -361,7 +354,7 @@ func (u *Updater) Apply(wait bool) error {
 		u.mu.Unlock()
 		return errors.New("there is no newer release")
 	}
-	rel, token := *u.latest, u.set.Token
+	rel := *u.latest
 	ctx, cancel := context.WithCancel(context.Background())
 	u.cancel, u.now = cancel, make(chan struct{}, 1)
 	u.phase, u.err = PhaseDownloading, ""
@@ -369,7 +362,7 @@ func (u *Updater) Apply(wait bool) error {
 	u.changed()
 
 	go func() {
-		err := u.run(ctx, rel, token, wait)
+		err := u.run(ctx, rel, wait)
 		cancel()
 		u.mu.Lock()
 		u.cancel = nil
@@ -394,9 +387,9 @@ func (u *Updater) setPhase(p string) {
 	u.changed()
 }
 
-func (u *Updater) run(ctx context.Context, rel release, token string, wait bool) error {
+func (u *Updater) run(ctx context.Context, rel release, wait bool) error {
 	to := strings.TrimPrefix(rel.Tag, "v")
-	staged, sum, err := u.download(ctx, rel, token)
+	staged, sum, err := u.download(ctx, rel)
 	if err != nil {
 		return err
 	}
@@ -445,8 +438,8 @@ func (u *Updater) run(ctx context.Context, rel release, token string, wait bool)
 
 // download fetches the binary for this machine into update/staged/ and
 // checks it against the release's signed checksums.
-func (u *Updater) download(ctx context.Context, rel release, token string) (path, sum string, err error) {
-	gh := newGitHub(u.cfg.API, u.cfg.Repo, token)
+func (u *Updater) download(ctx context.Context, rel release) (path, sum string, err error) {
+	gh := newGitHub(u.cfg.API, u.cfg.Repo)
 	name := AssetName()
 	bin, ok := rel.assets[name]
 	if !ok {

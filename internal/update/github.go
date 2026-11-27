@@ -27,32 +27,18 @@ type asset struct {
 }
 
 type github struct {
-	api, repo, token string
-	hc               *http.Client
+	api, repo string
+	hc        *http.Client
 }
 
 var repoRe = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
 
-func newGitHub(api, repo, token string) github {
+// newGitHub reads releases anonymously: the repository is public.
+func newGitHub(api, repo string) github {
 	if api == "" {
 		api = "https://api.github.com"
 	}
-	hc := &http.Client{
-		Timeout: 10 * time.Minute,
-		// Asset downloads redirect to a storage host: the token is for GitHub
-		// only. (net/http drops it across domains already; this makes it
-		// explicit.)
-		CheckRedirect: func(r *http.Request, via []*http.Request) error {
-			if len(via) >= 5 {
-				return errors.New("too many redirects")
-			}
-			if r.URL.Host != via[0].URL.Host {
-				r.Header.Del("Authorization")
-			}
-			return nil
-		},
-	}
-	return github{api: api, repo: repo, token: token, hc: hc}
+	return github{api: api, repo: repo, hc: &http.Client{Timeout: 10 * time.Minute}}
 }
 
 func (g github) request(ctx context.Context, url, accept string) (*http.Response, error) {
@@ -63,9 +49,6 @@ func (g github) request(ctx context.Context, url, accept string) (*http.Response
 	req.Header.Set("Accept", accept)
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 	req.Header.Set("User-Agent", "collie-updater")
-	if g.token != "" {
-		req.Header.Set("Authorization", "Bearer "+g.token)
-	}
 	return g.hc.Do(req)
 }
 
@@ -81,14 +64,10 @@ func (g github) latest(ctx context.Context) (release, error) {
 	}
 	defer resp.Body.Close()
 	switch {
-	case resp.StatusCode == http.StatusNotFound && g.token == "":
-		return release{}, errors.New("no release found (a private repository needs a GitHub token)")
 	case resp.StatusCode == http.StatusNotFound:
 		return release{}, errors.New("no release found")
-	case resp.StatusCode == http.StatusUnauthorized:
-		return release{}, errors.New("GitHub rejected the token")
 	case resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests:
-		return release{}, errors.New("GitHub refused the request (rate limit or token permissions)")
+		return release{}, errors.New("GitHub refused the request (rate limit)")
 	case resp.StatusCode != http.StatusOK:
 		return release{}, fmt.Errorf("check for updates: GitHub returned %s", resp.Status)
 	}

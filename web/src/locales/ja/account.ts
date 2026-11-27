@@ -79,7 +79,6 @@ const ja: Record<string, string> = {
   'Use passkey': 'パスキーを使う',
   'Not confirmed — nothing was changed.': '確認できなかったため、何も変更していません。',
   'token set': 'トークン設定済み',
-  'not set': '未設定',
   'Your agents use your own Claude account. Run {cmd} in any project’s Terminal tab, sign in with your Claude account, and paste the token here.':
     'エージェントはあなた自身の Claude アカウントを使います。いずれかのプロジェクトの「ターミナル」タブで {cmd} を実行し、Claude アカウントでログインして、表示されたトークンをここに貼り付けてください。',
   'logged in': 'ログイン済み',
@@ -217,8 +216,6 @@ const ja: Record<string, string> = {
   '{n} running session(s) or terminal(s) will be interrupted (conversations resume with the next message). Update to v{version} now?':
     '動作中のセッション・ターミナル {n} 件が中断されます（会話は次のメッセージで再開できます）。今すぐ v{version} に更新しますか？',
   'Collie restarts for a moment. Update to v{version} now?': 'Collie が少しの間再起動します。今すぐ v{version} に更新しますか？',
-  'Token saved': 'トークンを保存しました',
-  'Token removed': 'トークンを削除しました',
   Version: 'バージョン',
   'Check now': '今すぐ確認',
   'This server': 'このサーバ',
@@ -241,18 +238,11 @@ const ja: Record<string, string> = {
   'Off: admins are told about new releases and update with one tap. On: a new release installs itself once no agent has been working and no terminal has been used for 10 minutes.':
     'オフ: 新しいリリースを管理者に知らせ、ワンタップで更新します。オン: エージェントが動いておらず、ターミナルも使われていない状態が 10 分続いたら自動でインストールします。',
   'This server runs a development build, so releases are not installed automatically.': 'このサーバは開発ビルドで動いているため、リリースは自動でインストールされません。',
-  'GitHub token': 'GitHub トークン',
-  set: '設定済み',
-  'Only needed while {repo} is a private repository: a fine-grained token with read-only access to its contents.':
-    '{repo} が非公開リポジトリの間だけ必要です。Contents の読み取り権限だけを持つ fine-grained トークンを使ってください。',
-  'Remove token': 'トークンを削除',
   'A new version is available': '新しいバージョンがあります',
   'Updating…': '更新中…',
   // from the server
-  'no release found (a private repository needs a GitHub token)': 'リリースが見つかりません（非公開リポジトリの場合は GitHub トークンが必要です）',
   'no release found': 'リリースが見つかりません',
-  'GitHub rejected the token': 'GitHub にトークンを拒否されました',
-  'GitHub refused the request (rate limit or token permissions)': 'GitHub にリクエストを拒否されました（レート制限、またはトークンの権限）',
+  'GitHub refused the request (rate limit)': 'GitHub にリクエストを拒否されました（レート制限）',
   'this build has no release signing key, so updates cannot be verified': 'このビルドにはリリース署名の鍵が入っていないため、更新を検証できません',
   'Collie is not running as a systemd user service (install it with `mise run install`)':
     'Collie が systemd のユーザーサービスとして動いていません（`mise run install` で導入してください）',

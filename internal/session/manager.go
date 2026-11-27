@@ -513,8 +513,8 @@ func (m *Manager) createSession(a Actor, req CreateSessionReq, via string) (mode
 		s.Title = deriveTitle(req.Prompt)
 	}
 	if req.Worktree {
-		if !gitutil.IsRepo(p.Path) || !gitutil.HasCommits(p.Path) {
-			return model.Session{}, errors.New("an isolated worktree needs a git repository with at least one commit")
+		if err := m.prepareWorktrees(a, p); err != nil {
+			return model.Session{}, err
 		}
 		// Grouped per project so an isolated project's container can mount
 		// all of its worktrees at once.
@@ -543,6 +543,46 @@ func (m *Manager) createSession(a Actor, req CreateSessionReq, via string) (mode
 	}
 	s, _ = m.st.Session(sid)
 	return s, nil
+}
+
+var (
+	errNoRepo    = errors.New("an isolated worktree needs a git repository")
+	errNoCommits = errors.New("an isolated worktree starts from the latest commit, and this repository has files but no commits yet: commit them first")
+)
+
+// checkWorktrees says why sessions in the project at path can't get an
+// isolated worktree (nil if they can). A repository without commits (a new
+// project, a clone of an empty repository) is fine while it holds no files:
+// prepareWorktrees gives it an empty initial commit to branch off. With
+// files, a worktree from that commit would leave them out.
+func checkWorktrees(path string) error {
+	if !gitutil.IsRepo(path) {
+		return errNoRepo
+	}
+	if !gitutil.HasCommits(path) && gitutil.HasFiles(path) {
+		return errNoCommits
+	}
+	return nil
+}
+
+func (m *Manager) prepareWorktrees(a Actor, p model.Project) error {
+	if err := checkWorktrees(p.Path); err != nil {
+		return err
+	}
+	if gitutil.HasCommits(p.Path) {
+		return nil
+	}
+	// Authored as whoever the actor's agents commit as there.
+	var name, email string
+	if p.Isolated() && m.sb != nil {
+		name, email = m.sb.GitIdentity(a.ID)
+	} else if gitutil.HasIdentity(p.Path) {
+		return gitutil.InitialCommit(p.Path, "", "")
+	}
+	if name == "" || email == "" {
+		name, email = a.Name, sandbox.NoReplyEmail(a.Name)
+	}
+	return gitutil.InitialCommit(p.Path, name, email)
 }
 
 func deriveTitle(prompt string) string {

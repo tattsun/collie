@@ -174,6 +174,25 @@ func TestProfileMerge(t *testing.T) {
 	}
 }
 
+func TestGitIdentity(t *testing.T) {
+	m := newTestManager(t)
+	if n, e := m.GitIdentity("u1"); n != "" || e != "" {
+		t.Errorf("no profile yet: %q %q", n, e)
+	}
+	if err := m.SeedPersonal("u1", "alice", "Alice Liddell"); err != nil {
+		t.Fatal(err)
+	}
+	if n, e := m.GitIdentity("u1"); n != "Alice Liddell" || e != "alice@users.noreply.collie" {
+		t.Errorf("seeded: %q %q", n, e)
+	}
+	// The global profile sets an email, the personal one overrides the name only.
+	os.WriteFile(filepath.Join(m.SharedPath(), "gitconfig"), []byte("[user]\n\temail = team@example.com\n"), 0o644)
+	os.WriteFile(filepath.Join(m.PersonalDir("u1"), "gitconfig"), []byte("[user]\n\tname = Al\n"), 0o644)
+	if n, e := m.GitIdentity("u1"); n != "Al" || e != "team@example.com" {
+		t.Errorf("merged: %q %q", n, e)
+	}
+}
+
 func TestProfileEditorPaths(t *testing.T) {
 	dir := t.TempDir()
 	for _, bad := range []string{"env", "x.collie-tmp", "", "a b", "~/x"} {

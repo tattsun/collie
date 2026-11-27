@@ -11,7 +11,7 @@
 
 A **project** is a folder on the server. You can create a new one, clone a repository, or, as an admin, register an existing folder. A **session** is one conversation with one agent (Claude Code or Codex) in a project.
 
-- With **Isolated worktree**, a session gets its own `collie/<id>` branch and checkout, so several sessions can work on the same repository at once. When it is created, Collie fetches the branch's upstream (or the remote's default branch if it has none) and starts from its tip if your local branch is behind. Your local branch is never moved, and unpushed local commits are kept.
+- With **Isolated worktree**, a session gets its own `collie/<id>` branch and checkout, so several sessions can work on the same repository at once. When it is created, Collie fetches the branch's upstream (or the remote's default branch if it has none) and starts from its tip if your local branch is behind. Your local branch is never moved, and unpushed local commits are kept. A repository with no commits yet (a new project, a clone of an empty repository) gets an empty "Initial commit" to branch off when its first worktree session starts.
 - An agent process stops after 30 idle minutes. Your next message resumes the conversation, and that works after a server restart too.
 - Messages you send while the agent is running reach it as extra instructions. A message typed while an approval is waiting denies the request and passes your text along with the denial.
 

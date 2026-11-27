@@ -165,7 +165,9 @@ const ja: Record<string, string> = {
   'invalid project name (letters, digits, . _ -)': 'プロジェクト名が正しくありません（英数字・. _ -）',
   'project is still being cloned': 'プロジェクトはまだ clone 中です',
   "that folder holds other people's projects": 'そのフォルダには他の人のプロジェクトが入っています',
-  'an isolated worktree needs a git repository with at least one commit': 'worktree を使うには、コミットが 1 つ以上ある git リポジトリが必要です',
+  'an isolated worktree needs a git repository': 'worktree を使うには git リポジトリが必要です',
+  'an isolated worktree starts from the latest commit, and this repository has files but no commits yet: commit them first':
+    'worktree は最新のコミットから始まりますが、このリポジトリにはファイルがあるのにコミットがまだありません。先にコミットしてください',
   'only sessions in group projects can be shared': '共有できるのはグループのプロジェクトのセッションだけです',
   'only the person who started the session can change who sees it': '公開範囲を変更できるのはセッションを始めた人だけです',
   'the person who started this session no longer has access to the project, so it is read-only': 'このセッションを始めた人がプロジェクトにアクセスできなくなったため、読み取り専用です',

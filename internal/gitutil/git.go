@@ -14,9 +14,13 @@ import (
 )
 
 func run(ctx context.Context, dir string, args ...string) (string, error) {
+	return runEnv(ctx, dir, nil, args...)
+}
+
+func runEnv(ctx context.Context, dir string, env []string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "LC_ALL=C")
+	cmd.Env = append(append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "LC_ALL=C"), env...)
 	var out, errb bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &errb
@@ -46,6 +50,62 @@ func HasCommits(dir string) bool {
 	defer cancel()
 	_, err := run(c, dir, "rev-parse", "--verify", "-q", "HEAD")
 	return err == nil
+}
+
+// HasFiles reports whether the working tree holds anything git would track:
+// files that are committed, staged or untracked (ignored ones don't count).
+// It errs on the side of true.
+func HasFiles(dir string) bool {
+	c, cancel := ctx(30 * time.Second)
+	defer cancel()
+	out, err := run(c, dir, "status", "--porcelain", "--untracked-files=normal")
+	return err != nil || strings.TrimSpace(out) != ""
+}
+
+// HasIdentity reports whether git knows who to commit as in dir.
+func HasIdentity(dir string) bool {
+	c, cancel := ctx(5 * time.Second)
+	defer cancel()
+	_, err := run(c, dir, "var", "GIT_COMMITTER_IDENT")
+	return err == nil
+}
+
+// ConfigValue reads key from a git config file ("" if unset).
+func ConfigValue(file, key string) string {
+	c, cancel := ctx(5 * time.Second)
+	defer cancel()
+	out, err := run(c, filepath.Dir(file), "config", "--file", file, "--get", key)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(out)
+}
+
+// InitialCommit gives a repository with no commits an empty root commit on
+// its current branch, so there is something to branch off. The index and
+// working tree are left alone. name and email author it if given (else
+// git's configured identity does). Losing a race to another caller is fine.
+func InitialCommit(dir, name, email string) error {
+	c, cancel := ctx(30 * time.Second)
+	defer cancel()
+	tree, err := run(c, dir, "mktree") // empty stdin: the empty tree
+	if err != nil {
+		return err
+	}
+	var env []string
+	if name != "" && email != "" {
+		env = []string{"GIT_AUTHOR_NAME=" + name, "GIT_AUTHOR_EMAIL=" + email, "GIT_COMMITTER_NAME=" + name, "GIT_COMMITTER_EMAIL=" + email}
+	}
+	commit, err := runEnv(c, dir, env, "commit-tree", strings.TrimSpace(tree), "-m", "Initial commit")
+	if err != nil {
+		return err
+	}
+	// The empty old value: only while the branch is still unborn.
+	_, err = run(c, dir, "update-ref", "-m", "commit (initial): Initial commit", "HEAD", strings.TrimSpace(commit), "")
+	if err != nil && HasCommits(dir) {
+		return nil
+	}
+	return err
 }
 
 func Init(dir string) error {

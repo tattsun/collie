@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/tattsun/collie/internal/gitutil"
 	"github.com/tattsun/collie/internal/model"
 )
 
@@ -141,8 +143,21 @@ func (m *Manager) SeedPersonal(userID, name, displayName string) error {
 		"claude/settings.json": "{}\n",
 		"codex/AGENTS.md":      "",
 		"codex/config.toml":    "# Your Codex settings (merged over the global ones)\n",
-		"gitconfig":            fmt.Sprintf("[user]\n\tname = %s\n\temail = %s@users.noreply.collie\n", displayName, name),
+		"gitconfig":            fmt.Sprintf("[user]\n\tname = %s\n\temail = %s\n", displayName, NoReplyEmail(name)),
 	})
+}
+
+// NoReplyEmail is the git email a user's profile starts with.
+func NoReplyEmail(name string) string { return name + "@users.noreply.collie" }
+
+// GitIdentity is who the user's agents commit as in isolated projects: the
+// [user] of their personal profile, over the global one ("" if unset).
+func (m *Manager) GitIdentity(userID string) (name, email string) {
+	for _, f := range []string{filepath.Join(m.SharedPath(), "gitconfig"), filepath.Join(m.PersonalDir(userID), "gitconfig")} {
+		name = cmp.Or(gitutil.ConfigValue(f, "user.name"), name)
+		email = cmp.Or(gitutil.ConfigValue(f, "user.email"), email)
+	}
+	return name, email
 }
 
 // BuildEffective (re)writes the user's merged profile. Files are rewritten

@@ -13,7 +13,6 @@ import (
 
 	"github.com/tattsun/collie/internal/agent"
 	"github.com/tattsun/collie/internal/cron"
-	"github.com/tattsun/collie/internal/gitutil"
 	"github.com/tattsun/collie/internal/model"
 )
 
@@ -259,8 +258,10 @@ func (m *Manager) applySchedule(a Actor, sc *model.Schedule, req ScheduleReq, cr
 	if req.Worktree != nil {
 		sc.Worktree = *req.Worktree
 	}
-	if sc.Worktree && (req.Worktree != nil || req.ProjectID != nil) && (!gitutil.IsRepo(p.Path) || !gitutil.HasCommits(p.Path)) {
-		return errors.New("an isolated worktree needs a git repository with at least one commit")
+	if sc.Worktree && (req.Worktree != nil || req.ProjectID != nil) {
+		if err := checkWorktrees(p.Path); err != nil {
+			return err
+		}
 	}
 	if req.Shared != nil {
 		sc.Shared = *req.Shared

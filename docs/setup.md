@@ -30,7 +30,7 @@ Logs: `journalctl --user -u collie -f`
 
 1. Open the URL the installer printed. Until a passkey exists, anyone on your tailnet can get in without a token.
 2. Click **Create passkey**. You become the first admin, and from then on you can sign in only with a passkey.
-3. Under Account → **Agent accounts**, connect your Claude Code / Codex. The screen walks you through it.
+3. Under Account → **Agent accounts**, connect your Claude Code / Codex. The screen walks you through it. You can add several Claude accounts (a subscription, Amazon Bedrock, an API key or custom settings) and choose one per project in Project → Settings → **Claude account**.
 4. Invite other people from Admin → Users → **Invite**. Their agents run on their own accounts, so each person pays for their own usage.
 
 ## Update

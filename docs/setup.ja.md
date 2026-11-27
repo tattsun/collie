@@ -30,7 +30,7 @@ Collie とエージェント用のコンテナイメージをビルドし（イ�
 
 1. インストーラが表示した URL を開きます。パスキーができるまでは、tailnet 内からならトークンなしで入れます。
 2. **Create passkey** を押します。あなたが最初の管理者になり、以後のログインはパスキーだけになります。
-3. Account → **Agent accounts** で自分の Claude Code / Codex をつなぎます。手順は画面に表示されます。
+3. Account → **Agent accounts** で自分の Claude Code / Codex をつなぎます。手順は画面に表示されます。Claude のアカウントは複数登録でき（サブスク・Amazon Bedrock・API キー・カスタム設定）、Project → Settings → **Claude account** でプロジェクトごとに選べます。
 4. ほかの人は Admin → Users → **Invite** から招待します。エージェントは各自のアカウントで動くので、利用料もそれぞれの負担です。
 
 ## アップデート

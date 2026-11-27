@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -10,6 +11,7 @@ import (
 	"io/fs"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -113,16 +115,16 @@ type Spec struct {
 	// project into the home on first use; only for the user who owns that
 	// state (the server's owner), never for anyone else.
 	MigrateHostState bool
-	// Home containers: the user's projects, mounted read-only at their
-	// paths; the host directory holding Collie's socket for the Home
-	// agent's tools (mounted at CollieRunDir); and Collie's own binary,
-	// which bridges the agent's MCP stdio to that socket (at CollieBinPath).
-	ReadOnly  []string
+	// Home containers: the user's projects, mounted read-only at their paths.
+	ReadOnly []string
+	// The host directory holding Collie's socket for the agents' tools
+	// (mounted at CollieRunDir), and Collie's own binary, which bridges an
+	// agent's MCP stdio to that socket (at CollieBinPath).
 	CollieRun string
 	CollieBin string
 }
 
-// Where a Home container sees Collie's socket directory and binary.
+// Where a container sees Collie's socket directory and binary.
 const (
 	CollieRunDir  = "/run/collie"
 	CollieBinPath = "/usr/local/lib/collie/collie"
@@ -148,6 +150,9 @@ func (m *Manager) Ensure(sp Spec, recreate bool) error {
 	want := configHash(args)
 	name := Name(p.ID, sp.UserID)
 	st := m.inspect(ctx, name)
+	m.mu.Lock()
+	m.stale[name] = st.exists && st.config != want && !recreate
+	m.mu.Unlock()
 	if st.exists && (st.config == want || !recreate) {
 		if !st.running {
 			if _, err := m.podman(ctx, "start", name); err != nil {
@@ -273,11 +278,12 @@ func (m *Manager) runArgs(sp Spec, extra []string) []string {
 }
 
 // envFiles lists the env files for the user's container for the project.
-// Later files override earlier ones: global < user < project.
+// Later files override earlier ones: global < user < the user's Claude
+// account for the project < project.
 func (m *Manager) envFiles(projectID, userID string) []string {
 	var out []string
-	for _, f := range []string{m.SharedEnvPath(), m.UserEnvPath(userID), m.ProjectEnvPath(projectID)} {
-		if fileNonEmpty(f) {
+	for _, f := range []string{m.SharedEnvPath(), m.UserEnvPath(userID), m.accountFile(projectID, userID), m.ProjectEnvPath(projectID)} {
+		if f != "" && fileNonEmpty(f) {
 			out = append(out, f)
 		}
 	}
@@ -452,6 +458,43 @@ func (m *Manager) Exec(projectID, userID, dir, id string, tty bool, env []string
 		_, _ = m.podman(ctx, "exec", name, "collie-kill", id, sig)
 	}
 	return argv, kill
+}
+
+// Stale reports whether the user's container for the project kept an older
+// configuration when it was last started (it was in use when that changed),
+// so it may lack newer mounts.
+func (m *Manager) Stale(projectID, userID string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.stale[Name(projectID, userID)]
+}
+
+// ReadFile reads a file as the user's agents see it in their container for
+// the project, with the agents' permissions. It fails for files larger
+// than limit bytes.
+func (m *Manager) ReadFile(projectID, userID, path string, limit int64) ([]byte, error) {
+	if !filepath.IsAbs(path) {
+		return nil, errors.New("path must be absolute")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	args := append(append([]string(nil), m.global...), "exec", Name(projectID, userID),
+		"head", "-c", strconv.FormatInt(limit+1, 10), "--", path)
+	cmd := exec.CommandContext(ctx, m.cfg.Podman, args...)
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	if err := cmd.Run(); err != nil {
+		msg := strings.TrimSpace(errb.String())
+		if msg == "" {
+			msg = err.Error()
+		}
+		return nil, errors.New(strings.TrimPrefix(msg, "head: "))
+	}
+	if int64(out.Len()) > limit {
+		return nil, fmt.Errorf("%s is larger than %d MB", path, limit>>20)
+	}
+	return out.Bytes(), nil
 }
 
 // containers lists collie's containers, optionally only one project's.

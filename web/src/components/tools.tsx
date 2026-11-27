@@ -56,6 +56,11 @@ export function describeTool(name: string, input: any, cwd?: string): ToolView {
     case 'ToolSearch':
       return { icon: ISearch, label: t('Find tools'), detail: s(i.query) }
   }
+  if (name === 'mcp__collie__show_media') {
+    const files = Array.isArray(i.files) ? i.files : []
+    const names = files.map((f: any) => (typeof f === 'string' ? f : s(f?.path)).split('/').pop()).filter(Boolean)
+    return { icon: IImage, label: t('Show files'), detail: s(i.title) || names.join(', ') }
+  }
   if (name.startsWith('mcp__')) {
     const [, server, ...rest] = name.split('__')
     return { icon: IPlug, label: `${server} · ${rest.join('__')}`, detail: firstString(i) }

@@ -10,6 +10,13 @@ A **project** is a folder on the server. You can create a new one, clone a repos
 - An agent process stops after 30 idle minutes. Your next message resumes the conversation, and that works after a server restart too.
 - Messages you send while the agent is running reach it as extra instructions. A message typed while an approval is waiting denies the request and passes your text along with the denial.
 
+## Screenshots, videos and HTML
+
+Agents in every session can show you files right in the chat. Try asking "make three design options and show me screenshots", "record the sign-in flow and show me" or "write it up as an HTML page and show me".
+
+- Playwright records video as WebM. If a video won't play on your iPhone, ask for MP4.
+- HTML pages open in a sandbox without network access, so they have to be a single file with styles and images embedded. The agent is told this. Scripts run only after you press **Run scripts**.
+
 ## Isolation
 
 New projects run in an **Isolated container** by default. You can change this in Project → Settings.
@@ -24,7 +31,7 @@ New projects run in an **Isolated container** by default. You can change this in
 
 - Personal projects and conversations are visible only to their owner. Admins can't see them either.
 - In a **group project**, all members share the files and Changes. Sessions are shared with the group by default (you can choose **Make private**), so members can watch, instruct, approve and interrupt.
-- An agent always runs on the account of the person who **started** the session, not the person sending the message.
+- An agent always runs on the account of the person who **started** the session (the Claude account they chose for that project), not the person sending the message.
 - A terminal is visible only to the person who opened it.
 - Admins invite and manage users, edit the global skills, MCP and environment variables, and manage host-run projects, existing folders and resource limits.
 

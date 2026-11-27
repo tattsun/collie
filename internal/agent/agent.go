@@ -5,6 +5,7 @@ package agent
 
 import (
 	"bufio"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -39,6 +40,9 @@ type Sink interface {
 	Usage(u model.Usage)
 	// Exited is called once when the agent process ends.
 	Exited(err error)
+	// Blob stores an image the agent saw (a screenshot in a tool's result,
+	// say) and returns its upload name, or "" if it was not kept.
+	Blob(data []byte) string
 }
 
 type Config struct {
@@ -279,6 +283,38 @@ func clip(s string) string {
 	head := s[:maxOutput*2/3]
 	tail := s[len(s)-maxOutput/3:]
 	return head + fmt.Sprintf("\n\n… %d bytes omitted …\n\n", len(s)-len(head)-len(tail)) + tail
+}
+
+// maxToolImages caps how many images of one tool result are kept.
+const maxToolImages = 8
+
+// toolImages stores the images in a tool result's content blocks, in
+// Claude's ({"type":"image","source":{"type":"base64","data":…}}) or MCP's
+// ({"type":"image","data":…,"mimeType":…}) form, and returns their names.
+func toolImages(s Sink, content any) []string {
+	blocks, _ := content.([]any)
+	var out []string
+	for _, x := range blocks {
+		b, ok := x.(map[string]any)
+		if !ok || str(b, "type") != "image" || len(out) == maxToolImages {
+			continue
+		}
+		data := str(b, "data")
+		if src := obj(b, "source"); src != nil && str(src, "type") == "base64" {
+			data = str(src, "data")
+		}
+		if data == "" {
+			continue
+		}
+		raw, err := base64.StdEncoding.DecodeString(data)
+		if err != nil {
+			continue
+		}
+		if name := s.Blob(raw); name != "" {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 func mustJSON(v any) json.RawMessage {

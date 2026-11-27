@@ -1,11 +1,12 @@
 import { rich } from './ui'
 import { useEffect, useState } from 'preact/hooks'
-import { api, saveClaudeToken } from '../api'
+import { api } from '../api'
 import { addPasskey, deviceName, signOut } from '../authflow'
 import { go, me, route, sandbox, toast, toastError } from '../store'
 import { ago, cls, copyText } from '../util'
 import { lang, setLang, t, type Lang } from '../i18n'
 import { passkeyError, passkeysSupported } from '../webauthn'
+import { ClaudeAccountsCard } from './ClaudeAccounts'
 import { EnvEditor, ProfileEditor } from './Editors'
 import { IBack, ICheck, IPlus, IShield, ITrash, IX, Spinner } from './icons'
 
@@ -14,7 +15,7 @@ interface MeInfo {
   passkeys: { id: string; name: string; createdAt: number; lastUsed?: number }[]
   sessions: { current: boolean; createdAt: number; lastSeen: number; agent: string }[]
   codexLoggedIn: boolean
-  claudeToken: boolean
+  claudeAccounts: number
 }
 
 /** Renders a translated sentence, replacing {key} placeholders with elements. */
@@ -42,7 +43,6 @@ export function AccountPage() {
   const [busy, setBusy] = useState('')
   const [link, setLink] = useState('')
   const [display, setDisplay] = useState('')
-  const [claude, setClaude] = useState('')
 
   const load = () =>
     api<MeInfo>('GET', '/api/me')
@@ -78,21 +78,6 @@ export function AccountPage() {
       setBusy('')
     }
   }
-  const saveClaude = async () => {
-    if (!claude.trim()) return
-    setBusy('claude')
-    try {
-      await saveClaudeToken(claude)
-      setClaude('')
-      toast(t('Saved — used by your agents from their next start'))
-      load()
-    } catch (e) {
-      toastError(e)
-    } finally {
-      setBusy('')
-    }
-  }
-
   return (
     <div class="page page-pad narrow account">
       <div class="page-head">
@@ -226,20 +211,7 @@ export function AccountPage() {
 
       {info && tab === 'agents' && (
         <div class="col gap-l">
-          <section class="card col gap">
-            <h3>
-              Claude Code {info.claudeToken ? <span class="chip ok-chip"><ICheck size={11} /> {t('token set')}</span> : <span class="chip">{t('not set')}</span>}
-            </h3>
-            <p class="dim small">
-              {rich(t('Your agents use your own Claude account. Run {cmd} in any project’s Terminal tab, sign in with your Claude account, and paste the token here.'), { cmd: <code>claude setup-token</code> })}
-            </p>
-            <div class="row gap">
-              <input class="input mono" type="password" value={claude} placeholder="sk-ant-oat01-…" onInput={(e) => setClaude((e.target as HTMLInputElement).value)} />
-              <button class="btn primary" disabled={!claude.trim() || !!busy} onClick={saveClaude}>
-                {t('Save')}
-              </button>
-            </div>
-          </section>
+          <ClaudeAccountsCard />
           <section class="card col gap">
             <h3>
               Codex {info.codexLoggedIn ? <span class="chip ok-chip"><ICheck size={11} /> {t('logged in')}</span> : <span class="chip">{t('not logged in')}</span>}

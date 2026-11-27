@@ -1,6 +1,20 @@
 // Japanese strings for the session screen (SessionView, Timeline, Composer,
 // Changes, Terminal), plus exact server texts shown in the timeline.
 const ja: Record<string, string> = {
+  // ---- Media (show_media, screenshots, HTML previews)
+  Open: '開く',
+  'Open preview': 'プレビューを開く',
+  'Full screen': '全画面',
+  Preview: 'プレビュー',
+  'Open in a new tab': '新しいタブで開く',
+  Previous: '前へ',
+  Next: '次へ',
+  'Run scripts': 'スクリプトを実行',
+  'Stop scripts': 'スクリプトを止める',
+  'Scripts run sandboxed and offline, without access to Collie.': 'スクリプトはサンドボックス内・オフラインで動き、Collie には触れられません。',
+  'Scripts are running — sandboxed, offline and without access to Collie.': 'スクリプト実行中（サンドボックス内・オフライン・Collie には触れられません）',
+  'Scripts are off and nothing is loaded from the network.': 'スクリプトは無効、ネットワークからの読み込みもありません',
+  'Show files': 'ファイルを表示',
   // ---- SessionView
   'Session settings': 'セッションの設定',
   Title: 'タイトル',
@@ -140,9 +154,10 @@ const ja: Record<string, string> = {
     '以前の Claude の会話を再開できなかったため、新しい会話を開始しました。',
   'Building the agent container image (first time only — this takes a few minutes)…':
     'エージェントのコンテナイメージをビルドしています（初回のみ。数分かかります）…',
-  'Claude Code is not logged in for you. Run `claude setup-token` in a project terminal and paste the token under Account → Agent accounts.': 'あなたの Claude Code はまだログインしていません。プロジェクトのターミナルで `claude setup-token` を実行し、表示されたトークンを アカウント → エージェントのアカウント に貼り付けてください。',
-  'Your Claude token was rejected — it may have been copied incompletely or revoked. Run `claude setup-token` in a project terminal again and save the new token (in the terminal: Select → Save as my Claude token).':
-    'Claude のトークンが拒否されました。コピー時に一部が欠けたか、失効している可能性があります。プロジェクトのターミナルで `claude setup-token` をもう一度実行し、新しいトークンを保存してください（ターミナルの「選択」→「自分の Claude トークンとして保存」）。',
+  'Claude Code has no usable account for you. Add one under Account → Agent accounts (Sign in with Claude, Bedrock or an API key); if you already did, check which account this project uses in Project → Settings.':
+    'あなたの Claude Code には使えるアカウントがありません。アカウント → エージェントのアカウント で追加してください（Claude でサインイン / Bedrock / API キー）。追加済みなら、プロジェクトの Settings でこのプロジェクトが使うアカウントを確認してください。',
+  'Your Claude token was rejected — it may have been copied incompletely or revoked. Use Sign in again on the account under Account → Agent accounts.':
+    'Claude のトークンが拒否されました。失効している可能性があります。アカウント → エージェントのアカウント で該当アカウントの「再サインイン」を実行してください。',
   'An MCP server asked for input; collie declined it.': 'MCP サーバから入力を求められましたが、Collie が断りました。',
 
   // ---- Server texts: timeline errors

@@ -27,6 +27,7 @@ This assumes the configuration from the [setup guide](setup.md): a dedicated `co
 - Group projects always run in containers, and only admins can drive a host-run agent.
 - Members can't register arbitrary folders. Their clones are `https://` only and run inside their own container.
 - Project folders can't be nested inside each other, so no container can see another project.
+- Agents talk to Collie only through a tool socket given to their own container. A project's agent can address only its user's sessions in that same container.
 
 ## What is *not* protected
 
@@ -35,4 +36,5 @@ This assumes the configuration from the [setup guide](setup.md): a dedicated `co
 
 ## Other things worth knowing
 
+- HTML and SVG that agents show you never run as Collie's own page. They open in a sandbox without network access, so they can't touch your Collie session or send anything out, even after you press **Run scripts**.
 - Deleting a project in Collie leaves its files on disk. Only the worktrees Collie created are removed, and their branches are kept.

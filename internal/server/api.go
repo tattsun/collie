@@ -6,13 +6,12 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/coder/websocket"
 	"github.com/tattsun/collie/internal/agent"
-	"github.com/tattsun/collie/internal/model"
 	"github.com/tattsun/collie/internal/session"
 	"github.com/tattsun/collie/internal/term"
 )
@@ -303,36 +302,49 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 		httpError(w, 400, err.Error())
 		return
 	}
-	ext := ""
-	switch http.DetectContentType(data) {
-	case "image/png":
-		ext = ".png"
-	case "image/jpeg":
-		ext = ".jpg"
-	case "image/gif":
-		ext = ".gif"
-	case "image/webp":
-		ext = ".webp"
-	default:
-		httpError(w, 400, "only png, jpeg, gif and webp images are supported")
-		return
-	}
-	name := model.NewID() + model.NewID() + ext
-	p, _ := s.m.UploadPath(name)
-	if err := os.WriteFile(p, data, 0o600); err != nil {
-		httpError(w, 500, err.Error())
+	name, err := s.m.SaveUpload(data)
+	if err != nil {
+		httpError(w, 400, err.Error())
 		return
 	}
 	writeJSON(w, map[string]any{"id": name, "url": "/api/uploads/" + name})
 }
 
+// Agents' HTML pages and SVG images are never served as documents of
+// Collie's origin, where a script in them could act as the user. The CSP
+// sandbox gives them an opaque origin even when opened directly (no
+// cookies, storage or same-origin requests; the API refuses null and
+// cross-site origins), and forbids forms, popups, dialogs and navigating
+// the app. Nothing is loaded from the network or from other URLs, so
+// nothing leaks out either. Scripts stay off unless the viewer asks for
+// them (?js=1, HTML only); they then run inline-only, still sandboxed and
+// offline.
+const (
+	sandboxCSP = "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; font-src data:; " +
+		"base-uri 'none'; form-action 'none'; frame-ancestors 'self'"
+	sandboxScriptCSP = "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'; " +
+		"img-src data: blob:; media-src data: blob:; font-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'self'"
+)
+
 func (s *Server) getUpload(w http.ResponseWriter, r *http.Request) {
-	p, ok := s.m.UploadPath(r.PathValue("name"))
+	name := r.PathValue("name")
+	p, ok := s.m.UploadPath(name)
 	if !ok {
 		httpError(w, 404, "not found")
 		return
 	}
-	w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
+	h := w.Header()
+	h.Set("Content-Type", session.UploadType(name))
+	h.Set("Cache-Control", "private, max-age=31536000, immutable")
+	h.Set("Cross-Origin-Resource-Policy", "same-origin")
+	if session.UploadActive(name) {
+		csp := sandboxCSP
+		if r.URL.Query().Get("js") == "1" && strings.HasSuffix(name, ".html") {
+			csp = sandboxScriptCSP
+		}
+		h.Set("Content-Security-Policy", csp)
+		h.Set("Referrer-Policy", "no-referrer")
+	}
 	http.ServeFile(w, r, p)
 }
 

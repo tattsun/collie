@@ -92,6 +92,7 @@ const (
 	KindNotice   = "notice"
 	KindError    = "error"
 	KindResult   = "result"
+	KindMedia    = "media" // files the agent showed the user (show_media)
 )
 
 // Item is one entry of the normalized conversation timeline.
@@ -106,9 +107,21 @@ type Item struct {
 	Ask    *Ask       `json:"ask,omitempty"`
 	Plan   []PlanStep `json:"plan,omitempty"`
 	Result *Result    `json:"result,omitempty"`
-	Images []string   `json:"images,omitempty"`
-	By     string     `json:"by,omitempty"`  // user who sent a user message
-	Via    string     `json:"via,omitempty"` // "home": sent for the user by their Home agent
+	// Images are upload names: attached to a user message, or seen by the
+	// agent in a tool's result (screenshots, images it read).
+	Images []string `json:"images,omitempty"`
+	Media  []Media  `json:"media,omitempty"`
+	By     string   `json:"by,omitempty"`  // user who sent a user message
+	Via    string   `json:"via,omitempty"` // "home": sent for the user by their Home agent
+}
+
+// Media is one file the agent showed the user, copied into the uploads
+// when it was shown (later changes to the file do not affect it).
+type Media struct {
+	ID      string `json:"id"` // upload name (/api/uploads/<id>)
+	Mime    string `json:"mime"`
+	Caption string `json:"caption,omitempty"`
+	Name    string `json:"name,omitempty"` // file name it was shown from
 }
 
 type Tool struct {
@@ -266,6 +279,12 @@ func (it *Item) Clone() *Item {
 	}
 	if it.Plan != nil {
 		c.Plan = append([]PlanStep(nil), it.Plan...)
+	}
+	if it.Images != nil {
+		c.Images = append([]string(nil), it.Images...)
+	}
+	if it.Media != nil {
+		c.Media = append([]Media(nil), it.Media...)
 	}
 	return &c
 }

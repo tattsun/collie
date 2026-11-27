@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"encoding/base64"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -59,5 +61,34 @@ func TestAuthNotice(t *testing.T) {
 		if want == "" && got != "" || want != "" && !strings.Contains(got, want) {
 			t.Errorf("authNotice(%q) = %q, want it to mention %q", in, got, want)
 		}
+	}
+}
+
+type blobSink struct {
+	capsSink
+	blobs [][]byte
+}
+
+func (s *blobSink) Blob(b []byte) string {
+	s.blobs = append(s.blobs, b)
+	return fmt.Sprintf("img%d.png", len(s.blobs))
+}
+
+func TestToolImages(t *testing.T) {
+	png := base64.StdEncoding.EncodeToString([]byte("\x89PNG\r\n\x1a\nfake"))
+	s := &blobSink{}
+	got := toolImages(s, []any{
+		map[string]any{"type": "text", "text": "Took the screenshot"},
+		// Claude's tool_result form
+		map[string]any{"type": "image", "source": map[string]any{"type": "base64", "media_type": "image/png", "data": png}},
+		// MCP's form (Codex)
+		map[string]any{"type": "image", "mimeType": "image/png", "data": png},
+		map[string]any{"type": "image", "data": "!!not base64"},
+	})
+	if len(got) != 2 || len(s.blobs) != 2 || !strings.HasPrefix(string(s.blobs[0]), "\x89PNG") {
+		t.Fatalf("toolImages = %v (%d blobs)", got, len(s.blobs))
+	}
+	if toolImages(s, "plain text output") != nil {
+		t.Error("images found in a string")
 	}
 }

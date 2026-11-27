@@ -1,6 +1,20 @@
 // Japanese strings for the session screen (SessionView, Timeline, Composer,
 // Changes, Terminal), plus exact server texts shown in the timeline.
 const ja: Record<string, string> = {
+  // ---- Media (show_media, screenshots, HTML previews)
+  Open: '開く',
+  'Open preview': 'プレビューを開く',
+  'Full screen': '全画面',
+  Preview: 'プレビュー',
+  'Open in a new tab': '新しいタブで開く',
+  Previous: '前へ',
+  Next: '次へ',
+  'Run scripts': 'スクリプトを実行',
+  'Stop scripts': 'スクリプトを止める',
+  'Scripts run sandboxed and offline, without access to Collie.': 'スクリプトはサンドボックス内・オフラインで動き、Collie には触れられません。',
+  'Scripts are running — sandboxed, offline and without access to Collie.': 'スクリプト実行中（サンドボックス内・オフライン・Collie には触れられません）',
+  'Scripts are off and nothing is loaded from the network.': 'スクリプトは無効、ネットワークからの読み込みもありません',
+  'Show files': 'ファイルを表示',
   // ---- SessionView
   'Session settings': 'セッションの設定',
   Title: 'タイトル',

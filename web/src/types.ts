@@ -12,6 +12,8 @@ export interface Project {
   memory?: string
   cpus?: string
   pids?: number
+  /** the containers may run Podman inside (admins decide) */
+  nested?: boolean
   git: boolean
   status?: '' | 'cloning' | 'error'
   error?: string
@@ -93,6 +95,19 @@ export interface Session {
   updatedAt: number
   owner?: string
   shared?: boolean
+  /** work the agent has running in the background, past the end of its turn */
+  tasks?: BgTask[]
+}
+
+export interface BgTask {
+  id: string
+  /** the agent's task type: local_bash, local_agent, monitor... */
+  kind?: string
+  title: string
+  summary?: string
+  /** the tool call that started it (a timeline item) */
+  toolId?: string
+  started: number
 }
 
 export interface Tool {

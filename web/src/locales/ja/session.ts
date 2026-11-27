@@ -15,6 +15,15 @@ const ja: Record<string, string> = {
   'Scripts are running — sandboxed, offline and without access to Collie.': 'スクリプト実行中（サンドボックス内・オフライン・Collie には触れられません）',
   'Scripts are off and nothing is loaded from the network.': 'スクリプトは無効、ネットワークからの読み込みもありません',
   'Show files': 'ファイルを表示',
+  // ---- Background tasks (Tasks.tsx)
+  'In background': 'バックグラウンド実行中',
+  '1 task running in the background': 'バックグラウンドで 1 件実行中',
+  '{n} tasks running in the background': 'バックグラウンドで {n} 件実行中',
+  Task: 'タスク',
+  'Show where it started': '開始した場所を表示',
+  'Stop task': 'タスクを停止',
+  'Stop “{title}”?': '「{title}」を停止しますか？',
+  '{n} in background': '裏で {n} 件実行中',
   // ---- SessionView
   'Session settings': 'セッションの設定',
   Title: 'タイトル',
@@ -152,6 +161,7 @@ const ja: Record<string, string> = {
   'Review started': 'レビューを開始しました',
   'Could not resume the previous Claude conversation; started a fresh one.':
     '以前の Claude の会話を再開できなかったため、新しい会話を開始しました。',
+  'Starting the container. The first start after an image update can take a few minutes…': 'コンテナを起動しています。イメージの更新後、最初の起動には数分かかることがあります…',
   'Building the agent container image (first time only — this takes a few minutes)…':
     'エージェントのコンテナイメージをビルドしています（初回のみ。数分かかります）…',
   'Claude Code has no usable account for you. Add one under Account → Agent accounts (Sign in with Claude, Bedrock or an API key); if you already did, check which account this project uses in Project → Settings.':

@@ -3,6 +3,7 @@ package session
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -323,7 +324,7 @@ var homeToolDefs = []map[string]any{
 	},
 	{
 		"name":        "list_sessions",
-		"description": "List sessions (agent conversations), most recent first, with status: running, waiting (needs the user), idle, stopped or error.",
+		"description": "List sessions (agent conversations), most recent first, with status: running, waiting (needs the user), idle, stopped or error. `background` lists work an agent left running after its turn (builds, tests, sub-agents); it reports back when that ends.",
 		"inputSchema": obj(map[string]any{
 			"project":          prop("string", "Project id or name; omit for all projects"),
 			"include_archived": prop("boolean", "Include archived sessions"),
@@ -553,6 +554,8 @@ func (m *Manager) toolListSessions(a Actor, project string, archived bool, limit
 		Worktree bool   `json:"worktree,omitempty"`
 		Archived bool   `json:"archived,omitempty"`
 		Others   bool   `json:"startedByAnotherMember,omitempty"`
+		// Background work the agent left running; it reports when it ends.
+		Background []string `json:"background,omitempty"`
 	}
 	var ss []model.Session
 	for _, s := range m.VisibleSessions(a.ID) {
@@ -569,9 +572,13 @@ func (m *Manager) toolListSessions(a Actor, project string, archived bool, limit
 			break
 		}
 		p, _ := m.st.Project(s.ProjectID)
-		list = append(list, out{ID: s.ID, Project: p.Name, Title: s.Title, Agent: s.Agent, Status: s.Status, Mode: s.Mode,
+		o := out{ID: s.ID, Project: p.Name, Title: s.Title, Agent: s.Agent, Status: s.Status, Mode: s.Mode,
 			Updated: ago(s.UpdatedAt), Preview: s.Preview, Branch: s.Branch, Worktree: s.Worktree, Archived: s.Archived,
-			Others: s.Owner != a.ID})
+			Others: s.Owner != a.ID}
+		for _, t := range s.Tasks {
+			o.Background = append(o.Background, cmp.Or(t.Title, t.Kind)+" (started "+ago(t.Started)+")")
+		}
+		list = append(list, o)
 	}
 	return pretty(list), nil
 }

@@ -69,6 +69,15 @@ const ja: Record<string, string> = {
   'since {time}': 'ログイン: {time}',
   'active {time}': '最終アクセス: {time}',
   'Sign out all other devices': '他の端末をすべてログアウト',
+  'Sign out “{device}”?': '「{device}」をログアウトしますか？',
+  'Don’t recognize a device or address? Sign it out, and check your passkeys above.':
+    '心当たりのない端末やアドレスがあればログアウトさせ、上のパスキー一覧も確認してください。',
+  'Confirmed. Tap “Add a passkey on this device” again.': '確認できました。もう一度「この端末にパスキーを追加」をタップしてください。',
+  'Confirm it’s you': '本人確認',
+  'Use your passkey to make this change. Collie asks again before changes that could let someone in or reach beyond your own projects.':
+    'この変更にはパスキーが必要です。誰かを招き入れたり、自分のプロジェクトの外に影響したりする変更の前には、Collie がもう一度確認します。',
+  'Use passkey': 'パスキーを使う',
+  'Not confirmed — nothing was changed.': '確認できなかったため、何も変更していません。',
   'token set': 'トークン設定済み',
   'not set': '未設定',
   'Your agents use your own Claude account. Run {cmd} in any project’s Terminal tab, sign in with your Claude account, and paste the token here.':
@@ -249,6 +258,8 @@ const ja: Record<string, string> = {
   'Collie is not running as a systemd user service (install it with `mise run install`)':
     'Collie が systemd のユーザーサービスとして動いていません（`mise run install` で導入してください）',
   'systemd-run is not available': 'systemd-run が使えません',
+  'Collie updates itself on Linux only; update it from source (`git pull`, then `mise run install`)':
+    'Collie が自分で更新できるのは Linux だけです。ソースから更新してください（`git pull` のあと `mise run install`）',
   "release signature does not match this build's signing key": 'リリースの署名がこのビルドの署名鍵と一致しません',
   'malformed release signature': 'リリースの署名の形式が正しくありません',
   'an update is already in progress': '更新はすでに進行中です',

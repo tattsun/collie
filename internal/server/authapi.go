@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -26,6 +27,9 @@ func (s *Server) authRoutes() {
 	mx.HandleFunc("POST /api/auth/invite/finish", s.inviteFinish)
 	mx.HandleFunc("POST /api/auth/logout", s.logout)
 	mx.HandleFunc("POST /api/login", s.legacyLogin)
+	// re-verification before sensitive changes (signed in)
+	mx.HandleFunc("POST /api/auth/verify/begin", s.verifyBegin)
+	mx.HandleFunc("POST /api/auth/verify/finish", s.verifyFinish)
 
 	// the signed-in user
 	mx.HandleFunc("GET /api/me", s.me)
@@ -36,6 +40,7 @@ func (s *Server) authRoutes() {
 	mx.HandleFunc("DELETE /api/me/passkeys/{id}", s.deletePasskey)
 	mx.HandleFunc("POST /api/me/link", s.myDeviceLink)
 	mx.HandleFunc("POST /api/me/signout-others", s.signoutOthers)
+	mx.HandleFunc("DELETE /api/me/sessions/{id}", s.signoutDevice)
 	mx.HandleFunc("GET /api/me/env", s.getMyEnv)
 	mx.HandleFunc("PUT /api/me/env", s.putMyEnv)
 	s.claudeRoutes(mx)
@@ -97,10 +102,19 @@ func (s *Server) loginBegin(w http.ResponseWriter, r *http.Request) {
 	}
 	opts, id, err := s.pk.BeginLogin(rp)
 	if err != nil {
-		httpError(w, 500, err.Error())
+		beginFailed(w, err)
 		return
 	}
 	writeJSON(w, map[string]any{"id": id, "options": opts})
+}
+
+func beginFailed(w http.ResponseWriter, err error) {
+	if errors.Is(err, auth.ErrBusy) {
+		w.Header().Set("Retry-After", "60")
+		httpError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	httpError(w, 500, err.Error())
 }
 
 func shortAgent(r *http.Request) string {
@@ -125,24 +139,69 @@ func shortAgent(r *http.Request) string {
 func (s *Server) loginFinish(w http.ResponseWriter, r *http.Request) {
 	u, err := s.pk.FinishLogin(r.URL.Query().Get("c"), r)
 	if err != nil {
+		s.authFailed(r, "passkey sign-in", err)
 		time.Sleep(300 * time.Millisecond)
 		httpError(w, 401, err.Error())
 		return
 	}
-	secret, err := s.users.NewSession(u.ID, shortAgent(r))
-	if err != nil {
-		httpError(w, 500, err.Error())
+	if !s.startSession(w, r, u) {
 		return
 	}
-	s.setSessionCookie(w, r, secret)
 	writeJSON(w, userInfo{ID: u.ID, Name: u.Name, DisplayName: u.DisplayName, Admin: u.Admin})
+}
+
+// startSession signs u in on this device (after a passkey check).
+func (s *Server) startSession(w http.ResponseWriter, r *http.Request, u auth.User) bool {
+	ip := clientIP(r)
+	secret, err := s.users.NewSession(u.ID, shortAgent(r), ip)
+	if err != nil {
+		httpError(w, 500, err.Error())
+		return false
+	}
+	s.setSessionCookie(w, r, secret)
+	log.Printf("auth: %s signed in from %s (%s)", u.Name, ip, shortAgent(r))
+	return true
+}
+
+func (s *Server) verifyBegin(w http.ResponseWriter, r *http.Request) {
+	rp, err := s.relyingParty(r)
+	if err != nil {
+		httpError(w, 400, err.Error())
+		return
+	}
+	opts, id, err := s.pk.BeginVerify(rp, current(r))
+	if err != nil {
+		beginFailed(w, err)
+		return
+	}
+	writeJSON(w, map[string]any{"id": id, "options": opts})
+}
+
+func (s *Server) verifyFinish(w http.ResponseWriter, r *http.Request) {
+	h, _ := r.Context().Value(sessKey).(string)
+	if h == "" {
+		ok(w) // setup token / --no-auth: there is no passkey to check
+		return
+	}
+	u := current(r)
+	if err := s.pk.FinishVerify(r.URL.Query().Get("c"), u.ID, r); err != nil {
+		s.authFailed(r, "passkey check by "+u.Name, err)
+		time.Sleep(300 * time.Millisecond)
+		httpError(w, 401, err.Error())
+		return
+	}
+	if err := s.users.MarkVerified(h); err != nil {
+		fail(w, err)
+		return
+	}
+	ok(w)
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie(sessionCookie); err == nil {
-		if _, h, ok := s.users.SessionUser(c.Value); ok {
-			s.users.DeleteSession(h)
-			s.m.Hub().KillSession("", h)
+		if _, x, ok := s.users.SessionUser(c.Value, ""); ok {
+			s.users.DeleteSession(x.Hash)
+			s.m.Hub().KillSession("", x.Hash)
 		}
 	}
 	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true})
@@ -164,6 +223,7 @@ func (s *Server) legacyLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.opt.NoAuth && !s.tokenOK(strings.TrimSpace(req.Token)) {
+		s.authFailed(r, "setup token", nil)
 		time.Sleep(500 * time.Millisecond)
 		httpError(w, http.StatusUnauthorized, "invalid token")
 		return
@@ -171,8 +231,9 @@ func (s *Server) legacyLogin(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{
 		Name: legacyCookie, Value: strings.TrimSpace(req.Token), Path: "/", HttpOnly: true,
 		SameSite: http.SameSiteLaxMode, MaxAge: 30 * 24 * 3600,
-		Secure: r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https",
+		Secure: isHTTPS(r),
 	})
+	log.Printf("auth: signed in with the setup token from %s", clientIP(r))
 	ok(w)
 }
 
@@ -189,6 +250,7 @@ func (s *Server) inviteURL(r *http.Request, secret string) string {
 func (s *Server) inviteInfo(w http.ResponseWriter, r *http.Request) {
 	inv, found := s.users.Invite(r.URL.Query().Get("code"))
 	if !found {
+		s.authFailed(r, "invite link", nil)
 		httpError(w, 404, "this link is invalid, expired or was already used")
 		return
 	}
@@ -214,6 +276,7 @@ func (s *Server) inviteBegin(w http.ResponseWriter, r *http.Request) {
 	}
 	inv, found := s.users.Invite(req.Code)
 	if !found {
+		s.authFailed(r, "invite link", nil)
 		httpError(w, 404, "this link is invalid, expired or was already used")
 		return
 	}
@@ -249,7 +312,7 @@ func (s *Server) inviteBegin(w http.ResponseWriter, r *http.Request) {
 	}
 	opts, id, err := s.pk.BeginRegistration(rp, c)
 	if err != nil {
-		httpError(w, 500, err.Error())
+		beginFailed(w, err)
 		return
 	}
 	writeJSON(w, map[string]any{"id": id, "options": opts})
@@ -258,6 +321,7 @@ func (s *Server) inviteBegin(w http.ResponseWriter, r *http.Request) {
 func (s *Server) inviteFinish(w http.ResponseWriter, r *http.Request) {
 	c, cred, err := s.pk.FinishRegistration(r.URL.Query().Get("c"), r)
 	if err != nil {
+		s.authFailed(r, "invite passkey", err)
 		httpError(w, 400, err.Error())
 		return
 	}
@@ -267,6 +331,7 @@ func (s *Server) inviteFinish(w http.ResponseWriter, r *http.Request) {
 	}
 	inv, err := s.users.ConsumeInvite(c.Invite)
 	if err != nil {
+		s.authFailed(r, "invite link", err)
 		httpError(w, 400, err.Error())
 		return
 	}
@@ -287,13 +352,10 @@ func (s *Server) inviteFinish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = s.users.SetRP(c.RP.ID, c.RP.Origin)
-	secret, err := s.users.NewSession(uid, shortAgent(r))
-	if err != nil {
-		httpError(w, 500, err.Error())
+	u, _ := s.users.User(uid)
+	if !s.startSession(w, r, u) {
 		return
 	}
-	s.setSessionCookie(w, r, secret)
-	u, _ := s.users.User(uid)
 	writeJSON(w, userInfo{ID: u.ID, Name: u.Name, DisplayName: u.DisplayName, Admin: u.Admin})
 }
 
@@ -314,7 +376,8 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 	}
 	sessions := []map[string]any{}
 	for _, x := range s.users.Sessions(u.ID) {
-		sessions = append(sessions, map[string]any{"current": x.Hash == sessHash, "createdAt": x.CreatedAt, "lastSeen": x.LastSeen, "agent": x.Agent})
+		sessions = append(sessions, map[string]any{"id": x.ID(), "current": x.Hash == sessHash, "createdAt": x.CreatedAt,
+			"lastSeen": x.LastSeen, "agent": x.Agent, "ip": x.IP, "lastIp": x.LastIP})
 	}
 	codex := false
 	if sb := s.m.Sandbox(); sb != nil {
@@ -354,6 +417,9 @@ func (s *Server) patchMe(w http.ResponseWriter, r *http.Request) {
 // addPasskeyBegin adds a passkey to the signed-in user. During bootstrap
 // (signed in with the legacy token) this registers the first passkey.
 func (s *Server) addPasskeyBegin(w http.ResponseWriter, r *http.Request) {
+	if !s.verified(w, r) {
+		return
+	}
 	var req struct {
 		Name string `json:"name"`
 	}
@@ -365,7 +431,7 @@ func (s *Server) addPasskeyBegin(w http.ResponseWriter, r *http.Request) {
 	}
 	opts, id, err := s.pk.BeginRegistration(rp, auth.Ceremony{User: current(r), Name: req.Name})
 	if err != nil {
-		httpError(w, 500, err.Error())
+		beginFailed(w, err)
 		return
 	}
 	writeJSON(w, map[string]any{"id": id, "options": opts})
@@ -387,10 +453,10 @@ func (s *Server) addPasskeyFinish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = s.users.SetRP(c.RP.ID, c.RP.Origin)
-	// The legacy sign-in stops working now: move to a passkey session.
-	if legacy, _ := r.Context().Value(legacyKey).(bool); legacy {
-		if secret, err := s.users.NewSession(u.ID, shortAgent(r)); err == nil {
-			s.setSessionCookie(w, r, secret)
+	// The setup token stops working now: move to a passkey session.
+	if legacy, _ := r.Context().Value(legacyKey).(bool); legacy && !s.opt.NoAuth {
+		if !s.startSession(w, r, u) {
+			return
 		}
 	}
 	ok(w)
@@ -412,6 +478,9 @@ func (s *Server) renamePasskey(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deletePasskey(w http.ResponseWriter, r *http.Request) {
+	if !s.verified(w, r) {
+		return
+	}
 	if err := s.users.RemovePasskey(current(r).ID, r.PathValue("id")); err != nil {
 		fail(w, err)
 		return
@@ -421,6 +490,9 @@ func (s *Server) deletePasskey(w http.ResponseWriter, r *http.Request) {
 
 // myDeviceLink makes a one-time link to add a passkey from another device.
 func (s *Server) myDeviceLink(w http.ResponseWriter, r *http.Request) {
+	if !s.verified(w, r) {
+		return
+	}
 	secret, err := s.users.CreateInvite(auth.Invite{UserID: current(r).ID, CreatedBy: current(r).ID, Note: "device"}, auth.LinkTTL)
 	if err != nil {
 		fail(w, err)
@@ -438,6 +510,18 @@ func (s *Server) signoutOthers(w http.ResponseWriter, r *http.Request) {
 			c.Kill()
 		}
 	})
+	ok(w)
+}
+
+// signoutDevice signs one of your devices out.
+func (s *Server) signoutDevice(w http.ResponseWriter, r *http.Request) {
+	u := current(r)
+	h, err := s.users.DeleteUserSession(u.ID, r.PathValue("id"))
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	s.m.Hub().KillSession("", h)
 	ok(w)
 }
 
@@ -515,9 +599,14 @@ func (s *Server) profileRead(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"content": content})
 }
 
+// globalChange gates edits that reach every user's agents.
+func (s *Server) globalChange(w http.ResponseWriter, r *http.Request) bool {
+	return r.PathValue("scope") != "global" || s.verified(w, r)
+}
+
 func (s *Server) profileWrite(w http.ResponseWriter, r *http.Request) {
 	dir, found := s.profileDir(w, r)
-	if !found {
+	if !found || !s.globalChange(w, r) {
 		return
 	}
 	var req struct {
@@ -536,7 +625,7 @@ func (s *Server) profileWrite(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) profileDelete(w http.ResponseWriter, r *http.Request) {
 	dir, found := s.profileDir(w, r)
-	if !found {
+	if !found || !s.globalChange(w, r) {
 		return
 	}
 	if err := sandbox.DeleteProfilePath(dir, r.URL.Query().Get("path")); err != nil {
@@ -681,7 +770,7 @@ func (s *Server) adminOverview(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) createInvite(w http.ResponseWriter, r *http.Request) {
-	if !requireAdmin(w, r) {
+	if !requireAdmin(w, r) || !s.verified(w, r) {
 		return
 	}
 	var req struct {
@@ -712,7 +801,7 @@ func (s *Server) revokeInvite(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) patchUser(w http.ResponseWriter, r *http.Request) {
-	if !requireAdmin(w, r) {
+	if !requireAdmin(w, r) || !s.verified(w, r) {
 		return
 	}
 	var req struct {
@@ -736,7 +825,7 @@ func (s *Server) patchUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {
-	if !requireAdmin(w, r) {
+	if !requireAdmin(w, r) || !s.verified(w, r) {
 		return
 	}
 	uid := r.PathValue("id")
@@ -755,7 +844,7 @@ func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {
 
 // userDeviceLink lets an admin help a user who lost their passkeys.
 func (s *Server) userDeviceLink(w http.ResponseWriter, r *http.Request) {
-	if !requireAdmin(w, r) {
+	if !requireAdmin(w, r) || !s.verified(w, r) {
 		return
 	}
 	secret, err := s.users.CreateInvite(auth.Invite{UserID: r.PathValue("id"), CreatedBy: current(r).ID, Note: "recovery"}, auth.LinkTTL)
@@ -798,7 +887,7 @@ func (s *Server) getSharedEnv(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) putSharedEnv(w http.ResponseWriter, r *http.Request) {
-	if !requireAdmin(w, r) {
+	if !requireAdmin(w, r) || !s.verified(w, r) {
 		return
 	}
 	var req struct {

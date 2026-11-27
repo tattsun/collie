@@ -33,8 +33,8 @@ type RP struct {
 
 // Ceremony state kept between the begin and finish steps.
 type Ceremony struct {
-	Kind    string // "login" | "register"
-	User    User   // register: the user the passkey is for (may be new)
+	Kind    string // "login" | "register" | "verify"
+	User    User   // register: the user the passkey is for (may be new); verify: the signed-in user
 	NewUser bool   // register: create User on success
 	Invite  string // register via invite: the invite secret
 	Name    string // register: passkey name
@@ -61,18 +61,28 @@ func (p *Passkeys) wa(rp RP) (*webauthn.WebAuthn, error) {
 	})
 }
 
-func (p *Passkeys) put(c *Ceremony) string {
+// maxCeremonies bounds the sign-in attempts kept in memory at once: anyone
+// who can reach Collie can start one.
+const maxCeremonies = 2000
+
+// ErrBusy means too many sign-in attempts are in progress.
+var ErrBusy = errors.New("too many sign-in attempts right now; try again in a minute")
+
+func (p *Passkeys) put(c *Ceremony) (string, error) {
 	id := newSecret()
 	c.expires = time.Now().Add(5 * time.Minute)
 	p.mu.Lock()
+	defer p.mu.Unlock()
 	for k, v := range p.cs {
 		if time.Now().After(v.expires) {
 			delete(p.cs, k)
 		}
 	}
+	if len(p.cs) >= maxCeremonies {
+		return "", ErrBusy
+	}
 	p.cs[id] = c
-	p.mu.Unlock()
-	return id
+	return id, nil
 }
 
 func (p *Passkeys) take(id, kind string) (*Ceremony, error) {
@@ -109,8 +119,16 @@ func (p *Passkeys) BeginRegistration(rp RP, c Ceremony) (json.RawMessage, string
 		return nil, "", err
 	}
 	c.Kind, c.RP, c.data = "register", rp, *data
-	b, err := json.Marshal(creation)
-	return b, p.put(&c), err
+	return finishBegin(creation, &c, p)
+}
+
+func finishBegin(options any, c *Ceremony, p *Passkeys) (json.RawMessage, string, error) {
+	b, err := json.Marshal(options)
+	if err != nil {
+		return nil, "", err
+	}
+	id, err := p.put(c)
+	return b, id, err
 }
 
 // FinishRegistration verifies the authenticator's response. The caller
@@ -141,8 +159,7 @@ func (p *Passkeys) BeginLogin(rp RP) (json.RawMessage, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	b, err := json.Marshal(assertion)
-	return b, p.put(&Ceremony{Kind: "login", RP: rp, data: *data}), err
+	return finishBegin(assertion, &Ceremony{Kind: "login", RP: rp, data: *data}, p)
 }
 
 // FinishLogin verifies a sign-in and returns the user.
@@ -173,6 +190,51 @@ func (p *Passkeys) FinishLogin(id string, r *http.Request) (User, error) {
 	}
 	p.st.PasskeyUsed(found.ID, *cred)
 	return found, nil
+}
+
+// BeginVerify asks the signed-in user to confirm it's them with one of
+// their own passkeys (before a sensitive change).
+func (p *Passkeys) BeginVerify(rp RP, u User) (json.RawMessage, string, error) {
+	if len(u.Passkeys) == 0 {
+		return nil, "", errors.New("you have no passkey to confirm with")
+	}
+	w, err := p.wa(rp)
+	if err != nil {
+		return nil, "", err
+	}
+	assertion, data, err := w.BeginLogin(waUser{u}, webauthn.WithUserVerification(protocol.VerificationRequired))
+	if err != nil {
+		return nil, "", err
+	}
+	return finishBegin(assertion, &Ceremony{Kind: "verify", RP: rp, User: u, data: *data}, p)
+}
+
+// FinishVerify checks that the response comes from one of uid's passkeys.
+func (p *Passkeys) FinishVerify(id, uid string, r *http.Request) error {
+	c, err := p.take(id, "verify")
+	if err != nil {
+		return err
+	}
+	if c.User.ID != uid {
+		return errors.New("mismatched request")
+	}
+	u, ok := p.st.User(uid)
+	if !ok || u.Disabled {
+		return errors.New("unknown user")
+	}
+	w, err := p.wa(c.RP)
+	if err != nil {
+		return err
+	}
+	cred, err := w.FinishLogin(waUser{u}, c.data, r)
+	if err != nil {
+		return friendly(err)
+	}
+	if cred.Authenticator.CloneWarning {
+		return errors.New("this passkey looks cloned (signature counter went backwards); refused")
+	}
+	p.st.PasskeyUsed(u.ID, *cred)
+	return nil
 }
 
 func friendly(err error) error {

@@ -23,6 +23,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # mise, so each project can pin its own toolchains in its mise.toml.
 RUN curl -fsSL https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh
 
+# Podman, for projects an admin lets run containers inside (Project →
+# Settings; see internal/sandbox/nested.go). Elsewhere it has no
+# privileges to work with.
+# newuidmap/newgidmap must not be setuid: as root without
+# CAP_DAC_OVERRIDE they could not open another process's uid_map. The
+# container's CAP_SETUID/CAP_SETGID (ambient there) or these file
+# capabilities do the job instead.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      podman uidmap fuse-overlayfs passt catatonit libcap2-bin \
+    && chmod u-s /usr/bin/newuidmap /usr/bin/newgidmap \
+    && setcap cap_setuid=ep /usr/bin/newuidmap \
+    && setcap cap_setgid=ep /usr/bin/newgidmap \
+    && rm -rf /var/lib/apt/lists/*
+
 # The agents and the Playwright MCP server (with Chromium). AGENTS_REV is
 # bumped by "rebuild" to pull the latest versions without a full rebuild.
 ARG AGENTS_REV=0

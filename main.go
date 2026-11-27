@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -31,6 +32,7 @@ import (
 	"github.com/tattsun/collie/internal/update"
 	"github.com/tattsun/collie/internal/version"
 	"github.com/tattsun/collie/web"
+	"golang.org/x/crypto/acme/autocert"
 )
 
 // defaultUpdateRepo is where releases (and so updates) come from.
@@ -58,18 +60,19 @@ func main() {
 	if len(os.Args) > 1 && !strings.HasPrefix(os.Args[1], "-") {
 		os.Exit(subcommand(os.Args[1], os.Args[2:]))
 	}
-	addr := flag.String("addr", env("COLLIE_ADDR", ":7878"), "listen address (e.g. 127.0.0.1:7878 behind `tailscale serve`)")
+	addr := flag.String("addr", env("COLLIE_ADDR", ":7878"), "listen address (e.g. 127.0.0.1:7878 behind `tailscale serve` or a reverse proxy; default with --domain: :443)")
+	domain := flag.String("domain", os.Getenv("COLLIE_DOMAIN"), "serve HTTPS for this domain name with a certificate from Let's Encrypt (needs ports 443 and 80 reachable from the internet)")
 	dataDir := flag.String("data", env("COLLIE_DATA", filepath.Join(home, ".collie")), "data directory")
 	root := flag.String("root", env("COLLIE_ROOT", filepath.Join(home, "projects")), "directory where new projects are created")
-	token := flag.String("token", os.Getenv("COLLIE_TOKEN"), "access token (default: generated once and stored in <data>/token)")
-	noAuth := flag.Bool("no-auth", os.Getenv("COLLIE_NO_AUTH") == "1", "disable authentication (trusted networks only)")
+	token := flag.String("token", os.Getenv("COLLIE_TOKEN"), "setup token for the first sign-in, before any passkey exists (default: generated once and stored in <data>/token)")
+	noAuth := flag.Bool("no-auth", os.Getenv("COLLIE_NO_AUTH") == "1", "disable sign-in, for development on this machine only (needs a loopback --addr; requests through proxies are refused)")
 	claudeBin := flag.String("claude", env("COLLIE_CLAUDE", "claude"), "Claude Code executable")
 	codexBin := flag.String("codex", env("COLLIE_CODEX", "codex"), "Codex executable")
 	podmanBin := flag.String("podman", env("COLLIE_PODMAN", "podman"), "Podman executable (for isolated projects)")
 	ctrMemory := flag.String("container-memory", env("COLLIE_CONTAINER_MEMORY", "4g"), "default memory limit per project container")
 	ctrCPUs := flag.String("container-cpus", env("COLLIE_CONTAINER_CPUS", defaultCPUs()), "default CPU limit per project container")
 	ctrPids := flag.Int("container-pids", 4096, "default process limit per project container")
-	proxyUID := flag.Int("trusted-proxy-uid", 0, "uid of the local proxy whose Tailscale identity headers are trusted (tailscaled: 0)")
+	_ = flag.Int("trusted-proxy-uid", 0, "deprecated and ignored: Tailscale identity no longer signs anyone in")
 	idle := flag.Duration("idle-timeout", 30*time.Minute, "stop idle agent processes after this long (they resume on the next message; 0 = never)")
 	showToken := flag.Bool("print-token", false, "print the access token and exit")
 	loginURL := flag.Bool("login-url", false, "print sign-in links (containing the access token) and exit")
@@ -83,6 +86,21 @@ func main() {
 	if *showVersion {
 		fmt.Println(version.Version)
 		return
+	}
+	if *domain != "" {
+		*domain = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(*domain), "."))
+		if !addrSet() {
+			*addr = ":443"
+		}
+		if *publicURL == "" {
+			*publicURL = "https://" + *domain
+		}
+	}
+	if *noAuth {
+		// Without sign-in, whoever reaches Collie controls this server.
+		if *domain != "" || !loopbackAddr(*addr) {
+			log.Fatalf("--no-auth is only for development on this machine: use --addr 127.0.0.1:PORT (and no --domain)")
+		}
 	}
 
 	st, err := store.Open(*dataDir)
@@ -104,7 +122,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("addr: %v", err)
 		}
-		for _, u := range signInURLs(ta, *token, *noAuth, true) {
+		for _, u := range signInURLs(ta, *publicURL, *token, *noAuth, true) {
 			fmt.Println(u)
 		}
 		return
@@ -114,12 +132,17 @@ func main() {
 	sb := sandbox.New(sandbox.Config{
 		Podman: *podmanBin, DataDir: *dataDir, Memory: *ctrMemory, CPUs: *ctrCPUs, Pids: *ctrPids,
 	})
-	if !sb.Available() {
+	if !sandbox.Supported() {
+		log.Printf("note: isolated projects need Linux for now — agents run directly on this machine (%s)", runtime.GOOS)
+	} else if !sb.Available() {
 		log.Printf("note: podman not found — new projects will run agents directly on this host")
 	} else if !sb.LimitsSupported() {
 		log.Printf("warning: no systemd user session — memory/CPU/process limits for isolated projects are NOT enforced (run `loginctl enable-linger %s` and start collie as a user service)", os.Getenv("USER"))
 	}
 	if *buildImage || *prepareImage {
+		if !sandbox.Supported() {
+			log.Fatalf("isolated projects need Linux for now (this is %s)", runtime.GOOS)
+		}
 		if !sb.Available() {
 			log.Fatal("podman is not installed")
 		}
@@ -162,7 +185,7 @@ func main() {
 		Busy: func() int { return mgr.BusySessions(24*time.Hour) + terms.Active(30*time.Minute) },
 	})
 	srv := server.New(mgr, terms, users, server.Options{Token: *token, NoAuth: *noAuth, Web: web.FS(),
-		ProxyUID: *proxyUID, PublicURL: *publicURL, Owner: owner, Updater: upd})
+		PublicURL: *publicURL, Owner: owner, Updater: upd})
 	if web.FS() == nil {
 		log.Printf("warning: web UI is not built (run `mise run build`); only the API is available")
 	}
@@ -171,19 +194,36 @@ func main() {
 	if err != nil {
 		log.Fatalf("listen: %v", err)
 	}
-	hs := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
+	hs := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout: 2 * time.Minute, MaxHeaderBytes: 64 << 10}
+	var certs *autocert.Manager
+	if *domain != "" {
+		certs = &autocert.Manager{
+			Prompt:     autocert.AcceptTOS,
+			HostPolicy: autocert.HostWhitelist(*domain),
+			Cache:      autocert.DirCache(filepath.Join(*dataDir, "acme")),
+		}
+		hs.TLSConfig = certs.TLSConfig()
+		hs.TLSConfig.MinVersion = tls.VersionTLS12
+		// HTTP/1.1 only: the terminal and live updates are WebSockets.
+		var http1 http.Protocols
+		http1.SetHTTP1(true)
+		hs.Protocols = &http1
+		// Scanners probe every public address; their failed handshakes are noise.
+		hs.ErrorLog = log.New(quietHandshakes{}, "", log.LstdFlags)
+	}
 
 	// The token is only shown on an interactive terminal, never written to a
 	// persistent log (e.g. the systemd journal).
 	interactive := isTerminal(os.Stderr)
 	log.Printf("collie %s listening on %s", version.Version, ln.Addr())
 	if users.PasskeysExist() {
-		for _, u := range signInURLs(ln.Addr().(*net.TCPAddr), "", true, false) {
+		for _, u := range signInURLs(ln.Addr().(*net.TCPAddr), *publicURL, "", true, false) {
 			log.Printf("  open: %s", u)
 		}
 		log.Printf("  sign in with a passkey (lost them? run `collie link` on the server)")
 	} else {
-		for _, u := range signInURLs(ln.Addr().(*net.TCPAddr), *token, *noAuth, interactive) {
+		for _, u := range signInURLs(ln.Addr().(*net.TCPAddr), *publicURL, *token, *noAuth, interactive) {
 			log.Printf("  open: %s", u)
 		}
 		if !interactive && !*noAuth {
@@ -193,10 +233,19 @@ func main() {
 	log.Printf("projects root: %s · data: %s", absRoot, *dataDir)
 
 	go func() {
-		if err := hs.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		var err error
+		if certs != nil {
+			err = hs.ServeTLS(ln, "", "")
+		} else {
+			err = hs.Serve(ln)
+		}
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Fatalf("serve: %v", err)
 		}
 	}()
+	if certs != nil {
+		go serveHTTPRedirect(certs)
+	}
 	// Up and serving: an update waiting for this version to start can finish.
 	if err := update.MarkRunning(*dataDir, version.Version); err != nil {
 		log.Printf("update marker: %v", err)
@@ -214,6 +263,52 @@ func main() {
 	terms.CloseAll()
 	mgr.Shutdown()
 	users.Flush()
+}
+
+// addrSet reports whether --addr / COLLIE_ADDR was given.
+func addrSet() bool {
+	set := os.Getenv("COLLIE_ADDR") != ""
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "addr" {
+			set = true
+		}
+	})
+	return set
+}
+
+// loopbackAddr reports whether a listen address only accepts connections
+// from this machine.
+func loopbackAddr(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+// quietHandshakes drops "TLS handshake error" lines from the server log.
+type quietHandshakes struct{}
+
+func (quietHandshakes) Write(p []byte) (int, error) {
+	if strings.Contains(string(p), "TLS handshake error") {
+		return len(p), nil
+	}
+	return os.Stderr.Write(p)
+}
+
+// serveHTTPRedirect answers plain HTTP on port 80 for --domain: Let's
+// Encrypt's HTTP challenge, and a redirect to HTTPS for everything else.
+// The certificate also works without it (through the TLS challenge on 443).
+func serveHTTPRedirect(m *autocert.Manager) {
+	hs := &http.Server{Addr: ":80", Handler: m.HTTPHandler(nil), ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout: time.Minute, MaxHeaderBytes: 16 << 10}
+	if err := hs.ListenAndServe(); err != nil {
+		log.Printf("note: no HTTP→HTTPS redirect on port 80 (%v); open Collie with https://", err)
+	}
 }
 
 func updateRepo(s string) string {
@@ -252,11 +347,14 @@ func isTerminal(f *os.File) bool {
 }
 
 // signInURLs lists the URLs the server can be reached on, optionally with the
-// access token (opening such a link signs the device in).
-func signInURLs(a *net.TCPAddr, token string, noAuth, withToken bool) []string {
+// setup token (opening such a link signs the device in).
+func signInURLs(a *net.TCPAddr, publicURL, token string, noAuth, withToken bool) []string {
 	q := "/"
 	if withToken && !noAuth {
 		q = "/?token=" + token
+	}
+	if publicURL != "" {
+		return []string{strings.TrimSuffix(publicURL, "/") + q}
 	}
 	var hosts []string
 	if a.IP == nil || a.IP.IsUnspecified() {
@@ -295,6 +393,7 @@ func usage() {
   collie link [--user NAME]      print a one-time link to add a passkey (recovery)
   collie users                   list users
   collie make-admin NAME         make a user an admin
+  collie reset-passkeys --yes    forget every passkey and sign-in (to move Collie to a new address)
   collie update                  show the running and the latest release
 
 Flags:
@@ -310,6 +409,7 @@ func subcommand(name string, args []string) int {
 	fs := flag.NewFlagSet(name, flag.ExitOnError)
 	dataDir := fs.String("data", env("COLLIE_DATA", filepath.Join(home, ".collie")), "data directory")
 	user := fs.String("user", "", "user name (default: the first admin)")
+	yes := fs.Bool("yes", false, "confirm (reset-passkeys)")
 	_ = fs.Parse(args)
 	users, err := auth.Open(*dataDir)
 	if err != nil {
@@ -377,6 +477,21 @@ func subcommand(name string, args []string) int {
 			return 1
 		}
 		fmt.Printf("%s is now an admin\n", u.Name)
+		return 0
+	case "reset-passkeys":
+		// Passkeys only work on the address they were created on.
+		if !*yes {
+			fmt.Fprintln(os.Stderr, "This removes every user's passkeys and signs everyone out, so Collie can move to a new address.\n"+
+				"Until you create a new passkey, the setup token (`collie --print-token`) signs in as the first admin.\n"+
+				"Run again with --yes to do it.")
+			return 1
+		}
+		if err := users.ResetRP(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		fmt.Println("Done. Open Collie at its new address, sign in with the setup token (`collie --print-token`) and create your passkey right away.\n" +
+			"Then give everyone else a link to add theirs: Admin → Users → Passkey recovery link.")
 		return 0
 	}
 	usage()

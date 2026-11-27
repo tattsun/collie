@@ -31,5 +31,4 @@ git add internal/update/release.pub && git commit -m "Add the release signing ke
 
 ## 注意点
 
-- 非公開リポジトリでは、1 回の実行で GitHub Actions を 10 分ほど使います。その月の無料枠を使い切ると、アカウントに支払い方法と 0 より大きい Actions の予算を設定するまで、ワークフローは動きません。
 - 鍵を替えるときは、新しい公開鍵を `internal/update/release.pub` に追記し、古い鍵で署名したリリースを 1 回出してから、secret を差し替えます。

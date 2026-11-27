@@ -156,10 +156,16 @@ func New(cfg Config) *Updater {
 	return u
 }
 
+// Releases have Linux binaries, and applying one needs systemd.
+const errNotLinux = "Collie updates itself on Linux only; update it from source (`git pull`, then `mise run install`)"
+
 // cannotApply says why this server cannot replace and restart itself.
 func (u *Updater) cannotApply(viaSystemd bool) string {
 	if len(u.cfg.Keys) == 0 {
 		return errNoKeys.Error()
+	}
+	if runtime.GOOS != "linux" && viaSystemd {
+		return errNotLinux
 	}
 	if u.cfg.Unit == "" {
 		return "Collie is not running as a systemd user service (install it with `mise run install`)"

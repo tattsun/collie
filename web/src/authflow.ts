@@ -14,7 +14,7 @@ export interface AuthStatus {
 export const authStatus = signal<AuthStatus | null>(null)
 export const inviteCode = signal<string | null>(new URLSearchParams(location.search).get('invite'))
 
-async function post(path: string, body?: unknown, raw = false): Promise<any> {
+async function post(path: string, body?: unknown, raw = false, retried = false): Promise<any> {
   const r = await fetch(path, {
     method: 'POST',
     credentials: 'same-origin',
@@ -22,8 +22,40 @@ async function post(path: string, body?: unknown, raw = false): Promise<any> {
     body: body === undefined ? undefined : raw ? (body as string) : JSON.stringify(body),
   })
   const data = await r.json().catch(() => ({}))
+  if (r.status === 403 && data.reauth && !retried) {
+    await confirmIdentity()
+    return post(path, body, raw, true)
+  }
   if (!r.ok) throw new Error(data.error || r.statusText)
   return data
+}
+
+/** A pending “confirm it's you” request, shown by VerifyDialog. */
+export const reauthRequest = signal<{ id: number; resolve: () => void; reject: (e: Error) => void } | null>(null)
+let pendingReauth: Promise<void> | null = null
+let reauthSeq = 0
+/** When the last passkey re-check succeeded (ms). */
+export let lastVerified = 0
+
+/** The server wants a recent passkey check before a sensitive change: ask
+ * for it (once, however many requests are waiting) and resolve when done.
+ * Rejects if the user cancels. */
+export function confirmIdentity(): Promise<void> {
+  pendingReauth ??= new Promise<void>((resolve, reject) => {
+    reauthRequest.value = { id: ++reauthSeq, resolve, reject }
+  }).finally(() => {
+    pendingReauth = null
+    reauthRequest.value = null
+  })
+  return pendingReauth
+}
+
+/** Re-checks the signed-in user's passkey. */
+export async function verifyWithPasskey() {
+  const { id, options } = await post('/api/auth/verify/begin')
+  const cred = await getPasskey(options)
+  await post(`/api/auth/verify/finish?c=${encodeURIComponent(id)}`, JSON.stringify(cred), true)
+  lastVerified = Date.now()
 }
 
 export async function fetchAuthStatus(): Promise<AuthStatus> {

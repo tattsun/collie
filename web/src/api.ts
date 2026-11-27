@@ -1,5 +1,6 @@
 import { t } from './i18n'
 import { authed } from './store'
+import { confirmIdentity } from './authflow'
 
 export class ApiError extends Error {
   constructor(message: string, public status: number) {
@@ -7,7 +8,7 @@ export class ApiError extends Error {
   }
 }
 
-export async function api<T = any>(method: string, path: string, body?: unknown): Promise<T> {
+export async function api<T = any>(method: string, path: string, body?: unknown, retried = false): Promise<T> {
   const init: RequestInit = { method, credentials: 'same-origin', headers: {} }
   if (body !== undefined) {
     ;(init.headers as Record<string, string>)['Content-Type'] = 'application/json'
@@ -19,6 +20,11 @@ export async function api<T = any>(method: string, path: string, body?: unknown)
     throw new ApiError(t('Not signed in'), 401)
   }
   const data = await r.json().catch(() => ({}))
+  // A sensitive change without a recent passkey check: confirm, then retry.
+  if (r.status === 403 && data.reauth && !retried) {
+    await confirmIdentity()
+    return api<T>(method, path, body, true)
+  }
   if (!r.ok) throw new ApiError(data.error || r.statusText, r.status)
   return data as T
 }

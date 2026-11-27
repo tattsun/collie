@@ -31,5 +31,4 @@ Step 2 is manual on purpose. If pushing a tag started the workflow, anyone or an
 
 ## Gotchas
 
-- In a private repository each run uses about ten minutes of GitHub Actions time. Once the month's included minutes are used up, runs don't start until the account has a payment method and an Actions budget above zero.
 - To replace the key, add the new public key to `internal/update/release.pub` and publish one release signed with the old key. Then replace the secret.

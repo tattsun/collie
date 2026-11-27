@@ -82,28 +82,83 @@ func TestPasskeysAndSessions(t *testing.T) {
 	if err := s.RemovePasskey(owner, u.Passkeys[0].ID); err == nil {
 		t.Fatal("removing the last admin's last passkey must be refused")
 	}
-	secret, err := s.NewSession(owner, "test")
+	secret, err := s.NewSession(owner, "test", "203.0.113.5")
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, hash, ok := s.SessionUser(secret)
+	got, sess, ok := s.SessionUser(secret, "203.0.113.5")
+	hash := sess.Hash
 	if !ok || got.ID != owner || !s.SessionValid(hash) {
 		t.Fatal("session not resolved")
 	}
-	if _, _, ok := s.SessionUser(secret + "x"); ok {
+	// Signing in is a passkey check.
+	if !sess.Verified() || sess.IP != "203.0.113.5" {
+		t.Fatalf("new session: %+v", sess)
+	}
+	if _, _, ok := s.SessionUser(secret+"x", ""); ok {
 		t.Fatal("wrong secret accepted")
 	}
 	s.DeleteSession(hash)
-	if _, _, ok := s.SessionUser(secret); ok || s.SessionValid(hash) {
+	if _, _, ok := s.SessionUser(secret, ""); ok || s.SessionValid(hash) {
 		t.Fatal("deleted session still valid")
 	}
 	// disabling a user ends their sessions
 	member, _ := s.CreateUser("m", "", false)
-	sec2, _ := s.NewSession(member.ID, "x")
+	sec2, _ := s.NewSession(member.ID, "x", "")
 	yes := true
 	s.UpdateUser(member.ID, nil, nil, &yes)
-	if _, _, ok := s.SessionUser(sec2); ok {
+	if _, _, ok := s.SessionUser(sec2, ""); ok {
 		t.Fatal("disabled user still signed in")
+	}
+}
+
+func TestSessionVerificationAndDevices(t *testing.T) {
+	s, _ := open(t)
+	owner, _ := s.EnsureBootstrapAdmin("admin")
+	other, _ := s.CreateUser("other", "", false)
+	sec, _ := s.NewSession(owner, "Mac", "198.51.100.1")
+	sec2, _ := s.NewSession(owner, "iPhone", "198.51.100.2")
+	osec, _ := s.NewSession(other.ID, "x", "")
+
+	// The passkey check expires; re-verifying renews it.
+	s.update(func(d *data) error {
+		for _, x := range d.Sessions {
+			x.VerifiedAt = now() - VerifyTTL.Milliseconds() - 1
+		}
+		return nil
+	})
+	_, sess, _ := s.SessionUser(sec, "198.51.100.9")
+	if sess.Verified() {
+		t.Fatal("stale passkey check counted as recent")
+	}
+	if err := s.MarkVerified(sess.Hash); err != nil {
+		t.Fatal(err)
+	}
+	if _, sess, _ = s.SessionUser(sec, "198.51.100.9"); !sess.Verified() || sess.LastIP != "198.51.100.9" || sess.IP != "198.51.100.1" {
+		t.Fatalf("after re-verification: %+v", sess)
+	}
+
+	// Signing one device out leaves the others; nobody else's devices can be targeted.
+	_, s2, _ := s.SessionUser(sec2, "")
+	_, os, _ := s.SessionUser(osec, "")
+	if _, err := s.DeleteUserSession(owner, os.ID()); err == nil {
+		t.Fatal("signed out another user's device")
+	}
+	if _, err := s.DeleteUserSession(owner, ""); err == nil {
+		t.Fatal("empty id matched a session")
+	}
+	h, err := s.DeleteUserSession(owner, s2.ID())
+	if err != nil || h != s2.Hash {
+		t.Fatalf("delete: %q %v", h, err)
+	}
+	if _, _, ok := s.SessionUser(sec2, ""); ok {
+		t.Fatal("signed-out device still signed in")
+	}
+	if _, _, ok := s.SessionUser(sec, ""); !ok {
+		t.Fatal("the other device was signed out too")
+	}
+	if _, _, ok := s.SessionUser(osec, ""); !ok {
+		t.Fatal("another user's device was signed out")
 	}
 }
 

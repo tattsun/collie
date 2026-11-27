@@ -23,10 +23,16 @@ depends = ["web"]
 run = 'go build -trimpath -ldflags "-s -w -X github.com/tattsun/collie/internal/version.Version=$(./tools/version.sh)" -o bin/collie .'
 
 [tasks.cross]
-description = "Cross-compile for another architecture, e.g. `mise run cross arm64`"
+description = "Cross-compile for another architecture or OS, e.g. `mise run cross arm64` (Linux) or `mise run cross darwin/arm64`"
 depends = ["web"]
-usage = 'arg "<arch>" help="GOARCH, e.g. amd64 or arm64"'
-run = 'GOOS=linux GOARCH=${usage_arch} go build -trimpath -ldflags "-s -w -X github.com/tattsun/collie/internal/version.Version=$(./tools/version.sh)" -o bin/collie-linux-${usage_arch} .'
+usage = 'arg "<arch>" help="GOARCH for Linux (amd64, arm64), or GOOS/GOARCH (darwin/arm64)"'
+run = """
+set -e
+os=linux arch="${usage_arch}"
+case "$arch" in */*) os="${arch%/*}" arch="${arch#*/}" ;; esac
+GOOS=$os GOARCH=$arch go build -trimpath -ldflags "-s -w -X github.com/tattsun/collie/internal/version.Version=$(./tools/version.sh)" -o bin/collie-$os-$arch .
+echo "built bin/collie-$os-$arch"
+"""
 
 [tasks.dist]
 description = "Build the release files into dist/: binaries for linux amd64/arm64 and SHA256SUMS"
@@ -65,10 +71,19 @@ run = [
 ]
 
 [tasks.install]
-description = "Build and install as a systemd user service (pass --serve to publish via tailscale serve)"
+description = "Build and install as a systemd user service (--domain NAME: HTTPS on the internet; --proxy URL, --serve, --funnel: see --help)"
 depends = ["build"]
 run = "./deploy/install.sh"
 
 [tasks.dev]
 description = "Run the API on :7878 without auth (pair with `cd web && npm run dev`)"
 run = "go run . --no-auth --addr 127.0.0.1:7878"
+
+[tasks.shots]
+description = "Re-shoot the screenshots and demo GIF in docs/images, using a scripted stand-in for claude (needs Playwright + Chromium)"
+depends = ["web"]
+dir = "{{config_root}}/tools/demo"
+run = [
+  "npm ci --no-audit --no-fund",
+  "node shoot.mjs",
+]

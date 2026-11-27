@@ -36,6 +36,7 @@ func (s *Server) apiRoutes() {
 	mx.HandleFunc("POST /api/sessions/{id}/messages", s.sendMessage)
 	mx.HandleFunc("POST /api/sessions/{id}/interrupt", s.interrupt)
 	mx.HandleFunc("POST /api/sessions/{id}/stop", s.stop)
+	mx.HandleFunc("POST /api/sessions/{id}/tasks/{task}/stop", s.stopTask)
 	mx.HandleFunc("POST /api/sessions/{id}/asks/{ask}", s.reply)
 	mx.HandleFunc("GET /api/sessions/{id}/items", s.items)
 	mx.HandleFunc("GET /api/sessions/{id}/changes", s.sessionChanges)
@@ -59,6 +60,11 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		httpError(w, 400, err.Error())
 		return
 	}
+	// Registering a server folder or running agents on the host reaches
+	// beyond any container.
+	if (req.Kind == "existing" || req.Runtime == "host") && actor(r).Admin && !s.verified(w, r) {
+		return
+	}
 	p, err := s.m.CreateProject(actor(r), req)
 	if err != nil {
 		fail(w, err)
@@ -79,6 +85,9 @@ func (s *Server) patchProject(w http.ResponseWriter, r *http.Request) {
 	var req session.PatchProjectReq
 	if err := decode(r, &req); err != nil {
 		httpError(w, 400, err.Error())
+		return
+	}
+	if req.Runtime != nil && *req.Runtime == "host" && actor(r).Admin && !s.verified(w, r) {
 		return
 	}
 	p, err := s.m.PatchProject(actor(r), r.PathValue("id"), req)
@@ -235,6 +244,14 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) interrupt(w http.ResponseWriter, r *http.Request) {
 	if err := s.m.Interrupt(actor(r), r.PathValue("id")); err != nil {
+		fail(w, err)
+		return
+	}
+	ok(w)
+}
+
+func (s *Server) stopTask(w http.ResponseWriter, r *http.Request) {
+	if err := s.m.StopTask(actor(r), r.PathValue("id"), r.PathValue("task")); err != nil {
 		fail(w, err)
 		return
 	}

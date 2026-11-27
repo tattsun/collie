@@ -122,7 +122,18 @@ type Spec struct {
 	// agent's MCP stdio to that socket (at CollieBinPath).
 	CollieRun string
 	CollieBin string
+	// OnSlowStart, if set, is called when creating the container takes a
+	// while (see containerCreateTimeout).
+	OnSlowStart func()
 }
+
+// Creating a container can take minutes: the first one on a new image gets
+// a copy of the image's files owned by the container's ids, unless the
+// kernel can map them on the fly (not when Podman itself runs in a
+// container, nor on some filesystems). The other podman calls are quick.
+const containerCreateTimeout = 20 * time.Minute
+
+var slowStartAfter = 15 * time.Second // a variable for tests
 
 // Where a container sees Collie's socket directory and binary.
 const (
@@ -167,7 +178,13 @@ func (m *Manager) Ensure(sp Spec, recreate bool) error {
 		}
 	}
 	full := append([]string{"run", "-d", "--label", "collie.config=" + want}, args...)
-	if _, err := m.podman(ctx, full...); err != nil {
+	runCtx, cancelRun := context.WithTimeout(context.Background(), containerCreateTimeout)
+	defer cancelRun()
+	if sp.OnSlowStart != nil {
+		slow := time.AfterFunc(slowStartAfter, sp.OnSlowStart)
+		defer slow.Stop()
+	}
+	if _, err := m.podman(runCtx, full...); err != nil {
 		return err
 	}
 	if st.exists {
@@ -228,22 +245,31 @@ func (m *Manager) runArgs(sp Spec, extra []string) []string {
 		// Run as the server user (files stay owned by it) with its own home.
 		"--userns=keep-id",
 		"--passwd-entry", fmt.Sprintf("%s:*:$UID:$GID::%s:/bin/bash", currentUser(), Home),
-		"--security-opt", "no-new-privileges",
 		"--cap-drop", "all",
+	}
+	if m.selinux {
+		// The container shares the project's files with the host by design,
+		// and SELinux would keep it from them (or relabel them for
+		// containers only). Its other walls stay: the user namespace, no
+		// capabilities, seccomp, the mounts.
+		args = append(args, "--security-opt", "label=disable")
+	}
+	args = append(args,
 		"--network", containerNetwork,
 		// Our own minimal /etc/hosts: podman's would add host aliases and
 		// copy the server's entries.
 		"--no-hosts",
-		"-v", m.hostsPath(p.ID) + ":/etc/hosts:ro",
-		"-e", "HOME=" + Home,
-		"-e", "COLLIE_PROJECT=" + p.Name,
-		"-v", home + ":" + Home,
-		"-v", m.CodexDir(uid) + ":" + Home + "/.codex",
-		"-v", p.Path + ":" + p.Path,
-		"-v", m.WorktreeRoot(p.ID) + ":" + m.WorktreeRoot(p.ID),
-		"-v", eff + ":" + ProfileDir + ":ro",
+		"-v", m.hostsPath(p.ID)+":/etc/hosts:ro",
+		"-e", "HOME="+Home,
+		"-e", "COLLIE_PROJECT="+p.Name,
+		"-v", home+":"+Home,
+		"-v", m.CodexDir(uid)+":"+Home+"/.codex",
+		"-v", p.Path+":"+p.Path,
+		"-v", m.WorktreeRoot(p.ID)+":"+m.WorktreeRoot(p.ID),
+		"-v", eff+":"+ProfileDir+":ro",
 		"-w", p.Path,
-	}
+	)
+	args = append(args, m.nestedArgs(p, uid)...)
 	for _, d := range extra {
 		args = append(args, "-v", d+":"+d)
 	}
@@ -351,6 +377,11 @@ func (m *Manager) prepare(sp Spec) error {
 			return err
 		}
 	}
+	if p.Nested {
+		if err := m.prepareNested(p, uid); err != nil {
+			return err
+		}
+	}
 	if err := m.BuildEffective(uid); err != nil {
 		return fmt.Errorf("build profile: %w", err)
 	}
@@ -385,6 +416,9 @@ func (m *Manager) prepare(sp Spec) error {
 	homeDirs := []string{".claude", ".claude/skills", ".claude/agents", ".claude/commands", ".codex"}
 	if p.OwnerGroup != "" {
 		homeDirs = append(homeDirs, ".claude/projects/"+claudeKey(p.Path)+"/memory")
+	}
+	if p.Nested {
+		homeDirs = append(homeDirs, strings.TrimPrefix(nestedStorageMount, Home+"/"))
 	}
 	if err := mk(home, homeDirs, []string{".claude/CLAUDE.md", ".gitconfig"}); err != nil {
 		return err
@@ -579,6 +613,7 @@ func (m *Manager) Remove(projectID string) {
 	_ = os.Remove(projectEnvPath(m.cfg.DataDir, projectID))
 	_ = os.Remove(m.hostsPath(projectID))
 	_ = os.Remove(m.ProjectPluginsPath(projectID))
+	m.removeNested(filepath.Join(m.nestedDir(), projectID))
 }
 
 // RemoveUser deletes a user's containers and data (not project files).
@@ -597,6 +632,12 @@ func (m *Manager) RemoveUser(userID string) {
 	for _, h := range homes {
 		if h.IsDir() {
 			_ = os.RemoveAll(filepath.Join(m.cfg.DataDir, "homes", h.Name(), userID))
+		}
+	}
+	nested, _ := os.ReadDir(m.nestedDir())
+	for _, n := range nested {
+		if n.IsDir() {
+			m.removeNested(m.NestedStorage(n.Name(), userID))
 		}
 	}
 }

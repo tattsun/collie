@@ -7,8 +7,9 @@ import { Timeline } from './Timeline'
 import { Composer } from './Composer'
 import { ChangesView } from './Changes'
 import { AgentBadge, Menu, Modal, StatusPill } from './ui'
+import { SessionMeter } from './Usage'
 import { IBack, IBox, IBranch, IChat, IDiff, IMore, ITerminal, IUsers, Spinner } from './icons'
-import { cls, home, money, shortMode, tokens } from '../util'
+import { cls, home, money, shortMode } from '../util'
 import { t } from '../i18n'
 
 const TerminalView = lazy(() => import('./Terminal').then((m) => ({ default: m.TerminalView })))
@@ -119,7 +120,6 @@ export function SessionView({ id }: { id: string }) {
   }
   const project = projectById.value.get(s.projectId)
   const caps = timeline(id).caps.value
-  const ctxPct = s.ctxMax ? Math.min(100, Math.round(((s.ctxUsed || 0) / s.ctxMax) * 100)) : 0
   const modeLabel = shortMode(s.mode)
 
   const act = (fn: () => Promise<unknown>) => () => fn().catch(toastError)
@@ -168,11 +168,6 @@ export function SessionView({ id }: { id: string }) {
               </span>
             )}
             {s.model && <span class="sub-item wide-only">{s.model}</span>}
-            {ctxPct > 0 && (
-              <span class={cls('sub-item ctx wide-only', ctxPct > 80 && 'warn')} title={t('Context {used} / {max}', { used: tokens(s.ctxUsed), max: tokens(s.ctxMax) })}>
-                {t('ctx {pct}%', { pct: ctxPct })}
-              </span>
-            )}
           </div>
         </div>
         <StatusPill status={s.status} />
@@ -221,6 +216,8 @@ export function SessionView({ id }: { id: string }) {
         </a>
         <span class="grow" />
         {modeLabel && tab !== 'chat' && <span class="dim small tab-note">{modeLabel}</span>}
+        {/* the composer shows it in the chat */}
+        {tab !== 'chat' && <SessionMeter s={s} />}
       </nav>
       {tab === 'chat' && (
         <>

@@ -33,6 +33,9 @@ type Claude struct {
 	lastCost  float64
 	busy      bool
 	ctxWindow int64
+	sawCtx    bool      // a reply has reported the context size
+	planAt    time.Time // last get_usage request
+	noPlan    bool      // get_usage has no plan limits for this login
 }
 
 type streamBlock struct {
@@ -113,7 +116,58 @@ func (c *Claude) Start() error {
 		return err
 	}
 	c.sink.Caps(parseClaudeCaps(resp))
+	go c.loadContext()
+	go c.refreshPlan()
 	return nil
+}
+
+// loadContext shows how full the context is before the first reply (the
+// system prompt and tools, or the resumed conversation).
+func (c *Claude) loadContext() {
+	resp, err := c.control(map[string]any{"subtype": "get_context_usage", "detail": "summary"}, 30*time.Second)
+	if err != nil {
+		return
+	}
+	used, max := int64(num(resp, "totalTokens")), int64(num(resp, "maxTokens"))
+	c.mu.Lock()
+	if c.sawCtx || max <= 0 {
+		c.mu.Unlock()
+		return
+	}
+	if c.ctxWindow == 0 {
+		c.ctxWindow = max
+	}
+	c.mu.Unlock()
+	c.sink.Meta(func(s *model.Session) {
+		s.CtxUsed = used
+		s.CtxMax = max
+	})
+}
+
+// refreshPlan asks for the account's plan usage (what /usage shows), at
+// most every couple of minutes. Logins whose token cannot read it (such as
+// `claude setup-token`) still get it from rate_limit_event.
+func (c *Claude) refreshPlan() {
+	c.mu.Lock()
+	if c.noPlan || time.Since(c.planAt) < 2*time.Minute {
+		c.mu.Unlock()
+		return
+	}
+	c.planAt = time.Now()
+	c.mu.Unlock()
+	// detached: a prompt sent meanwhile does not wait for this answer.
+	resp, err := c.control(map[string]any{"subtype": "get_usage", "skip_behaviors": true, "detached": true}, 30*time.Second)
+	if err != nil {
+		return
+	}
+	u, ok := claudePlanUsage(resp, model.NowMs())
+	if !ok {
+		c.mu.Lock()
+		c.noPlan = true
+		c.mu.Unlock()
+		return
+	}
+	c.sink.Usage(u)
 }
 
 func parseClaudeCaps(resp map[string]any) model.Caps {
@@ -361,6 +415,10 @@ func (c *Claude) onLine(line []byte) {
 		c.onUser(obj(o, "message"), parent)
 	case "result":
 		c.onResult(o)
+	case "rate_limit_event":
+		if u, ok := claudeRateLimit(obj(o, "rate_limit_info"), model.NowMs()); ok {
+			c.sink.Usage(u)
+		}
 	case "control_request":
 		c.onControlRequest(o)
 	case "control_response":
@@ -483,6 +541,7 @@ func (c *Claude) onAssistant(msg map[string]any, parent string) {
 		used := int64(num(u, "input_tokens") + num(u, "cache_read_input_tokens") + num(u, "cache_creation_input_tokens") + num(u, "output_tokens"))
 		c.mu.Lock()
 		win := c.ctxWindow
+		c.sawCtx = true
 		c.mu.Unlock()
 		c.sink.Meta(func(s *model.Session) {
 			s.CtxUsed = used
@@ -653,6 +712,7 @@ func (c *Claude) onResult(o map[string]any) {
 	if !waiting {
 		c.sink.Status(model.StatusIdle)
 	}
+	go c.refreshPlan()
 }
 
 func (c *Claude) onControlRequest(o map[string]any) {

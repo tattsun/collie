@@ -7,6 +7,7 @@ import { t, ts } from '../i18n'
 import { IImage, ISend, IStop, IShield, Spinner } from './icons'
 import { Menu } from './ui'
 import { Thumbs, pastedImages, useAttachments } from './attach'
+import { SessionMeter } from './Usage'
 
 const draftKey = (sid: string) => `collie.draft.${sid}`
 
@@ -163,6 +164,7 @@ export function Composer({ session, caps }: { session: Session; caps: Caps }) {
             up
           />
           <span class="grow" />
+          <SessionMeter s={session} up />
           {running && !canSend ? (
             <button class="send stop" onClick={interrupt} aria-label={t('Stop')} title={t('Stop (Esc)')}>
               <IStop size={14} />

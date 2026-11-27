@@ -1,6 +1,6 @@
 import { signal, computed, batch } from '@preact/signals'
 import { t, ts } from './i18n'
-import type { Caps, GroupInfo, Item, ModeInfo, Project, SandboxStatus, Session, TermInfo, UserInfo } from './types'
+import type { AgentUsage, Caps, GroupInfo, Item, ModeInfo, Project, SandboxStatus, Session, TermInfo, UserInfo } from './types'
 
 // ---------------------------------------------------------------- state
 
@@ -11,6 +11,11 @@ export const projects = signal<Project[]>([])
 export const homeProject = signal<Project | null>(null)
 export const sessions = signal<Session[]>([])
 export const agentCaps = signal<Record<string, Caps>>({})
+/** My agent accounts' plan usage, by agent. */
+export const usage = signal<Record<string, AgentUsage>>({})
+/** Ticks every 30s, for "resets in…" texts and windows that have reset. */
+export const clock = signal(Date.now())
+setInterval(() => (clock.value = Date.now()), 30_000)
 export const modes = signal<Record<string, ModeInfo[]>>({})
 export const agentsAvail = signal<Record<string, boolean>>({})
 export const terms = signal<TermInfo[]>([])
@@ -283,6 +288,7 @@ export function applyState(d: any) {
     projects.value = all.filter((p) => !p.home)
     sessions.value = d.sessions || []
     agentCaps.value = d.agentCaps || {}
+    usage.value = d.usage || {}
     modes.value = d.modes || {}
     agentsAvail.value = d.agents || {}
     terms.value = d.terms || []
@@ -347,6 +353,9 @@ function onMessage(m: any) {
       break
     case 'agentcaps':
       agentCaps.value = { ...agentCaps.value, [m.agent]: m.caps }
+      break
+    case 'usage':
+      usage.value = { ...usage.value, [m.agent]: m.usage }
       break
     case 'terms':
       terms.value = m.terms || []

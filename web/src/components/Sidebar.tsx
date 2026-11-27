@@ -8,6 +8,7 @@ import { IBell, IBox, IFolder, IHome, IPlus, IBranch, IUsers, Spinner } from './
 import { AgentBadge, Menu, StatusDot } from './ui'
 import { signOut } from '../authflow'
 import { ImageIndicator } from './ProjectSettings'
+import { UsagePanel } from './Usage'
 import { t, ts } from '../i18n'
 
 export const listTab = signal<'sessions' | 'projects'>((localStorage.getItem('collie.tab') as any) || 'sessions')
@@ -228,6 +229,7 @@ export function Sidebar() {
         <HomeRow />
         {tab === 'sessions' ? <SessionList /> : <ProjectList />}
       </div>
+      <UsagePanel />
       <footer class="side-foot">
         <Menu
           up

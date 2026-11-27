@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"sort"
 	"time"
 )
 
@@ -162,6 +163,52 @@ type Result struct {
 	Turns      int     `json:"turns,omitempty"`
 	IsError    bool    `json:"isError,omitempty"`
 	Status     string  `json:"status,omitempty"`
+}
+
+// Usage is how much of an agent account's plan allowance is used, per
+// rate-limit window, as last reported by one of the account's sessions.
+type Usage struct {
+	Windows []UsageWindow `json:"windows"`
+	// Status is Claude's overall state: allowed | allowed_warning | rejected.
+	Status    string `json:"status,omitempty"`
+	Plan      string `json:"plan,omitempty"`
+	UpdatedAt int64  `json:"updatedAt"`
+}
+
+type UsageWindow struct {
+	// ID names the window: five_hour, seven_day, seven_day_opus… (Claude);
+	// primary, secondary (Codex; "<limit id>:primary" for other buckets).
+	ID       string  `json:"id"`
+	Label    string  `json:"label,omitempty"`    // server-supplied name, when there is one
+	Pct      float64 `json:"pct"`                // share used, 0-100 (can run past 100)
+	ResetsAt int64   `json:"resetsAt,omitempty"` // unix ms
+	Mins     int64   `json:"mins,omitempty"`     // window length, when known
+	Status   string  `json:"status,omitempty"`
+}
+
+// MergeUsage lays an update over the last known usage: windows it reports
+// replace the ones with the same id, the others are kept (updates can be
+// sparse, and a fresh agent process knows nothing until its first reply).
+func MergeUsage(old, upd Usage) Usage {
+	out := Usage{Status: old.Status, Plan: old.Plan, UpdatedAt: upd.UpdatedAt}
+	if upd.Status != "" {
+		out.Status = upd.Status
+	}
+	if upd.Plan != "" {
+		out.Plan = upd.Plan
+	}
+	seen := map[string]bool{}
+	for _, w := range upd.Windows {
+		seen[w.ID] = true
+	}
+	for _, w := range old.Windows {
+		if !seen[w.ID] {
+			out.Windows = append(out.Windows, w)
+		}
+	}
+	out.Windows = append(out.Windows, upd.Windows...)
+	sort.SliceStable(out.Windows, func(i, j int) bool { return out.Windows[i].ID < out.Windows[j].ID })
+	return out
 }
 
 // Caps describes what an agent offers (reported once it has started).

@@ -25,7 +25,6 @@ const ja: Record<string, string> = {
   shared: '共有中',
   "Runs in the project's isolated container": 'プロジェクトの隔離コンテナで実行',
   'Context {used} / {max}': 'コンテキスト {used} / {max}',
-  'ctx {pct}%': 'コンテキスト {pct}%',
   'Session menu': 'セッションメニュー',
   'Settings…': '設定…',
   'Make private': '非公開にする',
@@ -39,6 +38,23 @@ const ja: Record<string, string> = {
   Chat: 'チャット',
   Changes: '変更',
   Terminal: 'ターミナル',
+
+  // ---- Usage (sidebar panel, session meter)
+  Usage: '使用量',
+  Context: 'コンテキスト',
+  '5h': '5時間',
+  Week: '週間',
+  '{n}d': '{n}日',
+  '{n}h': '{n}時間',
+  '{n}m': '{n}分',
+  'in {time}': 'あと{time}',
+  'resets in {time}': 'あと{time}でリセット',
+  '{label}: {pct}% used · resets {when}': '{label}: {pct}% 使用 · {when} にリセット',
+  '{label}: {pct}% used': '{label}: {pct}% 使用',
+  'Updated {time}': '{time} 時点',
+  '{agent} plan usage': '{agent} のプラン使用量',
+  'Runs on {name}’s account': '{name} のアカウントで実行',
+  'Cost of this session': 'このセッションのコスト',
 
   // ---- Timeline
   Copied: 'コピーしました',

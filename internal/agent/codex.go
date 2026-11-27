@@ -160,7 +160,24 @@ func (c *Codex) Start() error {
 		}
 	})
 	go c.loadModels()
+	go c.loadRateLimits()
 	return nil
+}
+
+// loadRateLimits shows the account's plan usage right away; later changes
+// arrive as account/rateLimits/updated.
+func (c *Codex) loadRateLimits() {
+	res, err := c.call("account/rateLimits/read", map[string]any{"excludeResetCreditDetails": true}, 30*time.Second)
+	if err != nil {
+		return
+	}
+	var m map[string]any
+	if json.Unmarshal(res, &m) != nil {
+		return
+	}
+	if u, ok := codexUsage(m, model.NowMs()); ok {
+		c.sink.Usage(u)
+	}
 }
 
 func (c *Codex) loadModels() {
@@ -528,6 +545,11 @@ func (c *Codex) onNotify(method string, p map[string]any) {
 	case "warning":
 		if msg := str(p, "message"); msg != "" {
 			c.sink.Put(&model.Item{ID: model.NewID(), Kind: model.KindNotice, TS: model.NowMs(), Done: true, Text: msg})
+		}
+	case "account/rateLimits/updated":
+		rl := obj(p, "rateLimits")
+		if ws := codexRateLimits(rl); len(ws) > 0 {
+			c.sink.Usage(model.Usage{Windows: ws, Plan: str(rl, "planType"), UpdatedAt: model.NowMs()})
 		}
 	case "thread/tokenUsage/updated":
 		tu := obj(p, "tokenUsage")
@@ -952,4 +974,5 @@ func (s *capsSink) Append(string, string, string)         {}
 func (s *capsSink) Status(string)                         {}
 func (s *capsSink) Meta(func(*model.Session))             {}
 func (s *capsSink) Caps(c model.Caps)                     { s.caps = c }
+func (s *capsSink) Usage(model.Usage)                     {}
 func (s *capsSink) Exited(error)                          {}

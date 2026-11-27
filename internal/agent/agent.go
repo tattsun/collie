@@ -34,6 +34,9 @@ type Sink interface {
 	Meta(fn func(*model.Session))
 	// Caps reports slash commands / models the agent supports.
 	Caps(c model.Caps)
+	// Usage reports the agent account's plan usage. Windows it leaves out
+	// keep their last known value.
+	Usage(u model.Usage)
 	// Exited is called once when the agent process ends.
 	Exited(err error)
 }

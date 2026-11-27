@@ -161,6 +161,29 @@ export interface Caps {
   models?: ModelOpt[]
 }
 
+/** One rate-limit window of an agent account's plan. */
+export interface UsageWindow {
+  /** five_hour | seven_day | seven_day_opus… (Claude); primary | secondary (Codex) */
+  id: string
+  label?: string
+  /** share used, 0-100 (can run past 100) */
+  pct: number
+  /** unix ms */
+  resetsAt?: number
+  /** window length in minutes, when known */
+  mins?: number
+  status?: string
+}
+
+/** An agent account's plan usage, as last reported by one of my sessions. */
+export interface AgentUsage {
+  windows: UsageWindow[]
+  /** Claude: allowed | allowed_warning | rejected */
+  status?: string
+  plan?: string
+  updatedAt: number
+}
+
 export interface ModeInfo {
   id: string
   label: string

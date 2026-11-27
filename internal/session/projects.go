@@ -486,6 +486,7 @@ func (m *Manager) PurgeUser(uid string) {
 	if m.sb != nil {
 		m.sb.RemoveUser(uid)
 	}
+	m.forgetUsage(uid)
 }
 
 // GroupProjects lists the projects owned by a group.

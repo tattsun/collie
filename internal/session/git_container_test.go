@@ -16,7 +16,8 @@ import (
 // podmanFake is a podman with one container, which says what podman 5.7
 // says for an exec into a container that is stopped or only created
 // (exit 255) or doesn't exist (exit 125). In its directory: "state"
-// (missing, created, exited or running), "log" (the podman commands run),
+// (missing, created, exited or running; stop and kill end it), "log" (the
+// podman commands run),
 // "inside" (shell run for an exec into the running container, which by
 // default answers like `collie git-helper` for a diff) and "refuse-once"
 // (the next exec finds the container not running, as if it was started
@@ -45,6 +46,7 @@ run)
   for a; do case "$a" in collie.config=*) echo "${a#collie.config=}" > "$d/config" ;; esac; done
   echo running > "$d/state" ;;
 rm) echo missing > "$d/state" ;;
+stop|kill) [ "$state" = running ] && echo exited > "$d/state" ;;
 exec)
   if [ -e "$d/refuse-once" ]; then rm "$d/refuse-once"; state=exited; fi
   case "$state" in

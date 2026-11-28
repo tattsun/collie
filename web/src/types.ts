@@ -40,6 +40,8 @@ export interface Project {
   cloneUrl?: string
   /** the user's Home: chats outside any project, coordinating the projects */
   home?: boolean
+  /** users whose container still runs with older settings or an older image (in use when they changed) */
+  pending?: string[]
 }
 
 /** Release updates (admins only). */
@@ -121,6 +123,8 @@ export interface ContainerInfo {
   projectId?: string
   running?: boolean
   exists?: boolean
+  /** runs with older settings or an older image until it restarts */
+  outdated?: boolean
   mem?: string
   cpu?: string
   pids?: string
@@ -297,6 +301,8 @@ export interface Item {
   /** home: sent for the user by their Home agent; schedule: by one of their schedules; collie: Collie's notification to Home */
   via?: 'home' | 'schedule' | 'collie'
   notes?: Note[]
+  /** what one of Collie's own errors is about: oom (out of memory), interrupted (Collie stopped the container or restarted) */
+  code?: 'oom' | 'interrupted'
 }
 
 /** A file a user attached to a message. */

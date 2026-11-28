@@ -10,6 +10,7 @@ import { ChangesView } from './Changes'
 import { PortsView } from './Ports'
 import { AgentBadge, Menu, Modal, StatusPill } from './ui'
 import { SessionMeter } from './Usage'
+import { PendingBanner } from './Pending'
 import { IBack, IBell, IBox, IBranch, IChat, IClock, IDiff, IGlobe, IMore, ITerminal, IUsers, Spinner } from './icons'
 import { cls, home, money, shortMode } from '../util'
 import { t } from '../i18n'
@@ -246,6 +247,7 @@ export function SessionView({ id }: { id: string }) {
         {/* the composer shows it in the chat */}
         {tab !== 'chat' && <SessionMeter s={s} />}
       </nav>
+      {project?.runtime === 'container' && <PendingBanner p={project} user={s.owner} />}
       {tab === 'chat' && (
         <>
           <Timeline session={s} />

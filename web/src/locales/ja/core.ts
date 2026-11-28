@@ -299,6 +299,11 @@ export const patterns: [RegExp, string][] = [
   [/^Background task failed: ([\s\S]*)$/, 'バックグラウンドのタスクが失敗しました: $1'],
   [/^Background task stopped: ([\s\S]*)$/, 'バックグラウンドのタスクを停止しました: $1'],
   [/^Could not resume the previous Codex thread \(([\s\S]*)\); starting a new one\.$/, '前の Codex スレッドを再開できませんでした（$1）。新しいスレッドで続けます。'],
+  [/^The agent process was killed by signal (\d+) \((\w+)\)\.(\n[\s\S]*)?$/, 'エージェントのプロセスがシグナル $1（$2）で終了しました。$3'],
+  [
+    /^The agent was killed because the project's container went over its memory limit \(([^)]+)\)\. Send a message to resume\. To avoid it, run fewer memory-hungry jobs at once \(builds, tests, browsers\), or have an admin raise the project's memory limit\.$/,
+    'メモリの上限（$1）を超えたため、エージェントが強制終了されました。メッセージを送ると再開します。防ぐには、メモリを多く使う処理（ビルド、テスト、ブラウザなど）を同時に動かさないようにするか、管理者にプロジェクトのメモリ上限を上げてもらってください。',
+  ],
   [/^agent process exited: ([\s\S]*)$/, 'エージェントのプロセスが終了しました: $1'],
   [/^agent process exited\n([\s\S]*)$/, 'エージェントのプロセスが終了しました\n$1'],
   [/^(\S+): timed out$/, '$1: 時間切れになりました'],

@@ -787,7 +787,7 @@ func (s *Server) adminOverview(w http.ResponseWriter, r *http.Request) {
 		for _, c := range sb.All() {
 			u, _ := s.users.User(c.UserID)
 			containers = append(containers, map[string]any{"projectId": c.ProjectID, "userId": c.UserID, "project": projects[c.ProjectID],
-				"user": u.Name, "running": c.Running, "mem": c.Mem, "cpu": c.CPU, "pids": c.Pids, "limitsEnforced": c.LimitsEnforced})
+				"user": u.Name, "running": c.Running, "outdated": c.Outdated, "mem": c.Mem, "cpu": c.CPU, "pids": c.Pids, "limitsEnforced": c.LimitsEnforced})
 		}
 	}
 	writeJSON(w, map[string]any{"users": users, "invites": invites, "containers": containers, "groups": s.groupsFor(current(r)),

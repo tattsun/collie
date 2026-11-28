@@ -249,5 +249,28 @@ const ja: Record<string, string> = {
   'Approved · auto-accept edits': '承認しました · 編集を自動承認',
   'Keep planning': '計画を続ける',
   Declined: 'スキップしました',
+  // why Collie stopped an agent (session/pending.go)
+  "Stopped by a restart of the project's container (reason: applying changed settings or a new image). Send a message to resume.":
+    'プロジェクトのコンテナの再起動（理由: 設定やイメージの変更の反映）で停止しました。メッセージを送ると再開します。',
+  "Stopped by a restart of the project's container (reason: a change of its network setting). Send a message to resume.":
+    'プロジェクトのコンテナの再起動（理由: ネットワーク設定の変更）で停止しました。メッセージを送ると再開します。',
+  'Stopped because the project moved between a container and the server. Send a message to resume there.':
+    'エージェントの実行場所（コンテナかサーバーか）が変わったため停止しました。メッセージを送ると、新しい場所で再開します。',
+  "Stopped when the project's containers were stopped (Stop everything). Send a message to resume.":
+    'プロジェクトのコンテナが止められたため（「すべて停止」）停止しました。メッセージを送ると再開します。',
+  "Stopped when the project's containers were killed (Kill now). Send a message to resume.":
+    'プロジェクトのコンテナが強制停止されたため（「今すぐ強制停止」）停止しました。メッセージを送ると再開します。',
+  "Stopped when an admin killed the project's container. Send a message to resume.":
+    '管理者がプロジェクトのコンテナを強制停止したため停止しました。メッセージを送ると再開します。',
+  "Stopped when the project's container was stopped for being idle. Send a message to resume.":
+    '使われていないプロジェクトのコンテナが自動で止められたため停止しました。メッセージを送ると再開します。',
+  'Stopped because access to the project changed.': 'プロジェクトへのアクセス権が変わったため停止しました。',
+  'Stopped because Collie restarted (for an update, say). Send a message to resume.':
+    'Collie の再起動（更新など）で停止しました。メッセージを送ると再開します。',
+  "Stopped by a restart of the project's container. Send a message to resume.": 'プロジェクトのコンテナの再起動で停止しました。メッセージを送ると再開します。',
+  "The agent stopped because the project's container stopped. Send a message to resume.":
+    'プロジェクトのコンテナが止まったため、エージェントが停止しました。メッセージを送ると再開します。',
+  "The agent was killed because the server ran out of memory (the project's container has no memory limit of its own). Send a message to resume. To avoid it, run fewer memory-hungry jobs at once (builds, tests, browsers).":
+    'サーバーのメモリが足りなくなったため、エージェントが強制終了されました（このプロジェクトのコンテナには、メモリの上限が設定されていません）。メッセージを送ると再開します。防ぐには、メモリを多く使う処理（ビルド、テスト、ブラウザなど）を同時に動かさないようにしてください。',
 }
 export default ja

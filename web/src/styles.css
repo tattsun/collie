@@ -2783,6 +2783,12 @@ pre.out.error-box {
 .banner .icon {
   color: var(--amber);
 }
+/* in a page rather than across the top of the screen */
+.page-pad .pending-banner {
+  border: 1px solid color-mix(in srgb, var(--amber) 35%, transparent);
+  border-radius: 12px;
+  margin-bottom: 14px;
+}
 .avatar {
   display: inline-grid;
   place-items: center;

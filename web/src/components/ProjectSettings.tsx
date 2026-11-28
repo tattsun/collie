@@ -7,6 +7,7 @@ import { NetworkSettings } from './NetworkSettings'
 import { EnvEditor } from './Editors'
 import { EffectivePlugins, PluginsEditor } from './Plugins'
 import { ImageLog, ProjectImage, customImageState, projectImage } from './Images'
+import { PendingBanner } from './Pending'
 import { cls } from '../util'
 import { IAlert, IBox, Spinner } from './icons'
 import { Segmented, Toggle, rich, ContainerUsage } from './ui'
@@ -40,11 +41,14 @@ export function ProjectSettings({ p }: { p: Project }) {
   const changed = runtime !== (isolated ? 'container' : 'host') || memory !== (p.memory || '') || cpus !== (p.cpus || '') || pids !== (p.pids ? String(p.pids) : '') || nested !== !!p.nested
 
   const save = async () => {
-    if (active && !confirm(t('Agents in this project are working. Saving restarts them in the new environment. Continue?'))) return
+    // Moving the project stops its agents now; the other settings wait
+    // for each container to be free (see PendingBanner).
+    const moving = runtime !== (isolated ? 'container' : 'host')
+    if (moving && active && !confirm(t('Agents in this project are working. Saving restarts them in the new environment. Continue?'))) return
     setBusy('save')
     try {
       await api('PATCH', `/api/projects/${p.id}`, { runtime, memory, cpus, pids: pids ? Number(pids) : 0, nested: runtime === 'container' && nested })
-      toast(t('Saved — agents use the new settings on their next message'))
+      toast(moving ? t('Saved — agents use the new settings on their next message') : t('Saved — each container applies it when it next restarts'))
     } catch (e) {
       toastError(e)
     } finally {
@@ -69,6 +73,7 @@ export function ProjectSettings({ p }: { p: Project }) {
 
   return (
     <div class="page-pad narrow psettings">
+      {isolated && <PendingBanner p={p} />}
       <section class="card">
         <h3>
           <IBox size={16} /> {t('Where agents run')}
@@ -152,6 +157,7 @@ export function ProjectSettings({ p }: { p: Project }) {
                   <>
                     {' · '}
                     <ContainerUsage mem={c.mem} cpu={c.cpu} pids={c.pids} limited={c.limitsEnforced} />
+                    {c.outdated && <span class="warn">{' · ' + t('waiting to restart')}</span>}
                   </>
                 ) : (
                   <span class="dim"> · {t('stopped')}</span>

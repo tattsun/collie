@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
@@ -20,15 +19,19 @@ type Runtime struct {
 	m  *Manager
 	id string
 
-	mu         sync.Mutex
-	items      []*model.Item
-	idx        map[string]int
-	loaded     bool
-	drv        agent.Driver
-	cur        *sink // the driver's
-	gen        int
-	startGen   int
-	closing    bool
+	mu       sync.Mutex
+	items    []*model.Item
+	idx      map[string]int
+	loaded   bool
+	drv      agent.Driver
+	cur      *sink // the driver's
+	gen      int
+	startGen int
+	closing  bool
+	// stopWhy is why Collie is stopping the agent with its container, for
+	// the session to tell if it was at work (see interruptedText).
+	stopWhy    string
+	oom        oomBase // the container's OOM kill count when the agent started
 	lastActive time.Time
 	caps       model.Caps
 
@@ -257,8 +260,9 @@ func (r *Runtime) startDriver(flip bool) (agent.Driver, error) {
 	}
 
 	// Collie's tools: show_media for every agent, and for Home the tools
-	// that coordinate the projects. A container left running with an older
-	// configuration may lack them (it is re-created once nothing uses it).
+	// that coordinate the projects. A container left running from before
+	// it had them mounted lacks them (it is re-created once nothing is at
+	// work in it).
 	var toolCmd string
 	var toolArgs []string
 	allowed := mediaTools
@@ -266,7 +270,7 @@ func (r *Runtime) startDriver(flip bool) (agent.Driver, error) {
 		writeHomeInstructions(proj.Path)
 		allowed = append(slices.Clone(homeReadTools), mediaTools...)
 	}
-	if proj.Home || !isolated || !r.m.sb.Stale(proj.ID, sess.Owner) {
+	if proj.Home || !isolated || !r.m.sb.ToolsMissing(proj.ID, sess.Owner) {
 		c, args, err := r.m.collieTools(proj, sess)
 		switch {
 		case err == nil:
@@ -282,7 +286,7 @@ func (r *Runtime) startDriver(flip bool) (agent.Driver, error) {
 	r.gen++
 	gen := r.gen
 	r.startGen = gen
-	r.closing = false
+	r.closing, r.stopWhy = false, ""
 	s := newSink(r, gen)
 	r.cur = s
 	if isolated {
@@ -335,6 +339,10 @@ func (r *Runtime) startDriver(flip bool) (agent.Driver, error) {
 	if err != nil {
 		return nil, err
 	}
+	if isolated {
+		// To tell later whether the kernel killed it for want of memory.
+		go r.noteOOMBase(gen, proj.ID, sess.Owner)
+	}
 	return d, nil
 }
 
@@ -371,12 +379,25 @@ func (r *Runtime) fail(err error) {
 }
 
 // stop closes the agent process (if any) and waits for it to exit.
-func (r *Runtime) stop() {
+func (r *Runtime) stop() { r.interrupt("") }
+
+// markStopping says that Collie is about to stop the agent (why, if it
+// does so with the agent's container: see interruptedText), before its
+// process may be killed with the container.
+func (r *Runtime) markStopping(why string) {
 	r.mu.Lock()
-	d := r.drv
 	r.closing = true
+	if r.drv != nil && why != "" {
+		r.stopWhy = why
+	}
 	r.mu.Unlock()
-	if d != nil {
+}
+
+// interrupt is stop for when Collie stops the agent's container: if the
+// session was at work, it then says why.
+func (r *Runtime) interrupt(why string) {
+	r.markStopping(why)
+	if d := r.driver(); d != nil {
 		d.Close()
 	}
 }
@@ -446,7 +467,7 @@ func (s *sink) Put(it *model.Item) {
 		return
 	}
 	c := *it
-	c.By, c.Via, c.Notes, c.Media = "", "", nil, nil
+	c.By, c.Via, c.Notes, c.Media, c.Code = "", "", nil, nil, ""
 	agentID := c.ID
 	id := s.timelineID(agentID)
 	kind, mine := s.mine[id]
@@ -493,7 +514,7 @@ func (s *sink) Update(id string, fn func(*model.Item)) bool {
 		log.Printf("session %s: ignored an update of %s (%s) from the agent: %v", s.r.id, id, kind, err)
 		return true
 	}
-	it.ID, it.Kind = id, kind
+	it.ID, it.Kind, it.Code = id, kind, ""
 	s.r.put(it)
 	return true
 }
@@ -634,10 +655,25 @@ func (s *sink) Exited(err error) {
 		r.mu.Unlock()
 		return
 	}
+	duringStart, closing, base := r.startGen == s.gen, r.closing, r.oom
+	r.mu.Unlock()
+	shutdown := r.m.shutdown.Load()
+	var msg, code string
+	if err != nil && !closing && !duringStart && !shutdown {
+		// May ask the container (podman exec): not with r.mu held.
+		msg, code = r.m.explainExit(r.id, err, base, s.gen)
+	}
+	r.mu.Lock()
+	if r.gen != s.gen {
+		r.mu.Unlock()
+		return
+	}
 	r.drv = nil
 	r.gen++
-	duringStart := r.startGen == s.gen
-	closing := r.closing
+	duringStart = r.startGen == s.gen
+	closing = r.closing
+	why := r.stopWhy
+	r.stopWhy = ""
 	r.ensureLoaded()
 	for _, it := range r.items {
 		if it.Done && (it.Ask == nil || it.Ask.State != "pending") && (it.Tool == nil || it.Tool.Status != "running") {
@@ -648,15 +684,30 @@ func (s *sink) Exited(err error) {
 			r.put(c)
 		}
 	}
+	if shutdown {
+		// Collie is stopping: the session stays as it was, for the next
+		// start to tell (see interruptedByRestart).
+		r.mu.Unlock()
+		return
+	}
 	sess, _ := r.m.st.Session(r.id)
 	wasBusy := sess.Status == model.StatusRunning || sess.Status == model.StatusWaiting
+	// Background tasks end with the agent too.
+	atWork := wasBusy || len(sess.Tasks) > 0
+	interrupted := closing && why != "" && atWork && !duringStart
+	if interrupted {
+		r.put(&model.Item{ID: model.NewID(), Kind: model.KindError, Done: true, Text: interruptedText(why), Code: "interrupted"})
+	}
 	if err != nil && !closing && !duringStart {
-		msg := err.Error()
-		if !wasBusy && strings.HasPrefix(msg, "agent process exited: signal") {
-			msg = ""
+		if msg == "" {
+			msg = err.Error()
+		}
+		var xe *agent.ExitError
+		if !atWork && code == "" && errors.As(err, &xe) && xe.Signal != 0 {
+			msg = "" // e.g. killed while idle: nothing was lost
 		}
 		if msg != "" {
-			r.put(&model.Item{ID: model.NewID(), Kind: model.KindError, Done: true, Text: msg})
+			r.put(&model.Item{ID: model.NewID(), Kind: model.KindError, Done: true, Text: msg, Code: code})
 		}
 	}
 	r.mu.Unlock()
@@ -667,7 +718,7 @@ func (s *sink) Exited(err error) {
 	if duringStart {
 		return
 	}
-	if err != nil && !closing && wasBusy {
+	if interrupted || (err != nil && !closing && atWork) {
 		r.m.setStatus(r.id, model.StatusError)
 	} else {
 		r.m.setStatus(r.id, model.StatusStopped)

@@ -192,17 +192,11 @@ func (m *Manager) Ensure(sp Spec, recreate bool) error {
 	if err := m.prepare(sp); err != nil {
 		return err
 	}
-	if sp.CollieBin == "" {
-		// Collie runs git in the container with it (gitutil.Helper).
-		if exe, err := os.Executable(); err == nil {
-			sp.CollieBin = exe
-		}
-	}
+	withCollieBin(&sp)
 	if err := m.prepareNetwork(&sp); err != nil {
 		return fmt.Errorf("start the network proxy: %w", err)
 	}
-	args := m.runArgs(sp, m.extraMounts(p, sp.SessionDirs))
-	want := configHash(append(args, "image-id="+m.imageID(ctx, m.imageTag(sp))))
+	args, want, _ := m.wantConfig(ctx, sp)
 	name := Name(p.ID, sp.UserID)
 	st := m.inspect(ctx, name)
 	if st.exists && st.network != networkMode(p) {
@@ -210,10 +204,12 @@ func (m *Manager) Ensure(sp Spec, recreate bool) error {
 		// nothing uses it.
 		recreate = true
 	}
-	m.mu.Lock()
-	m.stale[name] = st.exists && st.config != want && !recreate
-	m.mu.Unlock()
 	if st.exists && (st.config == want || !recreate) {
+		outdated := st.config != want
+		noTools := outdated && !m.toolsMounted(ctx, name, sp)
+		m.mu.Lock()
+		m.stale[name], m.noTools[name] = outdated, noTools
+		m.mu.Unlock()
 		if !st.running {
 			if _, err := m.podman(ctx, "start", name); err != nil {
 				return err
@@ -221,6 +217,10 @@ func (m *Manager) Ensure(sp Spec, recreate bool) error {
 		}
 		return nil
 	}
+	m.mu.Lock()
+	delete(m.stale, name)
+	delete(m.noTools, name)
+	m.mu.Unlock()
 	if st.exists {
 		if _, err := m.podman(ctx, "rm", "-f", "-t", "5", name); err != nil {
 			return err
@@ -240,6 +240,100 @@ func (m *Manager) Ensure(sp Spec, recreate bool) error {
 		m.background(m.PruneImages) // the old container may have held on to an old image
 	}
 	return nil
+}
+
+// withCollieBin fills in Collie's own binary, which Collie runs git in the
+// container with (gitutil.Helper).
+func withCollieBin(sp *Spec) {
+	if sp.CollieBin == "" {
+		if exe, err := os.Executable(); err == nil {
+			sp.CollieBin = exe
+		}
+	}
+}
+
+// wantConfig is the container sp describes: its run options and the
+// configuration label that tells whether a container still matches them.
+// ok is false when the image's ID couldn't be read (then the label can't
+// be trusted to match).
+func (m *Manager) wantConfig(ctx context.Context, sp Spec) (args []string, want string, ok bool) {
+	args = m.runArgs(sp, m.extraMounts(sp.Project, sp.SessionDirs))
+	id := m.imageID(ctx, m.imageTag(sp))
+	return args, configHash(append(args, "image-id="+id)), id != ""
+}
+
+// ApplyResult is what Apply found and did.
+type ApplyResult int
+
+const (
+	Current ApplyResult = iota // the container matches, or isn't running
+	Pending                    // it still runs with the older configuration
+	Applied                    // it was stopped, to start anew next time
+	Unknown                    // it is being started or stopped right now
+)
+
+// Apply looks at the user's running container for the project: when it
+// still runs with an older configuration than sp describes (its settings
+// or image changed while it was in use) and free reports that nothing in
+// it is at work any more, it is stopped, so that the next agent or
+// terminal gets a container that matches. free runs with the container's
+// start lock held, so nothing starts in it through Ensure meanwhile.
+func (m *Manager) Apply(sp Spec, free func() bool) ApplyResult {
+	if !m.available {
+		return Current
+	}
+	name := Name(sp.Project.ID, sp.UserID)
+	l := m.lock(sp.Project.ID + "/" + sp.UserID)
+	if !l.TryLock() {
+		return Unknown
+	}
+	defer l.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	withCollieBin(&sp)
+	_, want, ok := m.wantConfig(ctx, sp)
+	st := m.inspect(ctx, name)
+	res := Current
+	switch {
+	case !st.exists || !st.running || st.config == want:
+	case !ok:
+		return Unknown // the image's ID is unknown: so is whether it matches
+	case !free():
+		res = Pending
+	default:
+		if _, err := m.podman(ctx, "stop", "-t", "5", name); err != nil && m.inspect(ctx, name).running {
+			log.Printf("stop %s to apply its new configuration: %v", name, err)
+			res = Pending
+		} else {
+			res = Applied
+		}
+	}
+	m.mu.Lock()
+	m.stale[name] = res == Pending
+	m.mu.Unlock()
+	return res
+}
+
+// toolsMounted reports whether a container has the socket directory and
+// binary for Collie's tools mounted as sp has them.
+func (m *Manager) toolsMounted(ctx context.Context, name string, sp Spec) bool {
+	if sp.CollieRun == "" {
+		return false
+	}
+	out, err := m.podman(ctx, "container", "inspect", "--format", "{{json .Mounts}}", name)
+	if err != nil {
+		return false
+	}
+	var ms []struct{ Source, Destination string }
+	if json.Unmarshal([]byte(strings.TrimSpace(out)), &ms) != nil {
+		return false
+	}
+	run, bin := false, false
+	for _, x := range ms {
+		run = run || (x.Destination == CollieRunDir && x.Source == sp.CollieRun)
+		bin = bin || (x.Destination == CollieBinPath && x.Source == sp.CollieBin)
+	}
+	return run && bin
 }
 
 // extraMounts lists session directories not covered by the standard mounts.
@@ -634,13 +728,51 @@ func ExecSaysNotRunning(stderr string) bool {
 		strings.Contains(stderr, "no such container")
 }
 
-// Stale reports whether the user's container for the project kept an older
-// configuration when it was last started (it was in use when that changed),
-// so it may lack newer mounts.
+// Stale reports whether the user's container for the project runs with an
+// older configuration than Collie would give it now (it was in use when
+// that changed), as last seen by Ensure or Apply.
 func (m *Manager) Stale(projectID, userID string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.stale[Name(projectID, userID)]
+}
+
+// ToolsMissing reports whether the user's container for the project was
+// kept from before it got the mounts for Collie's tools.
+func (m *Manager) ToolsMissing(projectID, userID string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.noTools[Name(projectID, userID)]
+}
+
+// OOMKills is how many processes the kernel's OOM killer has ended in the
+// user's container for the project since the container started (the
+// oom_kill count of its cgroup's memory.events).
+func (m *Manager) OOMKills(projectID, userID string) (int64, error) {
+	b, err := m.ReadFile(projectID, userID, "/sys/fs/cgroup/memory.events", 4<<10)
+	if err != nil {
+		return 0, err
+	}
+	for _, l := range strings.Split(string(b), "\n") {
+		if k, v, ok := strings.Cut(strings.TrimSpace(l), " "); ok && k == "oom_kill" {
+			return strconv.ParseInt(strings.TrimSpace(v), 10, 64)
+		}
+	}
+	return 0, errors.New("no oom_kill count in memory.events")
+}
+
+// MemoryLimit is the memory limit in bytes the user's container for the
+// project runs with (0: none).
+func (m *Manager) MemoryLimit(projectID, userID string) (int64, error) {
+	b, err := m.ReadFile(projectID, userID, "/sys/fs/cgroup/memory.max", 64)
+	if err != nil {
+		return 0, err
+	}
+	s := strings.TrimSpace(string(b))
+	if s == "max" {
+		return 0, nil
+	}
+	return strconv.ParseInt(s, 10, 64)
 }
 
 // ReadFile reads a file as the user's agents see it in their container for
@@ -726,6 +858,7 @@ func (m *Manager) containers(ctx context.Context, projectID string) []ContainerI
 		if len(c.Names) > 0 {
 			ci.Name = c.Names[0]
 		}
+		ci.Outdated = ci.Running && m.Stale(ci.ProjectID, ci.UserID)
 		res = append(res, ci)
 	}
 	return res
@@ -757,7 +890,9 @@ func (m *Manager) Stop(projectID, userID string, kill bool) error {
 		} else {
 			_, err = m.podman(ctx, "stop", "-t", "5", n)
 		}
-		if err != nil && !strings.Contains(err.Error(), "no such container") && !strings.Contains(err.Error(), "not running") && firstErr == nil {
+		if err != nil && !strings.Contains(err.Error(), "no such container") && !strings.Contains(err.Error(), "not running") && m.inspect(ctx, n).running && firstErr == nil {
+			// (Podman can fail after the container stopped all the same,
+			// e.g. on cleaning up an exec session when it runs nested.)
 			firstErr = err
 		}
 	}
@@ -822,9 +957,12 @@ type ContainerInfo struct {
 	UserID    string `json:"userId"`
 	Running   bool   `json:"running"`
 	Exists    bool   `json:"exists"`
-	Mem       string `json:"mem,omitempty"`
-	CPU       string `json:"cpu,omitempty"`
-	Pids      string `json:"pids,omitempty"`
+	// Outdated: it runs with an older configuration (settings or image)
+	// until nothing is at work in it, or until it is restarted.
+	Outdated bool   `json:"outdated,omitempty"`
+	Mem      string `json:"mem,omitempty"`
+	CPU      string `json:"cpu,omitempty"`
+	Pids     string `json:"pids,omitempty"`
 	// LimitsEnforced is false when the host cannot apply resource limits
 	// to rootless containers (no systemd user session / cgroup delegation).
 	LimitsEnforced bool `json:"limitsEnforced"`

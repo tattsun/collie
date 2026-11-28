@@ -311,7 +311,7 @@ export interface Note {
   session: string
   title: string
   project?: string
-  event: 'done' | 'failed' | 'waiting' | 'question' | 'error' | 'unwatched'
+  event: 'done' | 'failed' | 'background' | 'waiting' | 'question' | 'error' | 'unwatched'
   detail?: string
 }
 

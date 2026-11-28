@@ -33,6 +33,7 @@ const ja: Record<string, string> = {
   'Notification from Collie': 'Collie からの通知',
   'Collie told your Home agent how the sessions it watches are doing.': 'Home エージェントが見守っているセッションの様子を、Collie が知らせました。',
   'Ended with an error': 'エラーで終わりました',
+  'Finished its turn, still working in the background': 'ターンを終えました（裏で作業が続いています）',
   'Waiting for your approval': '承認を待っています',
   'Has a question for you': 'あなたへの質問があります',
   'No longer watched (too many notifications)': '通知が多くなったため、見守りを終えました',

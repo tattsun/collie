@@ -15,6 +15,7 @@ A **project** is a folder on the server. You can create a new one, clone a repos
 - A clone runs in the background (see [Security](security.md#what-agents-can-reach) for where). If it fails, the project stays, showing why, and no session starts in it until **Clone again** on the project page succeeds. The URL can be corrected there. Clone again needs the project's folder empty: a failed clone leaves it so, but one cut off by a restart of Collie can leave files behind. Remove them in the project's **Terminal**, or remove the project.
 - An agent process stops after 30 idle minutes. Your next message resumes the conversation, and that works after a server restart too.
 - Messages you send while the agent is running reach it as extra instructions. A message typed while an approval is waiting denies the request and passes your text along with the denial.
+- **Archive** (swipe a session's row left on a phone, or use the button on the row with a mouse or keyboard) only takes the session out of the list. Its agent is not stopped: a working one carries on, and you are still notified when it finishes or needs you. Sending it a message brings it back to the list.
 - Deleting a session also deletes, from the server, the images and files in it: what was attached, the agent's screenshots and what it showed you, and the copies Collie gave the agent. Copies the agent made itself, for example into the project, stay.
 
 ## Schedules

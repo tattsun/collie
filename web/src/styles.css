@@ -815,6 +815,141 @@ button.chip {
 .srow-preview.warn {
   color: var(--amber);
 }
+/* Archive from the list (Archive.tsx): a phone swipes the row left to
+   uncover .sw-act; a mouse or keyboard gets .sw-btn on the row. */
+.sw {
+  position: relative;
+  overflow: hidden;
+  border-radius: 10px;
+  flex: none;
+}
+.sw.card-sw {
+  border-radius: var(--radius);
+}
+.sw-top {
+  position: relative;
+  z-index: 1;
+  /* hides .sw-under; the rows themselves are see-through */
+  background: var(--bg2);
+  touch-action: pan-y;
+  transition: transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.card-sw .sw-top {
+  background: var(--panel);
+}
+.sw.dragging .sw-top {
+  transition: none;
+}
+.sw.dragging {
+  -webkit-user-select: none;
+  user-select: none;
+}
+.sw-top > a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.sw-under {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  justify-content: flex-end;
+  visibility: hidden;
+  /* stays up while the row slides back over it */
+  transition: visibility 0s 0.22s;
+}
+.sw.swiped .sw-under {
+  visibility: visible;
+  transition: none;
+}
+.sw-act {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  height: 100%;
+  min-width: 0;
+  padding: 0 4px;
+  border: 0;
+  /* only where the row has moved away: under the row, its color would
+     fringe the row's rounded corners */
+  background: #2f6fd0;
+  color: #fff;
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.25;
+  text-align: center;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+  transition: width 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.sw.dragging .sw-act {
+  transition: none;
+}
+/* past the point where letting go archives */
+.sw-under.armed .sw-act {
+  background: #2b64c0;
+  align-items: flex-start;
+  padding-left: 22px;
+}
+.sw-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  border: 1px solid var(--border2);
+  background: var(--panel);
+  color: var(--dim);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s;
+}
+.card-sw .sw-btn {
+  top: 50%;
+  right: 10px;
+  transform: translateY(-50%);
+}
+.sw-btn:hover {
+  color: var(--text);
+  border-color: var(--faint);
+}
+.sw-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.sw-btn:focus-visible,
+.sw:has(:focus-visible) .sw-btn {
+  opacity: 1;
+  pointer-events: auto;
+}
+.sw:has(:focus-visible) .sw-hide {
+  visibility: hidden;
+}
+@media (hover: hover) {
+  .sw:hover .sw-btn {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .sw:hover .sw-hide {
+    visibility: hidden;
+  }
+  /* the row still looks hovered while the pointer is on its button */
+  .sw:hover .srow:not(.active) {
+    background: var(--hover);
+  }
+  .sw:hover .prow-card {
+    border-color: var(--border2);
+  }
+}
+.sw.swiped .sw-btn {
+  opacity: 0;
+  pointer-events: none;
+}
 .empty {
   display: flex;
   flex-direction: column;
@@ -2506,6 +2641,41 @@ pre.out.error-box {
 .toast.error {
   border-color: color-mix(in srgb, var(--red) 55%, transparent);
   color: var(--red);
+}
+.toast.has-act {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 6px 6px 14px;
+  pointer-events: auto;
+}
+.toast-text {
+  flex: 1;
+  min-width: 0;
+}
+/* a long session title in "Archived …" */
+.has-act .toast-main {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+.toast-detail {
+  color: var(--dim);
+  font-size: 12px;
+}
+.toast-act {
+  flex: none;
+  padding: 7px 12px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  color: var(--accent);
+  font-weight: 650;
+  cursor: pointer;
+}
+.toast-act:hover {
+  background: var(--hover);
 }
 @keyframes toast-in {
   from {

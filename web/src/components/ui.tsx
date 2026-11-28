@@ -2,7 +2,7 @@ import { Fragment } from 'preact'
 import type { ComponentChildren, JSX } from 'preact'
 import { t } from '../i18n'
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks'
-import { toasts } from '../store'
+import { dismissToast, toasts } from '../store'
 import type { Agent, Status } from '../types'
 import { cls } from '../util'
 import { ICheck, IX } from './icons'
@@ -117,9 +117,23 @@ export function Modal({ title, onClose, children, wide }: { title: string; onClo
 export function Toasts() {
   return (
     <div class="toasts" aria-live="polite">
-      {toasts.value.map((t) => (
-        <div key={t.id} class={cls('toast', t.kind)}>
-          {t.text}
+      {toasts.value.map((x) => (
+        <div key={x.id} class={cls('toast', x.kind, x.action && 'has-act')}>
+          <div class="toast-text">
+            <div class="toast-main">{x.text}</div>
+            {x.detail && <div class="toast-detail">{x.detail}</div>}
+          </div>
+          {x.action && (
+            <button
+              class="toast-act"
+              onClick={() => {
+                dismissToast(x.id)
+                x.action!.run()
+              }}
+            >
+              {x.action.label}
+            </button>
+          )}
         </div>
       ))}
     </div>

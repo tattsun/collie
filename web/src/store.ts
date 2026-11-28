@@ -110,13 +110,20 @@ export interface Toast {
   id: number
   text: string
   kind: 'error' | 'info'
+  /** a second, quieter line */
+  detail?: string
+  /** a button in the toast (Undo); pressing it closes the toast */
+  action?: { label: string; run: () => void }
 }
 export const toasts = signal<Toast[]>([])
 let toastSeq = 0
-export function toast(text: string, kind: Toast['kind'] = 'info') {
+export function toast(text: string, kind: Toast['kind'] = 'info', opts: { detail?: string; action?: Toast['action']; ms?: number } = {}) {
   const id = ++toastSeq
-  toasts.value = [...toasts.value, { id, text, kind }]
-  setTimeout(() => (toasts.value = toasts.value.filter((t) => t.id !== id)), kind === 'error' ? 6000 : 3000)
+  toasts.value = [...toasts.value, { id, text, kind, detail: opts.detail, action: opts.action }]
+  setTimeout(() => dismissToast(id), opts.ms ?? (kind === 'error' ? 6000 : 3000))
+}
+export function dismissToast(id: number) {
+  toasts.value = toasts.value.filter((t) => t.id !== id)
 }
 export function toastError(e: unknown) {
   toast(ts(e instanceof Error ? e.message : String(e)), 'error')

@@ -94,6 +94,7 @@ export const IRefresh = (p: P) => svg(<path d="M21 12a9 9 0 1 1-3-6.7L21 8M21 3v
 export const IBell = (p: P) => svg(<path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0" />, p)
 export const ITrash = (p: P) => svg(<path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" />, p)
 export const IArchive = (p: P) => svg(<path d="M21 8v13H3V8M1 3h22v5H1zM10 12h4" />, p)
+export const IUnarchive = (p: P) => svg(<path d="M21 8v13H3V8M1 3h22v5H1zM12 18v-6M9 15l3-3 3 3" />, p)
 export const ISpark = (p: P) => svg(<path d="M12 3l2 5 5 2-5 2-2 5-2-5-5-2 5-2z" />, p)
 
 export function Spinner({ size = 14 }: { size?: number }) {

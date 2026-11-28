@@ -14,7 +14,7 @@ import { IBack, IPlus, IRefresh, ITrash, Spinner } from './icons'
 interface Overview {
   users: { id: string; name: string; displayName: string; admin?: boolean; disabled?: boolean; passkeys: number; createdAt: number; lastSeen?: number }[]
   invites: { hash: string; admin?: boolean; userId?: string; note?: string; expiresAt: number }[]
-  containers: { projectId: string; userId: string; project: string; user: string; running: boolean; mem?: string; cpu?: string; pids?: string; limitsEnforced?: boolean }[]
+  containers: { projectId: string; userId: string; project: string; user: string; running: boolean; outdated?: boolean; mem?: string; cpu?: string; pids?: string; limitsEnforced?: boolean }[]
 }
 
 export function AdminPage() {
@@ -163,6 +163,7 @@ export function AdminPage() {
                       {' · '}
                       <ContainerUsage mem={c.mem} cpu={c.cpu} pids={c.pids} limited={c.limitsEnforced} />
                       {c.limitsEnforced === false && <span class="warn">{' · ' + t('limits NOT enforced')}</span>}
+                      {c.outdated && <span class="warn">{' · ' + t('waiting to restart')}</span>}
                     </span>
                   )}
                 </span>

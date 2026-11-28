@@ -272,7 +272,7 @@ func (m *Manager) DeleteProject(a Actor, id string) error {
 }
 
 func (m *Manager) deleteProject(id string) {
-	_ = m.stopProject(id, true)
+	_ = m.stopProject(id, true, "")
 	for _, s := range m.st.Sessions() {
 		if s.ProjectID == id {
 			_ = m.deleteSession(s.ID, true)
@@ -346,8 +346,10 @@ type PatchProjectReq struct {
 var limitRe = regexp.MustCompile(`^(|[0-9]+(\.[0-9]+)?[kmgKMG]?)$`)
 
 // PatchProject changes a project's settings. Where and with which limits
-// agents run is an admin decision; changing it stops the project's agents
-// (they resume in the new environment on the next message).
+// agents run is an admin decision. Moving the project or changing its
+// network stops its agents (they resume in the new environment on the
+// next message); its limits, image and containers inside apply to each
+// container once nothing is at work in it.
 func (m *Manager) PatchProject(a Actor, id string, req PatchProjectReq) (model.Project, error) {
 	p, err := m.visibleProject(a.ID, id)
 	if err != nil {
@@ -421,14 +423,22 @@ func (m *Manager) PatchProject(a Actor, id string, req PatchProjectReq) (model.P
 			return p, sandbox.ErrNoImage
 		}
 	}
-	envChanged := (req.Runtime != nil && *req.Runtime != p.Runtime) ||
-		(req.Memory != nil && strings.TrimSpace(*req.Memory) != p.Memory) ||
+	// Moving the project, or changing what its containers can reach, can't
+	// wait: its agents stop now (and resume in the new place, or with the
+	// new network, on their next message). Other changes reach a container
+	// once nothing is at work in it (see pending.go).
+	moved := req.Runtime != nil && *req.Runtime != p.Runtime
+	restart := moved || network != p.Network
+	apply := (req.Memory != nil && strings.TrimSpace(*req.Memory) != p.Memory) ||
 		(req.CPUs != nil && strings.TrimSpace(*req.CPUs) != p.CPUs) ||
 		(req.Pids != nil && *req.Pids != p.Pids) ||
-		nested != p.Nested || image != p.Image ||
-		network != p.Network // the containers restart with the other network
-	if envChanged {
-		if err := m.stopProject(id, false); err != nil {
+		nested != p.Nested || image != p.Image
+	if restart {
+		why := whyNetwork
+		if moved {
+			why = whyRuntime
+		}
+		if err := m.stopProject(id, false, why); err != nil {
 			log.Printf("stop project %s: %v", id, err)
 		}
 	}
@@ -463,6 +473,9 @@ func (m *Manager) PatchProject(a Actor, id string, req PatchProjectReq) (model.P
 		m.sb.Egress().Recheck(id)
 	}
 	m.pushProject(np)
+	if apply && !restart && np.Isolated() {
+		go m.applyPendingIn(id)
+	}
 	return np, nil
 }
 

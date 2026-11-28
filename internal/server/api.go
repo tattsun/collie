@@ -28,6 +28,7 @@ func (s *Server) apiRoutes() {
 	mx.HandleFunc("DELETE /api/projects/{id}", s.deleteProject)
 	mx.HandleFunc("PATCH /api/projects/{id}", s.patchProject)
 	mx.HandleFunc("POST /api/projects/{id}/stop", s.stopProject)
+	mx.HandleFunc("POST /api/projects/{id}/restart", s.restartProject)
 	mx.HandleFunc("POST /api/projects/{id}/clone", s.cloneProject)
 	mx.HandleFunc("GET /api/projects/{id}/container", s.projectContainer)
 	mx.HandleFunc("GET /api/projects/{id}/env", s.getProjectEnv)
@@ -172,6 +173,24 @@ func (s *Server) stopProject(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	ok(w)
+}
+
+// restartProject restarts the project's containers that wait to apply new
+// settings or a new image (only one member's, with user).
+func (s *Server) restartProject(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		User string `json:"user"`
+	}
+	if err := decode(r, &req); err != nil {
+		httpError(w, 400, err.Error())
+		return
+	}
+	users, err := s.m.RestartContainers(actor(r), r.PathValue("id"), req.User)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, map[string]any{"restarted": len(users)})
 }
 
 // projectContainer reports the project's containers (all members') usage.

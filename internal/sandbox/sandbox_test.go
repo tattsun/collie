@@ -14,7 +14,7 @@ import (
 func newTestManager(t *testing.T) *Manager {
 	t.Helper()
 	data := t.TempDir()
-	m := &Manager{cfg: Config{DataDir: data}, locks: map[string]*sync.Mutex{}, stale: map[string]bool{},
+	m := &Manager{cfg: Config{DataDir: data}, locks: map[string]*sync.Mutex{}, stale: map[string]bool{}, noTools: map[string]bool{},
 		imgIDs: map[string]imageIDAt{}, custom: map[string]*customImage{}, customSem: make(chan struct{}, 1)}
 	if err := SeedShared(m.SharedPath()); err != nil {
 		t.Fatal(err)

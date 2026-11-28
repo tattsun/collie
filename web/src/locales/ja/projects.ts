@@ -239,5 +239,17 @@ const ja: Record<string, string> = {
   Notifications: '通知',
   'Notifications on': '通知オン',
   'Notifications off': '通知オフ',
+  // settings that wait for a container to restart (Pending.tsx)
+  'Saved — each container applies it when it next restarts': '保存しました。各コンテナの次の再起動で反映されます',
+  'Changes to the settings or image apply at the next restart, as the container is in use. It restarts by itself once no agent is at work and no terminal is open.':
+    '設定やイメージの変更は、使用中のため次の再起動で反映されます。作業中のエージェントがなくなり、ターミナルが閉じられると、自動で再起動します。',
+  'Restart now': '今すぐ再起動',
+  'Restart the container now?': 'コンテナを今すぐ再起動しますか？',
+  'Restart the containers of {names} now?': '{names} のコンテナを今すぐ再起動しますか？',
+  'Agents at work in it stop, and its terminals close, with anything running in them. Conversations resume on the next message.':
+    '作業中のエージェントは止まり、ターミナルは中で動いているものごと閉じます。会話は、次のメッセージで再開します。',
+  'Restarted — agents use the new settings from their next message': '再起動しました。エージェントは次のメッセージから新しい設定で動きます',
+  'waiting to restart': '再起動待ち',
+  'Raise the memory limit in the project’s settings': 'プロジェクトの設定でメモリの上限を上げる',
 }
 export default ja

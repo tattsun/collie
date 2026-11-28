@@ -46,7 +46,7 @@ func (m *Manager) EnforceAccess() {
 			continue
 		}
 		if p, ok := m.st.Project(s.ProjectID); ok && !m.MayUse(s.Owner, p) {
-			r.stop()
+			r.interrupt(whyAccess)
 		}
 	}
 	if m.sb == nil || !m.sb.Available() {
@@ -92,13 +92,7 @@ func (m *Manager) homeReadsLost(uid string, home model.Project) bool {
 // dropContainer stops the user's agents in the project and kills their
 // container (with every shell and background job in it).
 func (m *Manager) dropContainer(p model.Project, uid string) {
-	for _, r := range m.projectRuntimes(p.ID) {
-		if s, ok := m.st.Session(r.id); ok && s.Owner == uid {
-			r.stop()
-		}
-	}
+	m.stopAgents(p.ID, uid, whyAccess)
 	_ = m.sb.Stop(p.ID, uid, true)
-	m.ctrMu.Lock()
-	delete(m.ctrActive, p.ID+"/"+uid)
-	m.ctrMu.Unlock()
+	m.forgetContainer(p.ID, uid)
 }

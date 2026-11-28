@@ -1,7 +1,7 @@
 import { memo } from 'preact/compat'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks'
 import type { Item, Session, Ask, PlanStep, Note } from '../types'
-import { me, sessionById, timeline, toastError, userName } from '../store'
+import { me, projectById, sessionById, timeline, toastError, userName } from '../store'
 import { api } from '../api'
 import { renderMarkdown } from '../markdown'
 import { parseDiff, snippetDiff, diffStats, type DiffLine } from '../diff'
@@ -489,12 +489,28 @@ export const ItemView = memo(function ItemView({ item, kids, sid = '', cwd }: It
     case 'notice':
       return <div class="notice">{ts(item.text || '')}</div>
     case 'error':
-      return <Pre class="error-box" text={item.text ? ts(item.text) : t('Error')} />
+      return (
+        <>
+          <Pre class="error-box" text={item.text ? ts(item.text) : t('Error')} />
+          {item.code === 'oom' && <MemoryLimitLink sid={sid} />}
+        </>
+      )
     case 'result':
       return <ResultLine item={item} />
   }
   return null
 })
+
+/** For admins, where to raise the memory limit of the project an agent ran out of memory in. */
+function MemoryLimitLink({ sid }: { sid: string }) {
+  const p = projectById.value.get(sessionById.value.get(sid)?.projectId || '')
+  if (!me.value?.admin || !p || p.home) return null
+  return (
+    <div class="notice">
+      <a href={`#/p/${p.id}/settings`}>{t('Raise the memory limit in the project’s settings')}</a>
+    </div>
+  )
+}
 
 // ---------------------------------------------------------------- list
 

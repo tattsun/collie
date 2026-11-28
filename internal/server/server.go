@@ -103,13 +103,26 @@ func New(m *session.Manager, terms *term.Manager, users *auth.Store, opt Options
 		}
 	}
 	s.pv = s.newPreview()
-	terms.OnChange = s.pushTerms
+	terms.OnChange = func() {
+		s.pushTerms()
+		m.ApplyPending() // a closed terminal may have been all that was at work
+	}
 	m.TermsInUse = terms.InUse
+	m.CloseTerms = func(projectID, userID string) {
+		for _, t := range terms.List() {
+			if t.Project == projectID && t.User == userID {
+				if tt, ok := terms.Get(t.ID); ok {
+					tt.Close()
+				}
+			}
+		}
+	}
 	m.UserActive = func(uid string) bool {
 		u, ok := users.User(uid)
 		return ok && !u.Disabled
 	}
 	m.Notify = s.notifySession
+	m.ReportRestart()
 	if sb := m.Sandbox(); sb != nil {
 		sb.OnChange = func() {
 			m.Hub().Each(func(c *session.Client) {

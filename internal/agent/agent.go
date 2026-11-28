@@ -308,14 +308,9 @@ func (p *proc) exitError() error {
 	if p.err == nil && tail == "" {
 		return nil
 	}
-	msg := "agent process exited"
-	if p.err != nil {
-		msg += ": " + p.err.Error()
-	}
-	if tail != "" {
-		msg += "\n" + lastLines(tail, 12)
-	}
-	return errors.New(msg)
+	e := newExitError(p.err, tail)
+	e.Stderr = lastLines(e.Stderr, 12)
+	return e
 }
 
 type tailBuffer struct {

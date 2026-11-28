@@ -50,6 +50,12 @@ type Project struct {
 	Status   string `json:"status,omitempty"`
 	Error    string `json:"error,omitempty"`
 	CloneURL string `json:"cloneUrl,omitempty"`
+	// Pending lists the users whose container for the project still runs
+	// with older settings or an older image: it was in use when they
+	// changed, and restarts once nothing is at work in it (or when someone
+	// restarts it). It lives only as long as the containers (see
+	// session/pending.go).
+	Pending []string `json:"pending,omitempty"`
 }
 
 // Project.Status values.
@@ -228,6 +234,10 @@ type Item struct {
 	Via   string  `json:"via,omitempty"` // "home": sent for the user by their Home agent, "schedule": by a schedule, "collie": Collie's notification to a Home agent
 	// Notes are what a Collie notification (Via "collie") reports.
 	Notes []Note `json:"notes,omitempty"`
+	// Code says what one of Collie's own errors is about: "oom" (the
+	// container ran out of memory), "interrupted" (Collie stopped the
+	// agent's container, or restarted).
+	Code string `json:"code,omitempty"`
 }
 
 // Note is a change in a session a Home agent watches, as Collie told it.

@@ -80,6 +80,7 @@ type Manager struct {
 	selinux  bool                 // SELinux is on: containers run without its labels
 	imgIDs   map[string]imageIDAt // IDs of image tags, cached briefly
 	stale    map[string]bool      // containers left running with an older configuration
+	noTools  map[string]bool      // ...from before they had the mounts for Collie's tools
 	egress   *egress.Proxy        // for containers on an allowlist (network.go)
 	// held, while not nil, keeps Ensure from starting containers until it
 	// is closed (HoldStarts, ReleaseStarts).
@@ -107,7 +108,7 @@ func New(cfg Config) *Manager {
 	if cfg.Podman == "" {
 		cfg.Podman = "podman"
 	}
-	m := &Manager{cfg: cfg, locks: map[string]*sync.Mutex{}, stale: map[string]bool{}, buildLog: &tail{max: 6 << 10}, egress: egress.NewProxy(),
+	m := &Manager{cfg: cfg, locks: map[string]*sync.Mutex{}, stale: map[string]bool{}, noTools: map[string]bool{}, buildLog: &tail{max: 6 << 10}, egress: egress.NewProxy(),
 		imgIDs: map[string]imageIDAt{}, custom: map[string]*customImage{}, customSem: make(chan struct{}, 1), started: time.Now()}
 	_, err := exec.LookPath(cfg.Podman)
 	m.available = err == nil && Supported()

@@ -14,6 +14,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/tattsun/collie/internal/agent"
@@ -48,11 +49,20 @@ type Manager struct {
 	// TermsInUse reports whether a user has terminals open in a project
 	// (set by the server, which owns terminals).
 	TermsInUse func(projectID, userID string) bool
+	// CloseTerms closes a user's terminals in a project (set by the server).
+	CloseTerms func(projectID, userID string)
 	// UserActive reports whether a user may still use Collie (set by the
 	// server); schedules of those who may not are skipped.
 	UserActive func(userID string) bool
 	ctrMu      sync.Mutex
 	ctrActive  map[string]time.Time // "project/user" containers started by this process
+	ctrEnsured map[string]time.Time // ...and when an agent or terminal last started one
+	// Sessions Collie's last restart cut off, to be told (ReportRestart).
+	restartMu sync.Mutex
+	restarted []string
+	// shutdown: Collie is stopping, so agents that end leave their
+	// sessions as they were (see interruptedByRestart).
+	shutdown atomic.Bool
 
 	// Home: one per user (see home.go). toolLn are the agents' tools
 	// sockets (see media.go), by toolScope.key.
@@ -100,29 +110,22 @@ func NewManager(cfg Config, st *store.Store, hub *Hub, sb *sandbox.Manager) *Man
 	m := &Manager{cfg: cfg, st: st, hub: hub, sb: sb, rts: map[string]*Runtime{},
 		caps: map[string]map[string]model.Caps{}, probed: map[string]model.Caps{},
 		usage:     map[string]map[string]model.Usage{},
-		ctrActive: map[string]time.Time{}, hostOwner: cfg.HostOwner, toolLn: map[string]net.Listener{}}
+		ctrActive: map[string]time.Time{}, ctrEnsured: map[string]time.Time{}, hostOwner: cfg.HostOwner, toolLn: map[string]net.Listener{}}
 	if sb != nil {
 		sb.SetNetRules(st.Project)
 	}
 	if cfg.HostOwner != "" {
 		m.AdoptOrphans(cfg.HostOwner)
 	}
-	// Nothing is running after a restart.
-	for _, s := range st.Sessions() {
-		if (s.Status != model.StatusStopped && s.Status != model.StatusError) || len(s.Tasks) > 0 {
-			st.UpdateSession(s.ID, func(x *model.Session) {
-				if x.Status != model.StatusError {
-					x.Status = model.StatusStopped
-				}
-				x.Tasks = nil
-			})
-		}
-	}
+	// Nothing is running after a restart: sessions that were at work say
+	// why they stopped.
+	m.restarted = m.interruptedByRestart()
 	m.settleAll()
 	for _, p := range st.Projects() {
 		git := isRepo(p)
 		st.UpdateProject(p.ID, func(x *model.Project) {
 			x.Git = git
+			x.Pending = nil // its containers are stopped (stopStaleContainers)
 			// Its git stopped with Collie (or, in a container, may still
 			// be running): it is to be cloned again.
 			if x.Status == model.ProjectCloning {
@@ -202,6 +205,39 @@ func (m *Manager) ensureContainer(p model.Project, uid string, notify func(strin
 	if err != nil {
 		return err
 	}
+	sp, err := m.specFor(p, uid, image)
+	if err != nil {
+		return err
+	}
+	if notify != nil {
+		sp.OnSlowStart = func() { notify(noticeSlowStart) }
+	}
+	if err := m.sb.Ensure(sp, !m.projectBusy(p.ID, uid)); err != nil {
+		return fmt.Errorf("start project container: %w", err)
+	}
+	now := time.Now()
+	m.ctrMu.Lock()
+	m.ctrActive[p.ID+"/"+uid] = now
+	if m.ctrEnsured == nil {
+		m.ctrEnsured = map[string]time.Time{}
+	}
+	m.ctrEnsured[p.ID+"/"+uid] = now
+	m.ctrMu.Unlock()
+	m.setPending(p.ID, uid, m.sb.Stale(p.ID, uid))
+	return nil
+}
+
+// containerSpec is the container the user gets for the project now, for
+// an image that is ready (no build is waited for).
+func (m *Manager) containerSpec(p model.Project, uid string) (sandbox.Spec, error) {
+	image, err := m.sb.WaitImage(p.Image, 0, nil)
+	if err != nil {
+		return sandbox.Spec{}, err
+	}
+	return m.specFor(p, uid, image)
+}
+
+func (m *Manager) specFor(p model.Project, uid, image string) (sandbox.Spec, error) {
 	var dirs []string
 	for _, s := range m.st.Sessions() {
 		if s.ProjectID == p.ID {
@@ -209,24 +245,15 @@ func (m *Manager) ensureContainer(p model.Project, uid string, notify func(strin
 		}
 	}
 	sp := sandbox.Spec{Project: p, UserID: uid, SessionDirs: dirs, MigrateHostState: uid == m.hostOwner && m.hostOwner != "", Image: image}
-	if notify != nil {
-		sp.OnSlowStart = func() { notify(noticeSlowStart) }
-	}
 	if p.Home {
 		if err := m.homeSpec(&sp, uid); err != nil {
-			return fmt.Errorf("prepare Home: %w", err)
+			return sp, fmt.Errorf("prepare Home: %w", err)
 		}
 	} else if err := m.toolsSpec(&sp, toolScope{uid: uid, project: p.ID}); err != nil {
 		// The agents just go without Collie's tools.
 		log.Printf("project %s: tools socket for %s: %v", p.ID, uid, err)
 	}
-	if err := m.sb.Ensure(sp, !m.projectBusy(p.ID, uid)); err != nil {
-		return fmt.Errorf("start project container: %w", err)
-	}
-	m.ctrMu.Lock()
-	m.ctrActive[p.ID+"/"+uid] = time.Now()
-	m.ctrMu.Unlock()
-	return nil
+	return sp, nil
 }
 
 // EnsureContainer is ensureContainer for terminals; it does not wait for
@@ -289,19 +316,23 @@ func (m *Manager) StopProject(a Actor, projectID string, kill bool) error {
 	if !ok || (!m.ProjectVisible(a.ID, p) && !a.Admin) {
 		return ErrNotFound
 	}
-	return m.stopProject(projectID, kill)
+	why := whyStop
+	if kill {
+		why = whyKill
+	}
+	return m.stopProject(projectID, kill, why)
 }
 
-func (m *Manager) stopProject(projectID string, kill bool) error {
+// stopProject stops the project's agents and containers; with why, the
+// sessions at work get a record of it (see interruptedText).
+func (m *Manager) stopProject(projectID string, kill bool, why string) error {
 	p, ok := m.st.Project(projectID)
 	if !ok {
 		return ErrNotFound
 	}
 	rts := m.projectRuntimes(projectID)
 	for _, r := range rts {
-		r.mu.Lock()
-		r.closing = true
-		r.mu.Unlock()
+		r.markStopping(why)
 	}
 	var err error
 	if p.Isolated() && m.sb != nil && kill {
@@ -316,13 +347,7 @@ func (m *Manager) stopProject(projectID string, kill bool) error {
 	if p.Isolated() && m.sb != nil && !kill {
 		err = m.sb.Stop(projectID, "", false)
 	}
-	m.ctrMu.Lock()
-	for k := range m.ctrActive {
-		if strings.HasPrefix(k, projectID+"/") {
-			delete(m.ctrActive, k)
-		}
-	}
-	m.ctrMu.Unlock()
+	m.forgetContainer(projectID, "")
 	return err
 }
 
@@ -330,15 +355,15 @@ func (m *Manager) stopProject(projectID string, kill bool) error {
 func (m *Manager) KillContainer(projectID, uid string) error {
 	for _, r := range m.projectRuntimes(projectID) {
 		if s, ok := m.st.Session(r.id); ok && s.Owner == uid {
-			r.mu.Lock()
-			r.closing = true
-			r.mu.Unlock()
+			r.markStopping(whyAdmin)
 		}
 	}
 	if m.sb == nil {
 		return nil
 	}
-	return m.sb.Stop(projectID, uid, true)
+	err := m.sb.Stop(projectID, uid, true)
+	m.forgetContainer(projectID, uid)
+	return err
 }
 
 func (m *Manager) Hub() *Hub           { return m.hub }
@@ -368,6 +393,7 @@ func (m *Manager) updateSession(sid string, fn func(*model.Session)) (model.Sess
 		m.pushSession(s)
 		m.trackRun(before, s)
 		m.noteChange(before, s)
+		m.pendingFreed(before, s)
 	}
 	return s, ok
 }
@@ -876,8 +902,11 @@ func (m *Manager) Unsubscribe(c *Client, sid string) {
 	c.mu.Unlock()
 }
 
-// Shutdown stops every agent process.
+// Shutdown stops every agent process. Their sessions keep their status,
+// so that the next start can tell those that were at work (see
+// interruptedByRestart).
 func (m *Manager) Shutdown() {
+	m.shutdown.Store(true)
 	m.mu.Lock()
 	rts := make([]*Runtime, 0, len(m.rts))
 	for _, r := range m.rts {
@@ -947,6 +976,8 @@ func (m *Manager) reaper() {
 			r.mu.Unlock()
 		}
 		m.reapContainers()
+		// E.g. an image that was updated meanwhile.
+		m.applyPendingIn("")
 	}
 }
 
@@ -962,7 +993,7 @@ func (m *Manager) reapContainers() {
 	}
 	m.ctrMu.Unlock()
 	for _, id := range ids {
-		if pid, uid, _ := strings.Cut(id, "/"); m.projectBusy(pid, uid) {
+		if pid, uid, _ := strings.Cut(id, "/"); m.projectBusy(pid, uid) || m.atWork(pid, uid) {
 			m.ctrMu.Lock()
 			m.ctrActive[id] = time.Now()
 			m.ctrMu.Unlock()
@@ -975,11 +1006,10 @@ func (m *Manager) reapContainers() {
 			continue
 		}
 		pid, uid, _ := strings.Cut(id, "/")
+		m.stopAgents(pid, uid, whyIdle) // none, unless one got in just now
 		if err := m.sb.Stop(pid, uid, false); err != nil {
 			log.Printf("stop idle container %s: %v", id, err)
 		}
-		m.ctrMu.Lock()
-		delete(m.ctrActive, id)
-		m.ctrMu.Unlock()
+		m.forgetContainer(pid, uid)
 	}
 }

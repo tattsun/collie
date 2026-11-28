@@ -2,10 +2,10 @@ import { lazy, Suspense } from 'preact/compat'
 import { useEffect, useMemo, useState } from 'preact/hooks'
 import type { Project } from '../types'
 import { api } from '../api'
-import { go, groupById, groups, me, ownerLabel, projectById, projectManager, projects, root, rootBase, route, sandbox, sessions, toastError } from '../store'
+import { back, backTo, go, groupById, groups, me, ownerLabel, projectById, projectManager, projects, root, rootBase, route, sandbox, sessions, toastError } from '../store'
 import { ago, cls, home } from '../util'
 import { ChangesView } from './Changes'
-import { AgentBadge, Segmented, StatusDot, Toggle } from './ui'
+import { AgentBadge, Segmented, StatusDot, TabLink, Toggle } from './ui'
 import { Archivable } from './Archive'
 import { IBack, IBox, IClock, IDiff, IFolder, IHome, IList, IPlus, ISettings, ITerminal, ITrash, Spinner } from './icons'
 import { ProjectSettings } from './ProjectSettings'
@@ -142,7 +142,7 @@ export function ProjectsPage() {
   return (
     <div class="page page-pad narrow">
       <div class="page-head">
-        <button class="icon-btn back" onClick={() => go('#/')} aria-label={t('Back')}>
+        <button class="icon-btn back" onClick={() => back()} aria-label={t('Back')}>
           <IBack size={20} />
         </button>
         <h1>{t('Projects')}</h1>
@@ -153,7 +153,15 @@ export function ProjectsPage() {
           </button>
         )}
       </div>
-      {showNew && <NewProjectForm onDone={(p) => go(`#/new?project=${p.id}`)} />}
+      {showNew && (
+        <NewProjectForm
+          onDone={(p) =>
+            // Opened from the new-session screen: back to it, with the project
+            // selected. Otherwise the form makes way for a new session in it.
+            r.query.get('from') === 'new' ? backTo(`#/new?project=${p.id}`) : go(`#/new?project=${p.id}`, { replace: true })
+          }
+        />
+      )}
       <div class="plist">
         {projects.value.map((p) => (
           <a key={p.id} class="card prow-card" href={`#/p/${p.id}`}>
@@ -185,8 +193,8 @@ export function ProjectPage({ id }: { id: string }) {
     return (
       <div class="page center-page dim">
         <p>{t('Project not found.')}</p>
-        <button class="btn" onClick={() => go('#/projects')}>
-          {t('All projects')}
+        <button class="btn" onClick={() => back()}>
+          {t('Back')}
         </button>
       </div>
     )
@@ -195,7 +203,7 @@ export function ProjectPage({ id }: { id: string }) {
     if (!confirm(t('Remove project “{name}” from Collie?\n\nIts {n} session(s) are deleted. Files in {path} are NOT touched.', { name: p.name, n: list.length, path: p.path }))) return
     try {
       await api('DELETE', `/api/projects/${id}`)
-      go('#/projects')
+      back()
     } catch (e) {
       toastError(e)
     }
@@ -203,7 +211,7 @@ export function ProjectPage({ id }: { id: string }) {
   return (
     <div class="session">
       <header class="sess-head">
-        <button class="icon-btn back" onClick={() => go(p.home ? '#/' : '#/projects')} aria-label={t('Back')}>
+        <button class="icon-btn back" onClick={() => back()} aria-label={t('Back')}>
           <IBack size={20} />
         </button>
         {p.home ? (
@@ -244,21 +252,21 @@ export function ProjectPage({ id }: { id: string }) {
         </button>
       </header>
       <nav class="tabs">
-        <a href={`#/p/${id}`} class={cls('tab', tab === 'sessions' && 'on')}>
+        <TabLink href={`#/p/${id}`} on={tab === 'sessions'}>
           <IList size={14} /> {t('Sessions')}
-        </a>
+        </TabLink>
         {!p.home && (
-          <a href={`#/p/${id}/changes`} class={cls('tab', tab === 'changes' && 'on')}>
+          <TabLink href={`#/p/${id}/changes`} on={tab === 'changes'}>
             <IDiff size={14} /> {t('Changes')}
-          </a>
+          </TabLink>
         )}
-        <a href={`#/p/${id}/term`} class={cls('tab', tab === 'term' && 'on')}>
+        <TabLink href={`#/p/${id}/term`} on={tab === 'term'}>
           <ITerminal size={14} /> {t('Terminal')}
-        </a>
+        </TabLink>
         {!p.home && (
-          <a href={`#/p/${id}/settings`} class={cls('tab', tab === 'settings' && 'on')}>
+          <TabLink href={`#/p/${id}/settings`} on={tab === 'settings'}>
             <ISettings size={14} /> {t('Settings')}
-          </a>
+          </TabLink>
         )}
       </nav>
       {tab === 'sessions' && (

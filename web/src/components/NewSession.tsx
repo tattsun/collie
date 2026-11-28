@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'preact/hooks'
 import type { Agent, Project, Session } from '../types'
 import { api } from '../api'
-import { agentsAvail, go, groupById, homeProject, modes, projectById, projects, route, sessionPrefs, toast, toastError } from '../store'
+import { agentsAvail, back, go, groupById, homeProject, modes, projectById, projects, route, sessionPrefs, toast, toastError } from '../store'
 import { cls, home, isTouch } from '../util'
 import { IBack, IBranch, IClip, IHome, IPlus, ISend, Spinner } from './icons'
 import { Segmented, Toggle } from './ui'
@@ -100,7 +100,8 @@ export function NewSession() {
       setPref('worktree', worktree ? '1' : '0')
       sessionStorage.removeItem('collie.newprompt')
       setPrompt('')
-      go(`#/s/${s.id}`)
+      // The session takes this screen's place: Back from it skips the sent form.
+      go(`#/s/${s.id}`, { replace: true })
     } catch (e) {
       toastError(e)
     } finally {
@@ -116,11 +117,11 @@ export function NewSession() {
           <img src="/icon.svg" width={56} height={56} alt="" />
           <h1>{t('Welcome to Collie')}</h1>
           <p class="dim">{t('Create a project, then start Claude Code or Codex sessions on it from any device.')}</p>
-          <button class="btn primary big" onClick={() => go('#/projects?new=1')}>
+          <button class="btn primary big" onClick={() => go('#/projects?new=1&from=new')}>
             <IPlus size={16} /> {t('Create a project')}
           </button>
           {homeId && (
-            <button class="btn big" onClick={() => go(`#/new?project=${homeId}`)}>
+            <button class="btn big" onClick={() => go(`#/new?project=${homeId}`, { replace: true })}>
               <IHome size={16} /> {t('Talk to your Home agent')}
             </button>
           )}
@@ -131,7 +132,7 @@ export function NewSession() {
 
   return (
     <div class="page new-session">
-      <button class="icon-btn back new-back" onClick={() => go('#/')} aria-label={t('Back')}>
+      <button class="icon-btn back new-back" onClick={() => back()} aria-label={t('Back')}>
         <IBack size={20} />
       </button>
       <div class="new-inner">
@@ -194,7 +195,7 @@ export function NewSession() {
                   </optgroup>
                 ))}
               </select>
-              <button class="btn" onClick={() => go('#/projects?new=1')} title={t('New project')}>
+              <button class="btn" onClick={() => go('#/projects?new=1&from=new')} title={t('New project')}>
                 <IPlus size={15} />
               </button>
             </div>

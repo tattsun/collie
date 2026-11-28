@@ -2,7 +2,7 @@ import { Fragment } from 'preact'
 import type { ComponentChildren, JSX } from 'preact'
 import { t } from '../i18n'
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks'
-import { dismissToast, toasts } from '../store'
+import { dismissToast, go, toasts } from '../store'
 import type { Agent, Status } from '../types'
 import { cls } from '../util'
 import { ICheck, IX } from './icons'
@@ -90,6 +90,25 @@ export function Popover({ trigger, children, up, align = 'left', label, title }:
         </div>
       )}
     </div>
+  )
+}
+
+/** A tab of a screen. It switches in place (no new history entry), so Back
+ *  leaves the screen rather than stepping back through its tabs. A click
+ *  with a modifier key still opens it in a new tab. */
+export function TabLink({ href, on, children }: { href: string; on: boolean; children: ComponentChildren }) {
+  return (
+    <a
+      href={href}
+      class={cls('tab', on && 'on')}
+      onClick={(e) => {
+        if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
+        e.preventDefault()
+        go(href, { replace: true })
+      }}
+    >
+      {children}
+    </a>
   )
 }
 

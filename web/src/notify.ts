@@ -4,7 +4,7 @@
 import { signal } from '@preact/signals'
 import { api } from './api'
 import { lang, t, ts } from './i18n'
-import { notifyEnabled, pushID, toast } from './store'
+import { go, notifyEnabled, pushID, toast } from './store'
 
 /** Why this device can't get notifications while Collie is closed ('' = it can). */
 export type PushBlock = '' | 'insecure' | 'ios-install' | 'ios-old' | 'unsupported'
@@ -135,7 +135,7 @@ export async function testPush() {
 // navigate the page.
 navigator.serviceWorker?.addEventListener('message', (e) => {
   const url = e.data?.t === 'open' && typeof e.data.url === 'string' ? e.data.url : ''
-  if (url.startsWith('/#/')) location.hash = url.slice(1)
+  if (url.startsWith('/#/')) go(url.slice(1))
 })
 
 // The texts the service worker shows are in the registered language.

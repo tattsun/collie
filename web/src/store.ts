@@ -79,8 +79,8 @@ export interface Route {
   query: URLSearchParams
 }
 
-function parseHash(): Route {
-  const h = location.hash.replace(/^#/, '') || '/'
+function parseHash(hash = location.hash): Route {
+  const h = hash.replace(/^#/, '') || '/'
   const [path, qs] = h.split('?')
   const parts = path.split('/').filter(Boolean)
   const query = new URLSearchParams(qs || '')
@@ -96,12 +96,132 @@ function parseHash(): Route {
 }
 
 export const route = signal<Route>(parseHash())
-addEventListener('hashchange', () => {
+
+/** The screen a screen's Back leads to when there is no earlier screen to
+ *  go back to ('' for the list, which has none). */
+export function parentOf(r: Route): string {
+  switch (r.name) {
+    case 'home':
+      return ''
+    case 'session': {
+      // A Home conversation sits in Home.
+      const h = homeProject.value
+      return h && sessionById.value.get(r.id || '')?.projectId === h.id ? `#/p/${h.id}` : '#/'
+    }
+    case 'new': {
+      const p = r.query.get('project')
+      return p && projectById.value.has(p) ? `#/p/${p}` : '#/'
+    }
+    case 'schedules':
+      return r.id ? '#/schedules' : '#/'
+    case 'groups':
+      return r.id ? '#/groups' : '#/'
+    default:
+      return '#/'
+  }
+}
+
+// History. Every entry Collie makes carries its depth in history.state: 0
+// for the first screen of this visit, one more for each screen opened on
+// top. With it the in-app Back can do what a back swipe (or Android's back
+// button) does, history.back(), whenever there is a screen of ours to go
+// back to: if it opened the parent screen instead, the next back swipe
+// would come back to the screen just left. Screens are opened on top only
+// when going deeper (a list → one of its items); tabs, and the screen a
+// form leads to once it is sent, take the place of the current entry.
+type NavState = { collie: number; overlay?: true }
+const depthOf = (st: unknown): number => {
+  const d = (st as NavState | null)?.collie
+  return typeof d === 'number' ? d : -1
+}
+const navState = (collie: number): NavState => ({ collie })
+let depth = Math.max(0, depthOf(history.state))
+/** Set by backTo: the screen to put in place of the one Back returns to. */
+let thenReplace: string | null = null
+/** Closes the open overlay (the media viewer), which has a history entry of its own. */
+let overlayClose: (() => void) | null = null
+
+function closeOverlay() {
+  const close = overlayClose
+  overlayClose = null
+  close?.()
+}
+
+// Back and forward, also between entries with the same address (an overlay).
+addEventListener('popstate', () => {
+  const st = history.state as NavState | null
+  if (depthOf(st) < 0) return // a new entry from a link: hashchange numbers it
+  depth = depthOf(st)
+  if (thenReplace) {
+    history.replaceState(navState(depth), '', thenReplace)
+    thenReplace = null
+  }
+  if (overlayClose && !st?.overlay) closeOverlay()
   route.value = parseHash()
 })
-export function go(hash: string) {
-  if (location.hash !== hash) location.hash = hash
-  else route.value = parseHash()
+// A link, an address typed in or a tapped notification opened a screen.
+addEventListener('hashchange', () => {
+  const d = depthOf(history.state)
+  if (d < 0) history.replaceState(navState(++depth), '')
+  else depth = d
+  route.value = parseHash()
+})
+
+/** Opens a screen on top of this one. replace: in its place instead (a tab,
+ *  or what a sent form leads to), so Back doesn't return to it. */
+export function go(hash: string, opts: { replace?: boolean } = {}) {
+  // A screen opened over the viewer (a notification) takes the viewer's entry.
+  const overOverlay = !!(history.state as NavState | null)?.overlay
+  if (overlayClose) closeOverlay()
+  if ((location.hash || '#/') === hash && !overOverlay) {
+    route.value = parseHash()
+    return
+  }
+  if (opts.replace || overOverlay) history.replaceState(navState(depth), '', hash)
+  else history.pushState(navState(++depth), '', hash)
+  route.value = parseHash()
+}
+
+/** The in-app Back: to the previous screen, like a back swipe. With none (a
+ *  screen opened from a notification or a link), to parent in its place. */
+export function back(parent = parentOf(route.value)) {
+  if (depth > 0) history.back()
+  else go(parent || '#/', { replace: true })
+}
+
+/** Back to the previous screen, with hash in its place: a form opened from
+ *  another one returns to it with what it made (a new project, selected). */
+export function backTo(hash: string) {
+  if (depth > 0) {
+    thenReplace = hash
+    history.back()
+  } else go(hash, { replace: true })
+}
+
+/** Shows an overlay (the media viewer) as a history entry of its own, so a
+ *  back swipe closes it rather than leaving the screen underneath. */
+export function openOverlay(close: () => void) {
+  if (overlayClose) return
+  overlayClose = close
+  history.pushState({ collie: ++depth, overlay: true } satisfies NavState, '')
+}
+
+/** Closes the overlay as Back would (its entry goes too). */
+export function closeOverlayBack() {
+  if ((history.state as NavState | null)?.overlay) history.back()
+  else closeOverlay()
+}
+
+/** At start-up (data loaded): a visit that begins on a deeper screen, opened
+ *  from a notification or a link, gets the screens above it underneath, so
+ *  Back, a back swipe and Android's back button all lead to the list. */
+export function seedHistory() {
+  if (depthOf(history.state) >= 0) return // reloaded: these entries are ours already
+  const chain = [location.hash || '#/']
+  for (let p = parentOf(parseHash(chain[0])); p && chain.length < 4; p = parentOf(parseHash(p))) chain.unshift(p)
+  history.replaceState(navState(0), '', chain[0])
+  for (let i = 1; i < chain.length; i++) history.pushState(navState(i), '', chain[i])
+  depth = chain.length - 1
 }
 
 // ---------------------------------------------------------------- toasts

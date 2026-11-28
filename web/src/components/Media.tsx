@@ -12,6 +12,7 @@ import { signal } from '@preact/signals'
 import { useEffect, useRef, useState } from 'preact/hooks'
 import type { Item, Media } from '../types'
 import { cls } from '../util'
+import { closeOverlayBack, openOverlay } from '../store'
 import { t } from '../i18n'
 import { IBack, IChevron, ICode, IExpand, IExternal, IX } from './icons'
 
@@ -27,6 +28,8 @@ const viewer = signal<{ list: Media[]; index: number } | null>(null)
 
 export function openViewer(list: Media[], index: number) {
   viewer.value = { list, index }
+  // A history entry of its own: a back swipe closes the viewer, not the screen under it.
+  openOverlay(() => (viewer.value = null))
 }
 
 /** An untrusted HTML page. Never add allow-same-origin: with scripts it would let the page lift its own sandbox. */
@@ -115,7 +118,7 @@ export function Viewer() {
   const cur = v ? v.list[v.index] : null
   const n = v ? v.list.length : 0
 
-  const close = () => (viewer.value = null)
+  const close = () => closeOverlayBack()
   const go = (d: number) => {
     const s = viewer.value
     if (s && s.list.length > 1) viewer.value = { ...s, index: (s.index + d + s.list.length) % s.list.length }

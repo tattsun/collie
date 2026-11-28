@@ -1,6 +1,6 @@
 import { t } from './i18n'
 import { api, ApiError } from './api'
-import { applyState, authed, connect, toast } from './store'
+import { applyState, authed, connect, seedHistory, toast } from './store'
 import { fetchAuthStatus, inviteCode } from './authflow'
 import { syncPush } from './notify'
 
@@ -25,6 +25,7 @@ export async function boot() {
       return
     }
     applyState(await api('GET', '/api/state'))
+    seedHistory()
     authed.value = true
     connect()
     syncPush()

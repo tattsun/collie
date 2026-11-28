@@ -76,7 +76,7 @@ export function NewSession() {
   const effMode = modeList.some((m) => m.id === mode) ? mode : modeList[0]?.id || ''
   const def = defaults(agent)
   const notDefault = model !== (def.model || '') || effort !== (def.effort || '')
-  const canStart = !!project && project.status !== 'cloning' && (prompt.trim() || atts.length) && !uploading && !busy && agentsAvail.value[agent] !== false
+  const canStart = !!project && !project.status && (prompt.trim() || atts.length) && !uploading && !busy && agentsAvail.value[agent] !== false
 
   const start = async () => {
     if (!canStart) return
@@ -187,8 +187,8 @@ export function NewSession() {
                 {projectGroups(plist).map(([label, items]) => (
                   <optgroup key={label} label={label}>
                     {items.map((p) => (
-                      <option key={p.id} value={p.id} disabled={p.status === 'cloning'}>
-                        {p.status === 'cloning' ? t('{name} (cloning…)', { name: p.name }) : p.name}
+                      <option key={p.id} value={p.id} disabled={!!p.status}>
+                        {p.status === 'cloning' ? t('{name} (cloning…)', { name: p.name }) : p.status === 'error' ? t('{name} (clone failed)', { name: p.name }) : p.name}
                       </option>
                     ))}
                   </optgroup>

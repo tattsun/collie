@@ -105,9 +105,9 @@ const ja: Record<string, string> = {
   'Clone repo': 'リポジトリをclone',
   'Existing folder': '既存フォルダ',
   'Repository URL': 'リポジトリの URL',
-  "Cloned with the server user's git credentials.": 'サーバのユーザーの git 認証情報で clone します。',
-  'https:// only; private GitHub repositories use the GH_TOKEN in your account environment.':
-    'https:// のみ対応です。private な GitHub リポジトリには、アカウントの環境変数の GH_TOKEN が使われます。',
+  "Cloned on the server with the server user's git credentials.": 'サーバ上で、サーバのユーザーの git 認証情報を使って clone します。',
+  'https:// only. Cloned inside your container for the project, where private GitHub repositories use the GH_TOKEN in your account environment.':
+    'https:// のみ対応です。clone はこのプロジェクトの自分のコンテナの中で行い、private な GitHub リポジトリにはアカウントの環境変数の GH_TOKEN が使われます。',
   'Path on the server': 'サーバ上のパス',
   '{home}/my-app or /srv/code/app': '{home}/my-app または /srv/code/app',
   Name: '名前',
@@ -137,6 +137,13 @@ const ja: Record<string, string> = {
   isolated: '隔離',
   host: 'ホスト実行',
   cloning: 'clone 中',
+  'clone failed': 'clone 失敗',
+  'The clone failed': 'clone に失敗しました',
+  'The clone runs inside the container of whoever clones it, with their environment: a private GitHub repository needs a GH_TOKEN that can read it, in Account → My environment or in this project’s secrets (Settings).':
+    'clone は、clone する人のコンテナの中で、その人の環境変数を使って行います。private な GitHub リポジトリには、読み取れる GH_TOKEN を「アカウント → 自分の環境変数」か、このプロジェクトのシークレット（設定）に入れてください。',
+  "The clone runs on the server with the server user's git credentials.": 'clone はサーバ上で、サーバのユーザーの git 認証情報を使って行います。',
+  'Clone again': 'もう一度 clone',
+  'Its owner can clone it again.': 'もう一度 clone できるのは、このプロジェクトのオーナーです。',
   Session: 'セッション',
   Sessions: 'セッション',
   Changes: '変更',
@@ -189,6 +196,7 @@ const ja: Record<string, string> = {
   'None since Collie started.': 'Collie の起動以降、まだありません。',
   'private address': 'プライベートアドレス',
   '{name} (cloning…)': '{name}（clone 中…）',
+  '{name} (clone failed)': '{name}（clone 失敗）',
   'Share with {name}': '{name} に共有',
   'Share with the group': 'グループに共有',
   'Members can follow and drive this session. It runs with your agent accounts.':

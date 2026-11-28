@@ -374,6 +374,22 @@ func (m *Manager) envFiles(projectID, userID string) []string {
 	return out
 }
 
+// EnvValues lists the values the env files give the user's container for
+// the project (tokens, mostly), to keep them out of messages that others
+// may see. Each also comes without the quotes it may be written in.
+func (m *Manager) EnvValues(projectID, userID string) []string {
+	var out []string
+	for _, f := range m.envFiles(projectID, userID) {
+		for _, v := range readEnv(f) {
+			out = append(out, v)
+			if t := strings.Trim(strings.TrimSpace(v), `"'`); t != v {
+				out = append(out, t)
+			}
+		}
+	}
+	return out
+}
+
 func fileNonEmpty(p string) bool {
 	fi, err := os.Stat(p)
 	return err == nil && fi.Size() > 0

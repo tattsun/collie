@@ -41,11 +41,22 @@ type Project struct {
 	// Home marks a user's Home: a workspace outside any project where the
 	// Home agent chats with the user and coordinates their project agents.
 	Home bool `json:"home,omitempty"`
-	// Runtime-only fields.
-	Git    bool   `json:"git"`
-	Status string `json:"status,omitempty"` // "", "cloning", "error"
-	Error  string `json:"error,omitempty"`
+	Git  bool `json:"git"` // checked again at every start
+	// A project made from a repository: Status is "cloning" while the
+	// clone runs and "error" once it failed, with the reason (secrets
+	// taken out) in Error. CloneURL, without credentials, is where it is
+	// cloned from, to clone it again; all three are cleared once it's
+	// cloned.
+	Status   string `json:"status,omitempty"`
+	Error    string `json:"error,omitempty"`
+	CloneURL string `json:"cloneUrl,omitempty"`
 }
+
+// Project.Status values.
+const (
+	ProjectCloning     = "cloning"
+	ProjectCloneFailed = "error"
+)
 
 // Isolated reports whether the project's agents run in a container.
 func (p *Project) Isolated() bool { return p.Runtime == "container" }

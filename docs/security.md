@@ -51,7 +51,9 @@ This assumes the configuration from the [setup guide](setup.md): a dedicated `co
 | Your own account (`~/.ssh` etc.) | Unreachable | Unreachable, because `collie` is a separate user |
 
 - Group projects always run in containers, and only admins can drive a host-run agent.
-- Members can't register arbitrary folders. Their clones are `https://` only and run inside their own container.
+- Members can't register arbitrary folders.
+- A clone into an isolated project runs inside the container of whoever clones it, admins included, with that container's network and that person's environment (their `GH_TOKEN`, say), never with the server's git credentials or SSH keys. It takes `https://` URLs only, from admins too: there are no SSH keys in there, and `git://` or `http://` would let anyone on the way change the code your agents then run with your tokens. Only a host-run project is cloned on the server, with the `collie` user's git setup.
+- A failed clone's message is shown to everyone who sees the project, so the values of the environment it ran with, credentials in its URL and anything that looks like a GitHub or GitLab token are taken out. Collie keeps the URL without its credentials, to clone again. A token you put in the URL still ends up in the clone's `.git/config`, where the project's agents (in a group project, every member's) can read it: use `GH_TOKEN` instead.
 - Project folders can't be nested inside each other, so no container can see another project.
 - Agents talk to Collie only through a tool socket given to their own container. A project's agent can address only its user's sessions in that same container.
 - Collie never runs git on the server in an isolated project's files, because its agents can rewrite the repository's hooks and git settings. New worktrees, their removal and the **Changes** tab run git in the project's container. Except when making a worktree, that git gets none of your tokens and runs none of the repository's hooks, fsmonitor, filters or diff drivers (so **Changes** don't show uncommitted changes inside submodules, and may list Git LFS files whose timestamps changed as modified).

@@ -120,7 +120,14 @@ func NewManager(cfg Config, st *store.Store, hub *Hub, sb *sandbox.Manager) *Man
 	m.settleAll()
 	for _, p := range st.Projects() {
 		git := isRepo(p)
-		st.UpdateProject(p.ID, func(x *model.Project) { x.Git = git })
+		st.UpdateProject(p.ID, func(x *model.Project) {
+			x.Git = git
+			// Its git stopped with Collie (or, in a container, may still
+			// be running): it is to be cloned again.
+			if x.Status == model.ProjectCloning {
+				x.Status, x.Error = model.ProjectCloneFailed, cloneInterrupted
+			}
+		})
 	}
 	m.loadCaps()
 	m.claimExisting()
@@ -182,6 +189,9 @@ const (
 func (m *Manager) ensureContainer(p model.Project, uid string, notify func(string)) error {
 	if m.sb == nil || !m.sb.Available() {
 		return errors.New("this project runs isolated, but podman is not installed on the server")
+	}
+	if err := folderThere(p); err != nil {
+		return err
 	}
 	var onBuild func()
 	if notify != nil {
@@ -440,8 +450,8 @@ func (m *Manager) createSession(a Actor, req CreateSessionReq, via string) (mode
 	if !p.Isolated() && !a.Admin {
 		return model.Session{}, errHostOnly
 	}
-	if p.Status == "cloning" {
-		return model.Session{}, errors.New("project is still being cloned")
+	if err := projectReady(p); err != nil {
+		return model.Session{}, err
 	}
 	if req.Agent != "claude" && req.Agent != "codex" {
 		return model.Session{}, errors.New("agent must be claude or codex")

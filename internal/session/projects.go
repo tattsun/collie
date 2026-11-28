@@ -249,7 +249,7 @@ func (m *Manager) CreateProject(a Actor, req CreateProjectReq) (model.Project, e
 	m.pushProject(p)
 	if req.Kind == "clone" {
 		// Started once the project is stored, which records the outcome.
-		m.startClone(p, a.ID, strings.TrimSpace(req.URL))
+		m.startClone(p.ID, a.ID, strings.TrimSpace(req.URL))
 	}
 	return p, nil
 }

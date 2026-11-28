@@ -164,12 +164,17 @@ func cloneFolder(path string) error {
 	return nil
 }
 
-// startClone clones rawURL into the (empty) folder of p in the background,
-// as uid, and records how it went.
-func (m *Manager) startClone(p model.Project, uid, rawURL string) {
+// startClone clones rawURL into the (empty) folder of the stored project
+// id in the background, as uid, and records how it went. The project is
+// read from the store, never taken from a request.
+func (m *Manager) startClone(id, uid, rawURL string) {
 	go func() {
+		p, ok := m.st.Project(id)
+		if !ok {
+			return // removed meanwhile
+		}
 		err := m.clone(p, uid, rawURL)
-		np, ok := m.st.UpdateProject(p.ID, func(x *model.Project) {
+		np, ok := m.st.UpdateProject(id, func(x *model.Project) {
 			if err != nil {
 				x.Status, x.Error = model.ProjectCloneFailed, err.Error()
 			} else {
@@ -285,7 +290,7 @@ func (m *Manager) RetryClone(a Actor, id, rawURL string) (model.Project, error) 
 		return np, errCloning // another request started it just now
 	}
 	m.pushProject(np)
-	m.startClone(np, a.ID, rawURL)
+	m.startClone(id, a.ID, rawURL)
 	return np, nil
 }
 

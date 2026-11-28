@@ -1,9 +1,9 @@
-import { rich } from './ui'
+import { rich, TabLink } from './ui'
 import { useEffect, useState } from 'preact/hooks'
 import { api } from '../api'
 import { addPasskey, deviceName, lastVerified, signOut } from '../authflow'
-import { go, me, route, sandbox, toast, toastError } from '../store'
-import { ago, cls, copyText } from '../util'
+import { back, me, route, sandbox, toast, toastError } from '../store'
+import { ago, copyText } from '../util'
 import { lang, setLang, t, type Lang } from '../i18n'
 import { passkeyError, passkeysSupported } from '../webauthn'
 import { ClaudeAccountsCard } from './ClaudeAccounts'
@@ -87,7 +87,7 @@ export function AccountPage() {
   return (
     <div class="page page-pad narrow account">
       <div class="page-head">
-        <button class="icon-btn back" onClick={() => go('#/')} aria-label={t('Back')}>
+        <button class="icon-btn back" onClick={() => back()} aria-label={t('Back')}>
           <IBack size={20} />
         </button>
         <h1>{me.value?.displayName || t('Account')}</h1>
@@ -97,18 +97,18 @@ export function AccountPage() {
         </button>
       </div>
       <nav class="tabs flat">
-        <a href="#/account" class={cls('tab', tab === 'account' && 'on')}>
+        <TabLink href="#/account" on={tab === 'account'}>
           {t('Account')}
-        </a>
-        <a href="#/account/agents" class={cls('tab', tab === 'agents' && 'on')}>
+        </TabLink>
+        <TabLink href="#/account/agents" on={tab === 'agents'}>
           {t('Agent accounts')}
-        </a>
-        <a href="#/account/profile" class={cls('tab', tab === 'profile' && 'on')}>
+        </TabLink>
+        <TabLink href="#/account/profile" on={tab === 'profile'}>
           {t('My skills & MCP')}
-        </a>
-        <a href="#/account/plugins" class={cls('tab', tab === 'plugins' && 'on')}>
+        </TabLink>
+        <TabLink href="#/account/plugins" on={tab === 'plugins'}>
           {t('My plugins')}
-        </a>
+        </TabLink>
       </nav>
 
       {!info && <Spinner />}

@@ -2,17 +2,17 @@ import { lazy, Suspense } from 'preact/compat'
 import { useEffect, useState } from 'preact/hooks'
 import type { Session } from '../types'
 import { api } from '../api'
-import { go, groupById, homeProject, markSeen, me, projectById, route, scheduleById, sessionById, sessions, subscribe, timeline, toastError, agentCaps, userName } from '../store'
+import { back, groupById, homeProject, markSeen, me, parentOf, projectById, route, scheduleById, sessionById, sessions, subscribe, timeline, toastError, agentCaps, userName } from '../store'
 import { Timeline } from './Timeline'
 import { Composer } from './Composer'
 import { TasksBar } from './Tasks'
 import { ChangesView } from './Changes'
 import { PortsView } from './Ports'
-import { AgentBadge, Menu, Modal, StatusPill } from './ui'
+import { AgentBadge, Menu, Modal, StatusPill, TabLink } from './ui'
 import { SessionMeter } from './Usage'
 import { PendingBanner } from './Pending'
 import { IBack, IBell, IBox, IBranch, IChat, IClock, IDiff, IGlobe, IMore, ITerminal, IUsers, Spinner } from './icons'
-import { cls, home, money, shortMode } from '../util'
+import { home, money, shortMode } from '../util'
 import { t } from '../i18n'
 
 const TerminalView = lazy(() => import('./Terminal').then((m) => ({ default: m.TerminalView })))
@@ -115,7 +115,7 @@ export function SessionView({ id }: { id: string }) {
     return (
       <div class="page center-page dim">
         <p>{t('This session no longer exists.')}</p>
-        <button class="btn" onClick={() => go('#/')}>
+        <button class="btn" onClick={() => back()}>
           {t('Back')}
         </button>
       </div>
@@ -131,9 +131,11 @@ export function SessionView({ id }: { id: string }) {
   const del = async () => {
     const wt = s.worktree ? '\n\n' + t('Its worktree checkout will be removed (the branch is kept).') : ''
     if (!confirm(t('Delete “{title}”?', { title: s.title }) + wt)) return
+    // Where Back leads, found while the session is still known.
+    const parent = parentOf(route.value)
     try {
       await api('DELETE', `/api/sessions/${id}`)
-      go('#/')
+      back(parent)
     } catch (e) {
       toastError(e)
     }
@@ -142,7 +144,7 @@ export function SessionView({ id }: { id: string }) {
   return (
     <div class="session">
       <header class="sess-head">
-        <button class="icon-btn back" onClick={() => go('#/')} aria-label={t('Back')}>
+        <button class="icon-btn back" onClick={() => back()} aria-label={t('Back')}>
           <IBack size={20} />
         </button>
         <div class="sess-title-wrap">
@@ -228,19 +230,19 @@ export function SessionView({ id }: { id: string }) {
         />
       </header>
       <nav class="tabs">
-        <a href={`#/s/${id}`} class={cls('tab', tab === 'chat' && 'on')}>
+        <TabLink href={`#/s/${id}`} on={tab === 'chat'}>
           <IChat size={14} /> {t('Chat')}
-        </a>
-        <a href={`#/s/${id}/changes`} class={cls('tab', tab === 'changes' && 'on')}>
+        </TabLink>
+        <TabLink href={`#/s/${id}/changes`} on={tab === 'changes'}>
           <IDiff size={14} /> {t('Changes')}
-        </a>
-        <a href={`#/s/${id}/term`} class={cls('tab', tab === 'term' && 'on')}>
+        </TabLink>
+        <TabLink href={`#/s/${id}/term`} on={tab === 'term'}>
           <ITerminal size={14} /> {t('Terminal')}
-        </a>
+        </TabLink>
         {(!s.owner || s.owner === me.value?.id) && (
-          <a href={`#/s/${id}/ports`} class={cls('tab', tab === 'ports' && 'on')}>
+          <TabLink href={`#/s/${id}/ports`} on={tab === 'ports'}>
             <IGlobe size={14} /> {t('Ports')}
-          </a>
+          </TabLink>
         )}
         <span class="grow" />
         {modeLabel && tab !== 'chat' && <span class="dim small tab-note">{modeLabel}</span>}

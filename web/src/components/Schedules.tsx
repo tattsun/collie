@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import type { Agent, Schedule, ScheduleRun } from '../types'
 import { api } from '../api'
-import { agentsAvail, efforts, go, groupById, homeProject, modes, projectById, projects, route, scheduleById, schedules, sessionById, sessionPrefs, toast, toastError } from '../store'
+import { agentsAvail, back, efforts, go, groupById, homeProject, modes, projectById, projects, route, scheduleById, schedules, sessionById, sessionPrefs, toast, toastError } from '../store'
 import { ago, cls, shortMode, until } from '../util'
 import { browserTZ, defaultTiming, describeCron, fmtWhen, fromCron, timeZones, toCron, weekday, type Freq, type Timing } from '../schedule'
 import { t, ts } from '../i18n'
@@ -40,7 +40,7 @@ function ScheduleList() {
   return (
     <div class="page page-pad narrow">
       <div class="page-head">
-        <button class="icon-btn back" onClick={() => go('#/')} aria-label={t('Back')}>
+        <button class="icon-btn back" onClick={() => back()} aria-label={t('Back')}>
           <IBack size={20} />
         </button>
         <h1>{t('Schedules')}</h1>
@@ -91,12 +91,12 @@ function NewSchedule() {
   return (
     <div class="page page-pad narrow">
       <div class="page-head">
-        <button class="icon-btn back" onClick={() => go('#/schedules')} aria-label={t('Back')}>
+        <button class="icon-btn back" onClick={() => back()} aria-label={t('Back')}>
           <IBack size={20} />
         </button>
         <h1>{t('New schedule')}</h1>
       </div>
-      <ScheduleForm onDone={(s) => go(`#/schedules/${s.id}`)} />
+      <ScheduleForm onDone={(s) => go(`#/schedules/${s.id}`, { replace: true })} />
     </div>
   )
 }
@@ -162,8 +162,8 @@ function ScheduleDetail({ id }: { id: string }) {
     return (
       <div class="page center-page dim">
         <p>{t('This schedule no longer exists.')}</p>
-        <button class="btn" onClick={() => go('#/schedules')}>
-          {t('Schedules')}
+        <button class="btn" onClick={() => back()}>
+          {t('Back')}
         </button>
       </div>
     )
@@ -189,7 +189,7 @@ function ScheduleDetail({ id }: { id: string }) {
     if (!confirm(t('Delete the schedule “{name}”? The sessions it started are kept.', { name: s.title || s.prompt.slice(0, 40) }))) return
     act('delete', async () => {
       await api('DELETE', `/api/schedules/${id}`)
-      go('#/schedules')
+      back()
     })
   }
   const running = s.runs?.some((r) => r.status === 'running')
@@ -197,7 +197,7 @@ function ScheduleDetail({ id }: { id: string }) {
   return (
     <div class="page page-pad narrow">
       <div class="page-head">
-        <button class="icon-btn back" onClick={() => (editing ? setEditing(false) : go('#/schedules'))} aria-label={t('Back')}>
+        <button class="icon-btn back" onClick={() => (editing ? setEditing(false) : back())} aria-label={t('Back')}>
           <IBack size={20} />
         </button>
         <h1 class="ellipsis grow">{editing ? t('Edit schedule') : s.title || t('Schedule')}</h1>

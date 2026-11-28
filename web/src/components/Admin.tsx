@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'preact/hooks'
-import { ContainerUsage } from './ui'
+import { ContainerUsage, TabLink } from './ui'
 import { api } from '../api'
 import { t } from '../i18n'
-import { go, me, route, toast, toastError } from '../store'
+import { back, me, route, toast, toastError } from '../store'
 import { ago, cls, until } from '../util'
 import { LinkBox } from './Account'
 import { EnvEditor, ProfileEditor } from './Editors'
@@ -48,7 +48,7 @@ export function AdminPage() {
   return (
     <div class="page page-pad admin">
       <div class="page-head">
-        <button class="icon-btn back" onClick={() => go('#/')} aria-label={t('Back')}>
+        <button class="icon-btn back" onClick={() => back()} aria-label={t('Back')}>
           <IBack size={20} />
         </button>
         <h1>{t('Admin')}</h1>
@@ -66,9 +66,9 @@ export function AdminPage() {
           ['env', t('Global environment')],
           ['updates', t('Updates')],
         ].map(([k, label]) => (
-          <a key={k} href={`#/admin/${k}`} class={cls('tab', tab === k && 'on')}>
+          <TabLink key={k} href={`#/admin/${k}`} on={tab === k}>
             {label}
-          </a>
+          </TabLink>
         ))}
       </nav>
       {!d && tab !== 'profile' && tab !== 'plugins' && tab !== 'env' && tab !== 'updates' && <Spinner />}

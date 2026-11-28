@@ -1,7 +1,7 @@
 import { useState } from 'preact/hooks'
 import { api } from '../api'
 import { t } from '../i18n'
-import { go, groupById, groups, me, projects, route, sandbox, toastError, userName, users } from '../store'
+import { back, go, groupById, groups, me, projects, route, sandbox, toastError, userName, users } from '../store'
 import { cls } from '../util'
 import { IBack, IPlus, ITrash, IUsers, Spinner } from './icons'
 import { PluginsEditor } from './Plugins'
@@ -32,7 +32,7 @@ export function GroupsPage() {
   return (
     <div class="page page-pad narrow">
       <div class="page-head">
-        <button class="icon-btn back" onClick={() => go('#/')} aria-label={t('Back')}>
+        <button class="icon-btn back" onClick={() => back()} aria-label={t('Back')}>
           <IBack size={20} />
         </button>
         <h1>{t('Groups')}</h1>
@@ -71,8 +71,8 @@ function GroupDetail({ id }: { id: string }) {
     return (
       <div class="page center-page dim">
         <p>{t('Group not found.')}</p>
-        <button class="btn" onClick={() => go('#/groups')}>
-          {t('Groups')}
+        <button class="btn" onClick={() => back()}>
+          {t('Back')}
         </button>
       </div>
     )
@@ -93,7 +93,7 @@ function GroupDetail({ id }: { id: string }) {
   return (
     <div class="page page-pad narrow">
       <div class="page-head">
-        <button class="icon-btn back" onClick={() => go('#/groups')} aria-label={t('Back')}>
+        <button class="icon-btn back" onClick={() => back()} aria-label={t('Back')}>
           <IBack size={20} />
         </button>
         <h1>{g.name}</h1>
@@ -163,7 +163,7 @@ function GroupDetail({ id }: { id: string }) {
       </section>
       {manage && (
         <div class="danger-zone">
-          <button class="btn ghost danger small" disabled={busy || gprojects.length > 0} title={gprojects.length ? t('Delete its projects first') : ''} onClick={() => confirm(t('Delete group {name}?', { name: g.name })) && run(async () => (await api('DELETE', `/api/groups/${id}`), go('#/groups')))}>
+          <button class="btn ghost danger small" disabled={busy || gprojects.length > 0} title={gprojects.length ? t('Delete its projects first') : ''} onClick={() => confirm(t('Delete group {name}?', { name: g.name })) && run(async () => (await api('DELETE', `/api/groups/${id}`), back()))}>
             <ITrash size={14} /> {t('Delete group')}
           </button>
         </div>

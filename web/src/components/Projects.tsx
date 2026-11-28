@@ -2,7 +2,7 @@ import { lazy, Suspense } from 'preact/compat'
 import { useEffect, useMemo, useState } from 'preact/hooks'
 import type { Project } from '../types'
 import { api } from '../api'
-import { go, groupById, groups, me, ownerLabel, projectById, projects, root, rootBase, route, sandbox, sessions, toastError } from '../store'
+import { go, groupById, groups, me, ownerLabel, projectById, projectManager, projects, root, rootBase, route, sandbox, sessions, toastError } from '../store'
 import { ago, cls, home } from '../util'
 import { ChangesView } from './Changes'
 import { AgentBadge, Segmented, StatusDot, Toggle } from './ui'
@@ -27,6 +27,8 @@ export function NewProjectForm({ onDone }: { onDone?: (p: Project) => void }) {
   const [isolated, setIsolated] = useState(sandbox.value.available)
   const [busy, setBusy] = useState(false)
   const [dirs, setDirs] = useState<string[]>([])
+  // Where a clone runs: in the user's container unless the project runs on the host.
+  const inContainer = isolated || !admin
 
   useEffect(() => {
     if (kind === 'existing') api<{ dirs: string[] }>('GET', '/api/dirs').then((d) => setDirs(d.dirs)).catch(() => {})
@@ -62,8 +64,8 @@ export function NewProjectForm({ onDone }: { onDone?: (p: Project) => void }) {
       {kind === 'clone' && (
         <label class="field">
           <span class="field-l">{t('Repository URL')}</span>
-          <input class="input mono" value={url} placeholder="git@github.com:you/repo.git" autoCapitalize="off" autoCorrect="off" spellcheck={false} onInput={(e) => setUrl((e.target as HTMLInputElement).value)} />
-          <span class="field-h">{admin ? t("Cloned with the server user's git credentials.") : t('https:// only; private GitHub repositories use the GH_TOKEN in your account environment.')}</span>
+          <input class="input mono" value={url} placeholder={inContainer ? 'https://github.com/you/repo.git' : 'git@github.com:you/repo.git'} autoCapitalize="off" autoCorrect="off" spellcheck={false} onInput={(e) => setUrl((e.target as HTMLInputElement).value)} />
+          <span class="field-h">{inContainer ? t('https:// only. Cloned inside your container for the project, where private GitHub repositories use the GH_TOKEN in your account environment.') : t("Cloned on the server with the server user's git credentials.")}</span>
         </label>
       )}
       {kind === 'existing' ? (
@@ -232,10 +234,11 @@ export function ProjectPage({ id }: { id: string }) {
                 <Spinner size={10} /> {t('cloning')}
               </span>
             )}
+            {p.status === 'error' && <span class="sub-item err">{t('clone failed')}</span>}
           </div>
         </div>
         )}
-        <button class="btn primary small" onClick={() => go(`#/new?project=${id}`)} disabled={p.status === 'cloning'}>
+        <button class="btn primary small" onClick={() => go(`#/new?project=${id}`)} disabled={p.status === 'cloning' || p.status === 'error'}>
           <IPlus size={15} /> {p.home ? t('New chat') : t('Session')}
         </button>
       </header>
@@ -259,7 +262,7 @@ export function ProjectPage({ id }: { id: string }) {
       </nav>
       {tab === 'sessions' && (
         <div class="tab-body page-pad">
-          {p.status === 'error' && <div class="error-box">{ts(p.error || '')}</div>}
+          {p.status === 'error' && <CloneFailed key={p.id} p={p} />}
           {p.home && list.length === 0 && (
             <div class="card home-intro">
               <p>{t('Your Home agent is for anything that is not tied to one project:')}</p>
@@ -315,5 +318,51 @@ export function ProjectPage({ id }: { id: string }) {
         </div>
       )}
     </div>
+  )
+}
+
+/** A project whose clone failed: why, and cloning it again (from the same URL or a corrected one). */
+function CloneFailed({ p }: { p: Project }) {
+  const isolated = p.runtime === 'container'
+  const canRetry = projectManager(p) && (isolated || !!me.value?.admin)
+  const [url, setUrl] = useState(p.cloneUrl || '')
+  const [busy, setBusy] = useState(false)
+  const retry = async (e: Event) => {
+    e.preventDefault()
+    setBusy(true)
+    try {
+      await api('POST', `/api/projects/${p.id}/clone`, { url })
+    } catch (err) {
+      toastError(err)
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <form class="card form clone-failed" onSubmit={retry}>
+      <h3>{t('The clone failed')}</h3>
+      <div class="error-box">{ts(p.error || '')}</div>
+      <p class="dim small">
+        {isolated
+          ? t('The clone runs inside the container of whoever clones it, with their environment: a private GitHub repository needs a GH_TOKEN that can read it, in Account → My environment or in this project’s secrets (Settings).')
+          : t("The clone runs on the server with the server user's git credentials.")}
+      </p>
+      {canRetry ? (
+        <>
+          <label class="field">
+            <span class="field-l">{t('Repository URL')}</span>
+            <input class="input mono" value={url} autoCapitalize="off" autoCorrect="off" spellcheck={false} onInput={(e) => setUrl((e.target as HTMLInputElement).value)} />
+          </label>
+          <div class="modal-actions">
+            <button class="btn primary" type="submit" disabled={busy || !url.trim()}>
+              {busy && <Spinner size={12} />}
+              {t('Clone again')}
+            </button>
+          </div>
+        </>
+      ) : (
+        <p class="dim small">{t('Its owner can clone it again.')}</p>
+      )}
+    </form>
   )
 }

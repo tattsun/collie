@@ -179,6 +179,36 @@ func TestProjectsOnTheHostNeedRecentPasskey(t *testing.T) {
 	}
 }
 
+// Cloning a host-run project again runs git on the server, like making
+// it: that needs a recent passkey check. An isolated one's doesn't.
+func TestCloneAgainOnTheHostNeedsRecentPasskey(t *testing.T) {
+	s := newTestServer(t, Options{})
+	_ = s.users.AddPasskey(s.owner, webauthn.Credential{ID: []byte("c0")}, "")
+	stale, _ := s.users.NewSession(s.owner, "x", "")
+	s.stalePasskeyCheck(t)
+	verified, _ := s.users.NewSession(s.owner, "x", "")
+	for _, p := range []model.Project{
+		{ID: "hp", Name: "hp", Path: t.TempDir(), Runtime: "host"},
+		{ID: "ip", Name: "ip", Path: t.TempDir(), Runtime: "container"},
+	} {
+		p.OwnerUser, p.Status, p.Error, p.CloneURL = s.owner, model.ProjectCloneFailed, "git clone: failed", "https://github.com/a/b.git"
+		s.m.Store().PutProject(p)
+	}
+	// file:// is refused once past the check, so nothing is cloned.
+	w := s.do("POST", "/api/projects/hp/clone", `{"url":"file:///etc"}`, cookie(sessionCookie, stale))
+	if w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), "reauth") {
+		t.Fatalf("host project, stale check: %d %s", w.Code, w.Body.String())
+	}
+	w = s.do("POST", "/api/projects/hp/clone", `{"url":"file:///etc"}`, cookie(sessionCookie, verified))
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "only remote repository URLs") {
+		t.Fatalf("host project, fresh check: %d %s", w.Code, w.Body.String())
+	}
+	w = s.do("POST", "/api/projects/ip/clone", `{}`, cookie(sessionCookie, stale))
+	if w.Code != http.StatusBadRequest || strings.Contains(w.Body.String(), "reauth") {
+		t.Fatalf("isolated project, stale check: %d %s", w.Code, w.Body.String())
+	}
+}
+
 // Anyone can start sign-ins; a flood of them, from many addresses, must
 // neither lock everyone out nor block signed-in users' passkey checks.
 func TestCeremonyFloodBlocksNobody(t *testing.T) {

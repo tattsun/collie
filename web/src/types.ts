@@ -33,8 +33,11 @@ export interface Project {
   /** agent image: '' = the server's default, 'standard' = Collie's, else a custom image's id */
   image?: string
   git: boolean
+  /** a project made from a repository: 'cloning' while it is cloned, 'error' once that failed (why: error) */
   status?: '' | 'cloning' | 'error'
   error?: string
+  /** where it is cloned from (without credentials), until it is cloned */
+  cloneUrl?: string
   /** the user's Home: chats outside any project, coordinating the projects */
   home?: boolean
 }

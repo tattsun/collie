@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'preact/hooks'
 import type { ContainerInfo, Project } from '../types'
 import { api } from '../api'
-import { groupById, me, sandbox, sessions, toast, toastError } from '../store'
+import { me, projectManager, sandbox, sessions, toast, toastError } from '../store'
 import { ProjectClaudeAccount } from './ClaudeAccounts'
 import { NetworkSettings } from './NetworkSettings'
 import { EnvEditor } from './Editors'
@@ -15,7 +15,7 @@ import { t } from '../i18n'
 export function ProjectSettings({ p }: { p: Project }) {
   const sb = sandbox.value
   const admin = !!me.value?.admin
-  const manager = p.ownerUser ? p.ownerUser === me.value?.id : groupById.value.get(p.ownerGroup || '')?.myRole === 'owner'
+  const manager = projectManager(p)
   const isolated = p.runtime === 'container'
   const [runtime, setRuntime] = useState<'host' | 'container'>(isolated ? 'container' : 'host')
   const [memory, setMemory] = useState(p.memory || '')

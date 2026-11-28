@@ -28,6 +28,7 @@ func (s *Server) apiRoutes() {
 	mx.HandleFunc("DELETE /api/projects/{id}", s.deleteProject)
 	mx.HandleFunc("PATCH /api/projects/{id}", s.patchProject)
 	mx.HandleFunc("POST /api/projects/{id}/stop", s.stopProject)
+	mx.HandleFunc("POST /api/projects/{id}/clone", s.cloneProject)
 	mx.HandleFunc("GET /api/projects/{id}/container", s.projectContainer)
 	mx.HandleFunc("GET /api/projects/{id}/env", s.getProjectEnv)
 	mx.HandleFunc("PUT /api/projects/{id}/env", s.putProjectEnv)
@@ -93,6 +94,29 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p, err := s.m.CreateProject(actor(r), req)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, p)
+}
+
+// cloneProject clones a project whose clone failed again.
+func (s *Server) cloneProject(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		URL string `json:"url"` // "" = the one it was cloned from
+	}
+	if err := decode(r, &req); err != nil {
+		httpError(w, 400, err.Error())
+		return
+	}
+	// A host-run project's clone runs on the server, with its credentials,
+	// as making the project did.
+	a := actor(r)
+	if a.Admin && s.m.HostProject(a, r.PathValue("id")) && !s.verified(w, r) {
+		return
+	}
+	p, err := s.m.RetryClone(a, r.PathValue("id"), req.URL)
 	if err != nil {
 		fail(w, err)
 		return

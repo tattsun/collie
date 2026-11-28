@@ -53,6 +53,11 @@ export function ownerLabel(p: Project): string {
   return ''
 }
 
+/** Whether I manage the project: its owner, or an owner of its group. */
+export function projectManager(p: Project): boolean {
+  return p.ownerUser ? p.ownerUser === me.value?.id : groupById.value.get(p.ownerGroup || '')?.myRole === 'owner'
+}
+
 export const projectById = computed(() => {
   const m = new Map(projects.value.map((p) => [p.id, p]))
   if (homeProject.value) m.set(homeProject.value.id, homeProject.value)

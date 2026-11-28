@@ -1,20 +1,16 @@
 package session
 
 import (
-	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/tattsun/collie/internal/egress"
 	"github.com/tattsun/collie/internal/gitutil"
@@ -164,14 +160,8 @@ func (m *Manager) CreateProject(a Actor, req CreateProjectReq) (model.Project, e
 		}
 	case "clone":
 		url := strings.TrimSpace(req.URL)
-		if url == "" {
-			return model.Project{}, errors.New("repository URL is required")
-		}
-		if strings.HasPrefix(url, "-") || strings.HasPrefix(url, "file:") || strings.HasPrefix(url, "/") || strings.HasPrefix(url, ".") || strings.Contains(url, "::") || !remoteURL(url) {
-			return model.Project{}, errors.New("only remote repository URLs can be cloned (https://, ssh://, git:// or user@host:path)")
-		}
-		if !a.Admin && !strings.HasPrefix(url, "https://") {
-			return model.Project{}, errors.New("use an https:// URL (private GitHub repositories work with GH_TOKEN in your account environment)")
+		if err := checkCloneURL(url, req.Runtime != "host"); err != nil {
+			return model.Project{}, err
 		}
 		if !a.Admin && (m.sb == nil || !m.sb.Available()) {
 			return model.Project{}, errors.New("cloning needs the isolated runtime (podman) on the server")
@@ -232,40 +222,15 @@ func (m *Manager) CreateProject(a Actor, req CreateProjectReq) (model.Project, e
 	case "existing":
 		p.Git = isRepo(p)
 	case "clone":
-		p.Status = "cloning"
-		url := strings.TrimSpace(req.URL)
-		if !a.Admin {
-			// A member's clone runs inside their own container for the
-			// project: the same network policy as their agents (no host
-			// loopback, no LAN/tailnet behind the firewall), their own
-			// GH_TOKEN, and none of the server's credentials.
-			if !strings.HasPrefix(path, root+string(filepath.Separator)) {
-				return model.Project{}, errNotInOwnerRoot
-			}
-			if err := os.MkdirAll(path, 0o755); err != nil {
-				return model.Project{}, err
-			}
+		// Into an empty folder made here: an isolated project's container
+		// mounts it, and it stays when the clone fails.
+		if !strings.HasPrefix(path, root+string(filepath.Separator)) {
+			return model.Project{}, errNotInOwnerRoot
 		}
-		member := !a.Admin
-		uid := a.ID
-		go func() {
-			var err error
-			if member {
-				err = m.cloneInContainer(p, uid, url)
-			} else {
-				err = gitutil.Clone(url, path)
-			}
-			np, ok := m.st.UpdateProject(p.ID, func(x *model.Project) {
-				if err != nil {
-					x.Status, x.Error = "error", err.Error()
-				} else {
-					x.Status, x.Error, x.Git = "", "", true
-				}
-			})
-			if ok {
-				m.pushProject(np)
-			}
-		}()
+		if err := cloneFolder(path); err != nil {
+			return model.Project{}, err
+		}
+		p.Status, p.CloneURL = model.ProjectCloning, redactURL(strings.TrimSpace(req.URL))
 	default:
 		if !strings.HasPrefix(path, root+string(filepath.Separator)) {
 			return model.Project{}, errNotInOwnerRoot
@@ -282,6 +247,10 @@ func (m *Manager) CreateProject(a Actor, req CreateProjectReq) (model.Project, e
 	}
 	m.st.PutProject(p)
 	m.pushProject(p)
+	if req.Kind == "clone" {
+		// Started once the project is stored, which records the outcome.
+		m.startClone(p, a.ID, strings.TrimSpace(req.URL))
+	}
 	return p, nil
 }
 
@@ -672,34 +641,3 @@ func (m *Manager) GroupProjects(groupID string) []model.Project {
 
 // AllProjects is for admin overviews (names and owners only).
 func (m *Manager) AllProjects() []model.Project { return m.st.Projects() }
-
-// cloneInContainer clones url into the (empty) project directory from
-// inside the user's container for the project.
-func (m *Manager) cloneInContainer(p model.Project, uid, url string) error {
-	if err := m.ensureContainer(p, uid, nil); err != nil {
-		return err
-	}
-	argv, kill := m.sb.Exec(p.ID, uid, p.Path, "clone-"+model.NewID(), false,
-		[]string{"GIT_TERMINAL_PROMPT=0"}, []string{"git", "clone", "--quiet", "--", url, "."})
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
-	defer cancel()
-	// argv[0] is podman; name it from the configuration, not the list that
-	// also carries the URL.
-	cmd := exec.CommandContext(ctx, m.sb.Podman(), argv[1:]...)
-	var errb bytes.Buffer
-	cmd.Stderr = &errb
-	if err := cmd.Run(); err != nil {
-		if ctx.Err() != nil {
-			kill("KILL")
-		}
-		msg := strings.TrimSpace(errb.String())
-		if msg == "" {
-			msg = err.Error()
-		}
-		if lines := strings.Split(msg, "\n"); len(lines) > 4 {
-			msg = strings.Join(lines[len(lines)-4:], "\n")
-		}
-		return fmt.Errorf("git clone: %s", msg)
-	}
-	return nil
-}

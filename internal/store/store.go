@@ -87,8 +87,9 @@ func (s *Store) Flush() error {
 	s.dirty = false
 	st := state{}
 	for _, p := range s.projects {
+		// A failed clone stays failed after a restart, and one that was
+		// running is marked failed then (session.NewManager).
 		c := *p
-		c.Status, c.Error = "", ""
 		st.Projects = append(st.Projects, &c)
 	}
 	for _, x := range s.sessions {

@@ -6,6 +6,7 @@ import { go, groupById, groups, me, ownerLabel, projectById, projectManager, pro
 import { ago, cls, home } from '../util'
 import { ChangesView } from './Changes'
 import { AgentBadge, Segmented, StatusDot, Toggle } from './ui'
+import { Archivable } from './Archive'
 import { IBack, IBox, IClock, IDiff, IFolder, IHome, IList, IPlus, ISettings, ITerminal, ITrash, Spinner } from './icons'
 import { ProjectSettings } from './ProjectSettings'
 import { t, ts } from '../i18n'
@@ -277,20 +278,22 @@ export function ProjectPage({ id }: { id: string }) {
           {!p.home && list.length === 0 && <div class="dim pad">{t('No sessions in this project yet.')}</div>}
           <div class="plist">
             {list.map((s) => (
-              <a key={s.id} href={`#/s/${s.id}`} class={cls('card prow-card', s.archived && 'archived')}>
-                <StatusDot status={s.status} unread={s.unread} />
-                <div class="grow minw0">
-                  <div class="b ellipsis">{s.title}</div>
-                  <div class="dim small ellipsis">{s.preview || s.branch}</div>
-                </div>
-                {s.schedule && (
-                  <span class="dim" title={t('Started by a schedule')}>
-                    <IClock size={13} />
-                  </span>
-                )}
-                <AgentBadge agent={s.agent} small />
-                <span class="dim small">{ago(s.updatedAt)}</span>
-              </a>
+              <Archivable key={s.id} s={s} card keep>
+                <a href={`#/s/${s.id}`} class={cls('card prow-card', s.archived && 'archived')}>
+                  <StatusDot status={s.status} unread={s.unread} />
+                  <div class="grow minw0">
+                    <div class="b ellipsis">{s.title}</div>
+                    <div class="dim small ellipsis">{s.preview || s.branch}</div>
+                  </div>
+                  {s.schedule && (
+                    <span class="dim" title={t('Started by a schedule')}>
+                      <IClock size={13} />
+                    </span>
+                  )}
+                  <AgentBadge agent={s.agent} small />
+                  <span class="dim small sw-hide">{ago(s.updatedAt)}</span>
+                </a>
+              </Archivable>
             ))}
           </div>
           {!p.home && (

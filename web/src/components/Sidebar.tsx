@@ -7,6 +7,7 @@ import { setNotify } from '../notify'
 import { ago, cls, home } from '../util'
 import { IBell, IBox, IClock, IFolder, IHome, IPlus, IBranch, IUsers, Spinner } from './icons'
 import { AgentBadge, Menu, StatusDot } from './ui'
+import { Archivable } from './Archive'
 import { signOut } from '../authflow'
 import { ImageIndicator } from './Images'
 import { VersionBadge } from './Updates'
@@ -22,47 +23,49 @@ const showArchived = signal(false)
 const busy = (s: Session) => s.status === 'running' || s.status === 'starting' || !!s.tasks?.length
 const rank = (s: Session) => (s.status === 'waiting' ? 0 : s.status === 'error' ? 1 : busy(s) ? 2 : 3)
 
-const SessionRow = memo(function SessionRow({ s, active, project }: { s: Session; active: boolean; project?: string }) {
+const SessionRow = memo(function SessionRow({ s, active, project, keep }: { s: Session; active: boolean; project?: string; keep: boolean }) {
   return (
-    <a href={`#/s/${s.id}`} class={cls('srow', active && 'active', s.unread && 'unread', s.archived && 'archived')}>
-      <StatusDot status={s.status} unread={s.unread} bg={!!s.tasks?.length} />
-      <div class="srow-main">
-        <div class="srow-top">
-          <span class="srow-title">{s.title}</span>
-          <span class="srow-time">{ago(s.updatedAt)}</span>
+    <Archivable s={s} keep={keep}>
+      <a href={`#/s/${s.id}`} class={cls('srow', active && 'active', s.unread && 'unread', s.archived && 'archived')}>
+        <StatusDot status={s.status} unread={s.unread} bg={!!s.tasks?.length} />
+        <div class="srow-main">
+          <div class="srow-top">
+            <span class="srow-title">{s.title}</span>
+            <span class="srow-time sw-hide">{ago(s.updatedAt)}</span>
+          </div>
+          <div class="srow-meta">
+            <AgentBadge agent={s.agent} small />
+            {s.schedule && (
+              <span class="srow-sched" title={t('Started by a schedule')}>
+                <IClock size={11} />
+              </span>
+            )}
+            {project && <span class="srow-proj">{project}</span>}
+            {s.owner && s.owner !== me.value?.id && (
+              <span class="srow-by">
+                <IUsers size={11} /> {userName(s.owner)}
+              </span>
+            )}
+            {s.worktree && s.branch && (
+              <span class="srow-branch">
+                <IBranch size={11} />
+                {s.branch.replace(/^collie\//, '')}
+              </span>
+            )}
+            {!!s.tasks?.length && (
+              <span class="srow-bg" title={s.tasks.map((x) => x.title).join('\n')}>
+                {t('{n} in background', { n: s.tasks.length })}
+              </span>
+            )}
+          </div>
+          {s.status === 'waiting' ? (
+            <div class="srow-preview warn">{t('Needs your input')}</div>
+          ) : s.preview ? (
+            <div class="srow-preview">{s.preview}</div>
+          ) : null}
         </div>
-        <div class="srow-meta">
-          <AgentBadge agent={s.agent} small />
-          {s.schedule && (
-            <span class="srow-sched" title={t('Started by a schedule')}>
-              <IClock size={11} />
-            </span>
-          )}
-          {project && <span class="srow-proj">{project}</span>}
-          {s.owner && s.owner !== me.value?.id && (
-            <span class="srow-by">
-              <IUsers size={11} /> {userName(s.owner)}
-            </span>
-          )}
-          {s.worktree && s.branch && (
-            <span class="srow-branch">
-              <IBranch size={11} />
-              {s.branch.replace(/^collie\//, '')}
-            </span>
-          )}
-          {!!s.tasks?.length && (
-            <span class="srow-bg" title={s.tasks.map((x) => x.title).join('\n')}>
-              {t('{n} in background', { n: s.tasks.length })}
-            </span>
-          )}
-        </div>
-        {s.status === 'waiting' ? (
-          <div class="srow-preview warn">{t('Needs your input')}</div>
-        ) : s.preview ? (
-          <div class="srow-preview">{s.preview}</div>
-        ) : null}
-      </div>
-    </a>
+      </a>
+    </Archivable>
   )
 })
 
@@ -105,11 +108,11 @@ function SessionList() {
       )}
       {needs.length > 0 && <div class="group-h warn">{t('Needs you · {n}', { n: needs.length })}</div>}
       {needs.map((s) => (
-        <SessionRow key={s.id} s={s} active={s.id === activeId} project={pmap.get(s.projectId)?.name} />
+        <SessionRow key={s.id} s={s} active={s.id === activeId} project={pmap.get(s.projectId)?.name} keep={showArchived.value} />
       ))}
       {needs.length > 0 && rest.length > 0 && <div class="group-h">{t('Sessions')}</div>}
       {rest.map((s) => (
-        <SessionRow key={s.id} s={s} active={s.id === activeId} project={pmap.get(s.projectId)?.name} />
+        <SessionRow key={s.id} s={s} active={s.id === activeId} project={pmap.get(s.projectId)?.name} keep={showArchived.value} />
       ))}
       {needs.length + rest.length === 0 && (
         <div class="empty dim">

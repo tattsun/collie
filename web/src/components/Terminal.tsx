@@ -34,6 +34,32 @@ const KEYS: { label: string; seq: string }[] = [
   { label: '/', seq: '/' },
 ]
 
+// Apple keyboards copy and paste with Cmd, so there Ctrl+V and Ctrl+C stay
+// the shell's ^V and ^C.
+const isApple = /Mac|iPhone|iPad|iPod/.test(navigator.platform)
+
+// xterm.js sends Ctrl+V to the shell as ^V (bash's quoted-insert, so nothing
+// seems to happen) and Ctrl+C as ^C even over a selection. Elsewhere than on
+// Apple devices, make them work as in Windows Terminal: Ctrl+V and
+// Ctrl+Shift+V paste, and Ctrl+C and Ctrl+Shift+C copy the selection; with
+// nothing selected, Ctrl+C is still ^C. Both use the browser's own paste and
+// copy events, which need no clipboard permission and work over plain HTTP.
+// Returns false for keys xterm.js must leave alone.
+function clipboardKey(term: XTerm, ev: KeyboardEvent): boolean {
+  if (isApple || !ev.ctrlKey || ev.altKey || ev.metaKey) return true
+  // keyCode, as xterm.js and the browser's shortcuts go by it on any layout
+  if (ev.keyCode === 86) return false // V: the browser pastes, xterm.js sends the paste event's text
+  if (ev.keyCode === 67 && ev.type === 'keydown' && term.hasSelection()) {
+    ev.preventDefault() // Ctrl+Shift+C would open the browser's DevTools
+    const sel = term.getSelection()
+    // xterm.js fills the copy event with its selection
+    if (!document.execCommand('copy')) copyText(sel).then(() => term.focus())
+    term.clearSelection() // the next Ctrl+C interrupts again
+    return false
+  }
+  return true
+}
+
 // The terminal's text (scrollback included) as plain lines. Rows the
 // terminal soft-wrapped are joined back, so a long token stays one string.
 function bufferText(term: XTerm): string {
@@ -152,6 +178,7 @@ function TermPane({ info }: { info: TermInfo }) {
       })
       const fit = new FitAddon()
       term.loadAddon(fit)
+      term.attachCustomKeyEventHandler((ev) => clipboardKey(term, ev))
       term.open(host.current)
       termRef.current = term
       fitFn = () => {

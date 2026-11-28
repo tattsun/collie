@@ -57,6 +57,10 @@ Turn them on in Account → **Notifications** on each device you want them on, t
 
 Ask the agent to start the app (`npm run dev` and the like), then open the session's **Ports** tab. It lists what is listening in the project's container, this session's servers first, and a tap opens it in a new tab, with hot reload. Several can be open at once. Only you can open your sessions' servers, even in a shared session. Where previews are served is set up on the server (see [Setup](setup.md#previews)).
 
+## Terminal
+
+On Windows and Linux, Ctrl+V and Ctrl+Shift+V paste, and Ctrl+C copies the selected text; with nothing selected, Ctrl+C interrupts as usual. On a Mac, Cmd+V and Cmd+C do this, and Ctrl keeps going to the shell. Since Ctrl+V no longer reaches the shell on Windows and Linux, press Insert for bash's quoted-insert, and Ctrl+Q for a block selection in Vim.
+
 ## Isolation
 
 New projects run in an **Isolated container** by default. You can change this in Project → Settings.

@@ -236,10 +236,14 @@ type Note struct {
 	Title   string `json:"title"`
 	Project string `json:"project,omitempty"`
 	// Event: done (its turn finished), failed (the turn ended in an error),
-	// waiting (for an approval), question, error (the agent stopped), or
-	// unwatched (Collie stopped watching it after many notifications).
+	// background (its turn finished a while ago, with work still running
+	// in the background), waiting (for an approval), question, error (the
+	// agent stopped), or unwatched (Collie stopped watching it after many
+	// notifications).
 	Event  string `json:"event"`
 	Detail string `json:"detail,omitempty"`
+	// Background (event background) is the work still running.
+	Background []string `json:"background,omitempty"`
 }
 
 // Media is one file the agent showed the user, copied into the uploads

@@ -21,7 +21,9 @@ import (
 // Home conversation watches finishes its turn, starts waiting for the user
 // or fails, Collie tells that conversation in a message that wakes its
 // agent — after its current turn. Home conversations are never watched
-// themselves, so a notification cannot set off another one.
+// themselves, so a notification cannot set off another one. A turn that
+// ends with work still running in the background is held back until that
+// work is over (see holdBackground).
 
 // Pacing of the notifications to one Home conversation (variables for the
 // tests).
@@ -31,6 +33,12 @@ var (
 	// After this many notifications about one session, Collie stops
 	// watching it, so that a back-and-forth cannot go on unnoticed.
 	noteCap = 30
+	// A turn end held back for background work is told bgGrace after that
+	// work ends without the agent taking it up, or once bgStall after the
+	// turn ended if the work runs on (a dev server). The Home instructions
+	// and watch_session's description say 10 minutes.
+	bgGrace = time.Minute
+	bgStall = 10 * time.Minute
 )
 
 const maxWatching = 20 // sessions one Home conversation watches at most
@@ -81,35 +89,121 @@ func settled(status string) bool {
 // noteChange is called on every session update (under m.bmu, so in order;
 // it only takes notes and sets timers).
 func (m *Manager) noteChange(before, s model.Session) {
-	if before.Status == s.Status {
-		return
+	moved := before.Status != s.Status
+	if !moved && (len(before.Tasks) == 0 || len(s.Tasks) > 0) {
+		return // nothing to tell, and no background work ended
 	}
 	m.noteMu.Lock()
 	defer m.noteMu.Unlock()
 	// A Home conversation's turn ended: deliver what was held for it.
-	if b := m.notes[s.ID]; b != nil && len(b.order) > 0 && b.timer == nil && settled(s.Status) {
+	if b := m.notes[s.ID]; moved && b != nil && len(b.order) > 0 && b.timer == nil && settled(s.Status) {
 		m.scheduleNote(s.ID, b)
 	}
-	ev := noteEvent(before.Status, s.Status)
-	if ev == "" {
+	var ev string
+	if moved {
+		ev = noteEvent(before.Status, s.Status)
+	}
+	if ev == "" && m.held[s.ID] == nil {
 		return
 	}
 	if p, ok := m.st.Project(s.ProjectID); !ok || p.Home {
 		return
 	}
+	m.holdBackground(s, moved, ev)
+	if ev != "" {
+		m.queueNote(s.ID, ev)
+	}
+}
+
+// queueNote notes a watched session's change for the Home conversations
+// that watch it. A held turn end coming due ("background") does not
+// replace a change still to be told, which is read as it stands when it
+// is told anyway. m.noteMu must be held.
+func (m *Manager) queueNote(sid, ev string) {
 	for _, h := range m.st.Sessions() {
-		if !slices.Contains(h.Watching, s.ID) {
+		if !slices.Contains(h.Watching, sid) {
 			continue
 		}
 		b := m.box(h.ID)
-		if _, ok := b.events[s.ID]; !ok {
-			b.order = append(b.order, s.ID)
+		if _, ok := b.events[sid]; !ok {
+			b.order = append(b.order, sid)
+		} else if ev == "background" {
+			continue
 		}
-		b.events[s.ID] = ev
+		b.events[sid] = ev
 		if b.timer == nil {
 			m.scheduleNote(h.ID, b)
 		}
 	}
+}
+
+// ---- background work ----
+//
+// A session's turn often ends while work it started goes on in the
+// background (Session.Tasks): CI it watches, a build, a sub-agent's
+// review. When that work ends, its agent starts a turn of its own to deal
+// with it. Telling Home about the first turn end would cost it a turn to
+// hear "waiting for CI", so Collie holds that turn end back until
+//   - the session moves on (it works, waits for the user or fails): that
+//     is told as usual, a turn end once nothing is left running;
+//   - the work ends but the agent takes nothing up within bgGrace, or the
+//     session is stopped (and its work with it): the turn end is told;
+//   - bgStall has passed and the work still runs (a dev server): Collie
+//     tells, once, that the session finished its turn with work running.
+// A turn that ended in an error is told at once all the same (noteFor).
+
+// heldTurn is a watched session's turn end held back.
+type heldTurn struct{ timer *time.Timer }
+
+// holdBackground keeps a session's held turn end in step with its change
+// (moved: its status changed; ev: what noteChange tells of it). m.noteMu
+// must be held.
+func (m *Manager) holdBackground(s model.Session, moved bool, ev string) {
+	switch {
+	case ev == "done" && len(s.Tasks) > 0:
+		m.hold(s.ID, bgStall)
+	case moved:
+		held := m.held[s.ID] != nil
+		m.unhold(s.ID)
+		if held && s.Status == model.StatusStopped {
+			m.queueNote(s.ID, "background")
+		}
+	case m.held[s.ID] != nil: // its background work ended
+		m.hold(s.ID, bgGrace)
+	}
+}
+
+// hold (re)starts holding a session's turn end: it is told after d unless
+// the session moves on first. m.noteMu must be held.
+func (m *Manager) hold(sid string, d time.Duration) {
+	m.unhold(sid)
+	if m.held == nil {
+		m.held = map[string]*heldTurn{}
+	}
+	h := &heldTurn{}
+	h.timer = time.AfterFunc(d, func() {
+		m.noteMu.Lock()
+		defer m.noteMu.Unlock()
+		if m.held[sid] == h {
+			delete(m.held, sid)
+			m.queueNote(sid, "background")
+		}
+	})
+	m.held[sid] = h
+}
+
+// unhold must be called with m.noteMu held.
+func (m *Manager) unhold(sid string) {
+	if h := m.held[sid]; h != nil {
+		h.timer.Stop()
+		delete(m.held, sid)
+	}
+}
+
+func (m *Manager) holding(sid string) bool {
+	m.noteMu.Lock()
+	defer m.noteMu.Unlock()
+	return m.held[sid] != nil
 }
 
 // scheduleNote must be called with m.noteMu held.
@@ -185,8 +279,9 @@ func (m *Manager) flushNotes(home string) {
 }
 
 // noteFor describes a watched session's change as it stands now, or
-// reports false when there is nothing to tell any more: the session moved
-// on (its next change will be told), or the user can no longer see it.
+// reports false when there is nothing to tell (yet): the session moved on
+// (its next change will be told), its turn end is held back for its
+// background work, or the user can no longer see it.
 func (m *Manager) noteFor(uid, sid, ev string) (model.Note, bool) {
 	s, err := m.visibleSession(uid, sid)
 	if err != nil {
@@ -205,10 +300,23 @@ func (m *Manager) noteFor(uid, sid, ev string) (model.Note, bool) {
 	case model.StatusError:
 		n.Event, n.Detail = "error", lastError(items)
 	case model.StatusIdle, model.StatusStopped:
-		if ev != "done" {
+		if ev != "done" && ev != "background" {
 			return model.Note{}, false // e.g. it waited, then the user stopped it
 		}
 		n.Event, n.Detail = turnOutcome(items)
+		switch {
+		case n.Event != "done":
+			if ev == "background" {
+				return model.Note{}, false // told when the turn ended
+			}
+		case m.holding(sid):
+			return model.Note{}, false // its background work goes on (see holdBackground)
+		case s.Status == model.StatusIdle && len(s.Tasks) > 0:
+			n.Event = "background"
+			for _, t := range s.Tasks {
+				n.Background = append(n.Background, cmp.Or(t.Title, t.Kind)+" (started "+ago(t.Started)+")")
+			}
+		}
 	default:
 		return model.Note{}, false
 	}
@@ -304,6 +412,11 @@ func noteText(notes []model.Note) string {
 		switch n.Event {
 		case "done":
 			b.WriteString("finished its turn.")
+			if n.Detail != "" {
+				fmt.Fprintf(&b, " Its last message: %q", n.Detail)
+			}
+		case "background":
+			fmt.Fprintf(&b, "finished its turn a while ago, but work it started is still running in the background: %s. Collie tells you again when it ends another turn.", strings.Join(n.Background, "; "))
 			if n.Detail != "" {
 				fmt.Fprintf(&b, " Its last message: %q", n.Detail)
 			}
@@ -428,6 +541,7 @@ var homeFollowToolDefs = []map[string]any{
 	{
 		"name": "watch_session",
 		"description": "Follow a session: when it finishes its turn, starts waiting for the user (an approval or a question) or fails, Collie tells you in this conversation, after your current turn. " +
+			"A turn that ends while its work goes on in the background (CI, a build, a sub-agent) is not told: the session picks up when that work ends, and you hear of the turn after that (or once, if the work is still running 10 minutes later). " +
 			"Sessions you start are watched already. Each notification costs you a turn: unwatch sessions you no longer need to follow. Without `session`, lists the sessions you watch.",
 		"inputSchema": obj(map[string]any{
 			"session": prop("string", "Session id; omit to list what you watch"),

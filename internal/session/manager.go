@@ -62,6 +62,7 @@ type Manager struct {
 	// (home_follow.go), by Home session.
 	noteMu sync.Mutex
 	notes  map[string]*noteBox
+	held   map[string]*heldTurn // turn ends held back, by watched session
 
 	mu  sync.Mutex
 	rts map[string]*Runtime

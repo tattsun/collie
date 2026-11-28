@@ -439,6 +439,154 @@ func TestHomeIsToldWhenWatchedSessionsChange(t *testing.T) {
 	}
 }
 
+// fastBackground makes turn ends held back for background work come due
+// quickly.
+func fastBackground(t *testing.T, grace, stall time.Duration) {
+	t.Helper()
+	g, s := bgGrace, bgStall
+	bgGrace, bgStall = grace, stall
+	t.Cleanup(func() { bgGrace, bgStall = g, s })
+}
+
+// TestHomeWaitsForBackgroundWork: a turn that ends with work still running
+// in the background is told once that work is over, not before; work that
+// runs on is told once; approvals, questions and failures are told at
+// once all the same.
+func TestHomeWaitsForBackgroundWork(t *testing.T) {
+	fastNotes(t, 20*time.Millisecond, 0, 30)
+	fastBackground(t, 150*time.Millisecond, time.Hour)
+	m := homeFixture(t)
+	home := attach(t, m, "h1")
+	if _, err := watchAs(m, "h1", "a1"); err != nil {
+		t.Fatal(err)
+	}
+	r, _ := m.runtime("a1")
+	n := 0
+	put := func(it *model.Item) {
+		n++
+		it.ID, it.Done = fmt.Sprintf("i%d", n), true
+		r.sinkPut(it)
+	}
+	tasks := func(titles ...string) {
+		var list []model.Task
+		for _, title := range titles {
+			list = append(list, model.Task{ID: title, Kind: "local_bash", Title: title, Started: model.NowMs()})
+		}
+		m.updateSession("a1", func(s *model.Session) { s.Tasks = list })
+	}
+	// ask: the user's message; then the agent works, says said and ends
+	// its turn (failed: with an error), leaving bg running.
+	turn := func(ask, said string, failed bool, bg ...string) {
+		if ask != "" {
+			put(&model.Item{Kind: model.KindUser, Text: ask})
+		}
+		m.setStatus("a1", model.StatusRunning)
+		if len(bg) > 0 {
+			tasks(bg...)
+		}
+		put(&model.Item{Kind: model.KindText, Text: said})
+		res := &model.Result{Status: "success"}
+		if failed {
+			res = &model.Result{Status: "error", IsError: true}
+		}
+		put(&model.Item{Kind: model.KindResult, Text: said, Result: res})
+		m.setStatus("a1", model.StatusIdle)
+	}
+
+	// Waiting for CI: told after the turn the agent takes when it is over.
+	turn("fix the build", "Pushed; waiting for CI.", false, "gh pr checks --watch")
+	nothing(t, home, 300*time.Millisecond)
+	tasks()
+	put(&model.Item{Kind: model.KindNotice, Text: "Background task finished: gh pr checks --watch"})
+	turn("", "CI is green.", false)
+	in := received(t, home, 2*time.Second)
+	if !strings.Contains(in.Text, "finished its turn") || !strings.Contains(in.Text, "CI is green.") || strings.Contains(in.Text, "background") {
+		t.Errorf("notification:\n%s", in.Text)
+	}
+	nothing(t, home, 400*time.Millisecond)
+
+	// The work ends but the agent does not take it up: the turn is told
+	// after bgGrace.
+	turn("lint it", "Linting in the background.", false, "npm run lint")
+	nothing(t, home, 200*time.Millisecond)
+	ended := time.Now()
+	tasks()
+	in = received(t, home, 2*time.Second)
+	if since := time.Since(ended); since < bgGrace {
+		t.Errorf("told %v after the work ended, before bgGrace", since)
+	}
+	if !strings.Contains(in.Text, "finished its turn. Its last message: \"Linting in the background.\"") {
+		t.Errorf("notification:\n%s", in.Text)
+	}
+
+	// Questions, errors and failed turns do not wait for background work.
+	put(&model.Item{Kind: model.KindUser, Text: "deploy"})
+	m.setStatus("a1", model.StatusRunning)
+	tasks("npm run build")
+	put(&model.Item{Kind: model.KindQuestion, Ask: &model.Ask{State: "pending", Questions: []model.Question{{Question: "Staging or production?"}}}})
+	m.setStatus("a1", model.StatusWaiting)
+	if in := received(t, home, 2*time.Second); !strings.Contains(in.Text, "Staging or production?") {
+		t.Errorf("question notification:\n%s", in.Text)
+	}
+	m.setStatus("a1", model.StatusRunning)
+	put(&model.Item{Kind: model.KindError, Text: "agent process exited: boom"})
+	m.setStatus("a1", model.StatusError)
+	if in := received(t, home, 2*time.Second); !strings.Contains(in.Text, "stopped with an error") {
+		t.Errorf("error notification:\n%s", in.Text)
+	}
+	turn("go on", "Prompt is too long", true, "npm run build")
+	if in := received(t, home, 2*time.Second); !strings.Contains(in.Text, "ended its turn with an error") {
+		t.Errorf("failure notification:\n%s", in.Text)
+	}
+	tasks()
+	nothing(t, home, 400*time.Millisecond) // told already
+
+	// Work that runs on (a dev server): told once, after bgStall.
+	fastBackground(t, 150*time.Millisecond, 300*time.Millisecond)
+	start := time.Now()
+	turn("start the dev server", "The dev server is on port 5173.", false, "npm run dev")
+	in = received(t, home, 3*time.Second)
+	if since := time.Since(start); since < bgStall {
+		t.Errorf("told %v after the turn ended, before bgStall", since)
+	}
+	for _, want := range []string{"still running in the background: npm run dev (started just now)", "Collie tells you again", "port 5173"} {
+		if !strings.Contains(in.Text, want) {
+			t.Errorf("notification lacks %q:\n%s", want, in.Text)
+		}
+	}
+	items, _, _ := m.Items(Actor{ID: "alice"}, "h1", 0, 100)
+	if last := items[len(items)-1]; len(last.Notes) != 1 || last.Notes[0].Event != "background" || len(last.Notes[0].Background) != 1 {
+		t.Errorf("timeline entry: %+v", last.Notes)
+	}
+	nothing(t, home, 600*time.Millisecond)
+
+	// While Home is in a turn, it comes due all the same, and is told once
+	// Home's turn is over.
+	m.setStatus("h1", model.StatusRunning)
+	turn("restart it", "Restarted the dev server.", false, "npm run dev")
+	nothing(t, home, 600*time.Millisecond)
+	m.setStatus("h1", model.StatusIdle)
+	if in := received(t, home, 2*time.Second); !strings.Contains(in.Text, "Restarted the dev server.") || !strings.Contains(in.Text, "still running in the background") {
+		t.Errorf("notification:\n%s", in.Text)
+	}
+
+	// Stopped while its turn end is held (its work ends with its agent,
+	// which drops its tasks first): the turn end is told then.
+	turn("once more", "Running it again.", false, "npm run dev")
+	nothing(t, home, 100*time.Millisecond)
+	tasks()
+	m.setStatus("a1", model.StatusStopped)
+	if in := received(t, home, 2*time.Second); !strings.Contains(in.Text, "finished its turn. Its last message: \"Running it again.\"") {
+		t.Errorf("notification:\n%s", in.Text)
+	}
+	nothing(t, home, 400*time.Millisecond)
+	m.noteMu.Lock()
+	defer m.noteMu.Unlock()
+	if len(m.held) != 0 {
+		t.Errorf("still held: %v", m.held)
+	}
+}
+
 func TestHomeNotificationsCannotLoopOrFlood(t *testing.T) {
 	fastNotes(t, 20*time.Millisecond, 150*time.Millisecond, 2)
 	m := homeFixture(t)

@@ -110,6 +110,8 @@ function noteLabel(n: Note) {
       return t('Finished')
     case 'failed':
       return t('Ended with an error')
+    case 'background':
+      return t('Finished its turn, still working in the background')
     case 'waiting':
       return t('Waiting for your approval')
     case 'question':

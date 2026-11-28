@@ -148,4 +148,5 @@ When Home follows sessions:
 
 - Each notification starts a Home turn, which uses your plan like a message would. To stop the notifications about a session, use **Stop watching** on a notification, **Stop Home from watching** in the session's menu, or ask Home.
 - A notification waits until Home's current turn is over, and changes that come close together arrive as one. After 30 notifications about the same session, Collie stops watching it.
+- When a session finishes its turn with work still running in the background (CI, a build, a sub-agent), Collie doesn't tell Home yet. The session picks up again when that work ends, and Home hears about the turn after that. If the work is still running 10 minutes later (a dev server, say), Home is told once. Approvals, questions and errors are told right away.
 - Home stops and archives only sessions you started (not other members', even in a group you own). It never removes a worktree or branch.
